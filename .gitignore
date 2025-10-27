@@ -1,0 +1,173 @@
+# ============================================================================
+# Python 相关
+# ============================================================================
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Translations
+*.mo
+*.pot
+
+# Frameworks
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+instance/
+.webassets-cache
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+.pybuilder/
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+# .python-version
+
+# pipenv
+# Pipfile.lock
+
+# UV
+# uv.lock
+
+# poetry
+# poetry.lock
+
+# pdm
+# pdm.lock
+.pdm.toml
+.pdm-python
+.pdm-build/
+
+# PEP 582
+__pypackages__/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath
+*.sage.py
+
+# ============================================================================
+# 虚拟环境
+# ============================================================================
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+test_venv/
+
+# ============================================================================
+# IDE 相关
+# ============================================================================
+.vscode/
+.idea/
+.spyderproject
+.spyproject
+.ropeproject
+
+# ============================================================================
+# 类型检查和代码质量工具
+# ============================================================================
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# ============================================================================
+# 其他
+# ============================================================================
+.DS_Store
+cython_debug/
+.pypirc
+
+# ============================================================================
+# AutoCom 项目特定
+# ============================================================================
+
+# 打包生成目录 (由 prepare_package.py 自动生成,现已弃用)
+autocom/
+
+# 用户工作目录 (由 autocom --init 创建)
+configs/
+dicts/
+dictFiles/
+temps/
+
+# 运行时生成的日志和数据
+device_logs/
+*.log
+
+# 临时文件
+TEMP_DATA.json
+processed_files.json
+
+# 测试相关
+tests/*
+
+# WebDAV 相关临时文件
+utils/webdav_*.py

@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autocom"
+dynamic = ["version"]
+description = "一款用于自动化执行串口指令的脚本，支持多设备、多指令的串行和并行执行"
+readme = "README.md"
+authors = [
+    {name = "iFishin", email = "your.email@example.com"}
+]
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Testing",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Operating System :: OS Independent",
+]
+keywords = ["serial", "automation", "testing", "embedded", "iot"]
+requires-python = ">=3.7"
+dependencies = [
+    "pyserial>=3.5",
+]
+
+[project.urls]
+Homepage = "https://github.com/iFishin/AutoCom"
+"Bug Reports" = "https://github.com/iFishin/AutoCom/issues"
+Source = "https://github.com/iFishin/AutoCom"
+
+[project.scripts]
+autocom = "cli:main"
+
+[tool.setuptools]
+packages = ["components", "utils"]
+py-modules = ["AutoCom", "cli", "version", "__init__"]
+
+[tool.setuptools.dynamic]
+version = {attr = "version.__version__"}
+

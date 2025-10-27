@@ -1,0 +1,29 @@
+include README.md
+include LICENSE
+include About.md
+include AutoCom字典使用示例.md
+include version.py
+include AutoCom.py
+include cli.py
+include __init__.py
+
+# Include all Python files from components and utils
+recursive-include components *.py
+recursive-include utils *.py
+
+# Include all JSON configuration files (optional, for reference)
+# Users should use 'autocom --init' to create their own configs
+# recursive-include configs *.json
+# recursive-include dicts *.json
+# recursive-include dictFiles *.json
+
+# Exclude test and log directories
+recursive-exclude tests *
+recursive-exclude device_logs *
+recursive-exclude temps *
+recursive-exclude res *
+
+# Exclude Python bytecode
+global-exclude __pycache__
+global-exclude *.py[co]
+global-exclude .DS_Store
