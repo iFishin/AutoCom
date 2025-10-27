@@ -13,13 +13,12 @@ try:
     from utils.common import CommonUtils
     from components.CommandDeviceDict import CommandDeviceDict
     from components.CommandExecutor import CommandExecutor
+    from version import __version__
 except ModuleNotFoundError:
     from .utils.common import CommonUtils
     from .components.CommandDeviceDict import CommandDeviceDict
     from .components.CommandExecutor import CommandExecutor
-
-# 版本信息
-__version__ = "1.0.0"
+    from .version import __version__
 
 
 def load_commands_from_file(file_path):

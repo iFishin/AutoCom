@@ -52,11 +52,20 @@ def run_command(cmd, check=True, capture=False):
     """运行命令"""
     try:
         if capture:
-            result = subprocess.run(cmd, shell=True, check=check, 
+            result = subprocess.run(cmd, shell=True, check=False, 
                                   capture_output=True, text=True, cwd=ROOT_DIR)
-            return result.stdout.strip()
+            if result.returncode != 0:
+                return None
+            return result.stdout.strip() if result.stdout.strip() else None
         else:
-            subprocess.run(cmd, shell=True, check=check, cwd=ROOT_DIR)
+            result = subprocess.run(cmd, shell=True, check=False, cwd=ROOT_DIR,
+                                  capture_output=True, text=True)
+            if result.returncode != 0:
+                if result.stderr:
+                    print(result.stderr)
+                if check:
+                    raise subprocess.CalledProcessError(result.returncode, cmd)
+                return False
             return True
     except subprocess.CalledProcessError as e:
         if capture:
@@ -153,11 +162,17 @@ def test():
     
     # 测试 CLI 命令
     print("\n检查 CLI 命令...")
-    result = run_command("autocom -v", check=False, capture=True)
-    if result:
-        print_success(f"autocom 命令: {result}")
+    # 尝试直接调用
+    result = subprocess.run(["autocom", "-v"], capture_output=True, text=True, cwd=ROOT_DIR)
+    if result.returncode == 0 and result.stdout:
+        print_success(f"autocom 命令: {result.stdout.strip()}")
     else:
-        print_warning("autocom 命令未安装 (运行 'python dev.py install' 安装)")
+        # 尝试通过 python -m 调用
+        result2 = subprocess.run(["python", "-m", "cli", "-v"], capture_output=True, text=True, cwd=ROOT_DIR)
+        if result2.returncode == 0:
+            print_success(f"CLI 模块: {result2.stdout.strip()}")
+        else:
+            print_warning("autocom 命令未安装 (运行 'python scripts/dev.py install' 安装)")
     
     return failed == 0
 
@@ -171,14 +186,14 @@ def build():
         import build as _
     except ImportError:
         print_warning("未安装 build 模块,正在安装...")
-        run_command(f"{sys.executable} -m pip install build")
+        run_command(f'"{sys.executable}" -m pip install build')
     
     # 清理旧的构建
     clean()
     
     # 构建
     print_info("开始构建...")
-    if run_command(f"{sys.executable} -m build"):
+    if run_command(f'"{sys.executable}" -m build'):
         print_success("构建成功!")
         
         dist_dir = ROOT_DIR / "dist"
@@ -197,7 +212,7 @@ def install():
     print_header("开发模式安装")
     
     print_info("以开发模式安装 AutoCom...")
-    if run_command(f"{sys.executable} -m pip install -e ."):
+    if run_command(f'"{sys.executable}" -m pip install -e .'):
         print_success("安装成功!")
         
         # 验证安装
@@ -265,7 +280,7 @@ def publish():
         import twine as _
     except ImportError:
         print_warning("未安装 twine,正在安装...")
-        run_command(f"{sys.executable} -m pip install twine")
+        run_command(f'"{sys.executable}" -m pip install twine')
     
     # 检查 dist 目录
     dist_dir = ROOT_DIR / "dist"
@@ -288,7 +303,7 @@ def publish():
     
     # 上传
     print_info("上传到 PyPI...")
-    if run_command(f"{sys.executable} -m twine upload dist/*"):
+    if run_command(f'"{sys.executable}" -m twine upload dist/*'):
         print_success("发布成功!")
         
         current = get_current_version()
