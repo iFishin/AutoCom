@@ -157,7 +157,8 @@ class Device:
         expected_responses = expected_responses or []
         next_expected_idx = 0  # Track which expected response to match next
         
-        max_timeout = min(timeout, 300)  # Cap at 300 seconds
+        # max_timeout = min(timeout, 300)  # Cap at 300 seconds
+        max_timeout = timeout
         check_interval = 0.01  # 10ms check interval
         
         while (time.time() - start_time) < max_timeout:

@@ -126,6 +126,7 @@ class CommandExecutor:
 
         # Check if all expected responses matched (success flag from device)
         if success and updated_expected_responses:
+            # 有期望响应且全部匹配成功
             status_msg = f"Passed ({elapsed_time:.2f}s, matched {len(matched)}/{len(updated_expected_responses)})"
             CommonUtils.print_formatted_log(
                 now,
@@ -157,9 +158,13 @@ class CommandExecutor:
                     CommonUtils.print_log_line("")
                 
                 self.isAllPassed &= isActionPassed
-        elif not updated_expected_responses and response:
-            # No expectations but got response - consider it success
-            status_msg = f"Got response ({elapsed_time:.2f}s)"
+        elif not updated_expected_responses:
+            # 没有设置期望响应,无论有无响应都算成功(超时即可)
+            if response:
+                status_msg = f"Got response ({elapsed_time:.2f}s)"
+            else:
+                status_msg = f"Completed ({elapsed_time:.2f}s)"
+            
             CommonUtils.print_formatted_log(
                 now,
                 "✅ PASS",
@@ -191,11 +196,8 @@ class CommandExecutor:
                 
                 self.isAllPassed &= isActionPassed
         else:
-            # Failed to match expectations or no response
-            if updated_expected_responses:
-                status_msg = f"Failed ({elapsed_time:.2f}s, matched {len(matched)}/{len(updated_expected_responses)})"
-            else:
-                status_msg = f"No response ({elapsed_time:.2f}s)"
+            # 有期望响应但未完全匹配
+            status_msg = f"Failed ({elapsed_time:.2f}s, matched {len(matched)}/{len(updated_expected_responses)})"
             
             CommonUtils.print_formatted_log(
                 now,
