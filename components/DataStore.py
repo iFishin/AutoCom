@@ -86,6 +86,10 @@ class DataStore:
         CommonUtils.print_log_line("No valid data file found, using empty dataset")
         self.data = {}
     
+    def get_constant(self, key, default=None):
+        """Get a constant value by key"""
+        return self.get_data("Constants", key) or default
+        
     def _cleanup_old_files(self):
         """Clean up old data files based on cleanup_days setting"""
         try:

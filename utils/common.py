@@ -3,6 +3,7 @@
 from typing import List
 import os
 import re
+import sys
 
 
 class CommonUtils:
@@ -279,6 +280,80 @@ class CommonUtils:
         pattern = re.compile(r'\{(\w+|_)\}')
         found_variables = re.findall(pattern, s)
         return found_variables
+    
+    @staticmethod
+    def process_variables(param_value: str, data_store: object = None, device_name: str = None) -> str:
+        """Process variables in a string and handle interactive input for empty values
+        
+        Args:
+            param_value: String that may contain variables like ${VAR}
+            data_store: DataStore instance to get/store variable values
+            device_name: Optional device name for retrieving device-specific variables
+            
+        Returns:
+            String with all variables replaced with their values
+        """
+        if not isinstance(param_value, str):
+            return param_value
+            
+        vars = CommonUtils.parse_variables_from_str(param_value)
+        if not vars:
+            return param_value
+            
+        var_values = {}
+        for var in vars:
+            # 优先从 Constants 获取值
+            if data_store:
+                var_value = data_store.get_constant(var)
+                if var_value is not None:
+                    if var_value != "":
+                        var_values[var] = var_value
+                        continue
+                    else:  # 空值，需要用户输入
+                        max_retries = 3
+                        for attempt in range(max_retries):
+                            try:
+                                value = input(f"Please enter value for {var}: ").strip()
+                                
+                                if not value:  # 如果输入为空
+                                    if attempt < max_retries - 1:
+                                        CommonUtils.print_log_line(f"Value cannot be empty. Please try again ({attempt + 1}/{max_retries})")
+                                        continue
+                                    else:
+                                        CommonUtils.print_log_line(f"❌ No valid value provided for {var} after {max_retries} attempts")
+                                        sys.exit(1)
+                                
+                                # 保存输入的值到 Constants
+                                data_store.store_data("Constants", var, value)
+                                var_values[var] = value
+                                CommonUtils.print_log_line(f"✓ Stored {var} = {value}")
+                                break
+                                
+                            except KeyboardInterrupt:
+                                CommonUtils.print_log_line("\n❌ Input cancelled by user")
+                                sys.exit(1)
+                            except Exception as e:
+                                if attempt < max_retries - 1:
+                                    CommonUtils.print_log_line(f"Error: {e}. Please try again ({attempt + 1}/{max_retries})")
+                                    continue
+                                else:
+                                    CommonUtils.print_log_line(f"❌ Failed to get value for {var} after {max_retries} attempts: {e}")
+                                    sys.exit(1)
+                        continue
+                        
+                # 尝试从设备变量获取值
+                if device_name:
+                    var_value = data_store.get_data(device_name, var)
+                    if var_value is not None:
+                        var_values[var] = var_value
+                        continue
+                    
+            # 如果找不到变量
+            CommonUtils.print_log_line(f"❌ Variable '{var}' not found in Constants")
+            CommonUtils.print_log_line("   Note: Variables must be defined in Constants block")
+            sys.exit(1)
+            
+        return CommonUtils.replace_variables_from_str(param_value, vars, **var_values)
         
     @staticmethod
     def replace_variables_from_str(s: str, found_variables: List[str], **kwargs) -> str:

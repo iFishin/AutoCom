@@ -38,7 +38,7 @@ class ActionHandler:
     def handle_variables_from_str(self, param):
         """处理字符串中的变量引用"""
         if hasattr(self.executor, 'handle_variables_from_str'):
-            return self.executor.handle_variables_from_str(param)
+            return self.executor.handle_variables_from_str(param, self.last_device_name if hasattr(self, 'last_device_name') else None)
         return param
     
     def safe_store_data(self, device_name, variable, value):
@@ -90,6 +90,10 @@ class ActionHandler:
         actions = command[action_type]
         result = True
         
+        # 保存当前设备名
+        if 'device_name' in context:
+            self.last_device_name = context['device_name']
+        
         for action in actions:
             try:
                 # 查找动作类型及其处理器
@@ -110,7 +114,10 @@ class ActionHandler:
                     result = False
                     
             except Exception as e:
-                CommonUtils.print_log_line(f"Error occurred while processing action: {e}")
+                device_name = context.get('device_name', 'Unknown')
+                device = context.get('device')
+                port_info = f" (port: {device.port})" if device and hasattr(device, 'port') else ""
+                CommonUtils.print_log_line(f"Error occurred while processing action on device '{device_name}'{port_info}: {e}")
                 result = False
                 
         return result

@@ -1,4 +1,5 @@
 import time
+import sys
 import threading
 import serial
 import re
@@ -47,7 +48,25 @@ class Device:
             
         self.ser.dtr = dtr
         self.ser.rts = rts
-        self.ser.open()
+        # Try to open the serial port and handle common failures (e.g. permission, not found)
+        try:
+            self.ser.open()
+            self.open_failed = False
+        except serial.SerialException as e:
+            CommonUtils.print_log_line(
+                f"Failed to open serial port for device '{self.name}' (port: {self.port}): {e}"
+            )
+            # Mark that opening failed so callers can handle it gracefully
+            self.open_failed = True
+            CommonUtils.print_log_line("Fatal: serial port open failed, exiting.")
+            sys.exit(1)
+        except Exception as e:
+            CommonUtils.print_log_line(
+                f"Unexpected error opening serial port for device '{self.name}' (port: {self.port}): {e}"
+            )
+            self.open_failed = True
+            CommonUtils.print_log_line("Fatal: unexpected error opening serial port, exiting.")
+            sys.exit(1)
 
         self.lock = threading.Lock()
         self.log_file = None
@@ -133,6 +152,18 @@ class Device:
                 - elapsed_time: float, time taken to get response
         """
         start_time = time.time()
+
+        # If the serial port failed to open at init, return a controlled failure
+        if getattr(self, 'open_failed', False) or not (hasattr(self, 'ser') and getattr(self.ser, 'is_open', False)):
+            CommonUtils.print_log_line(
+                f"Serial port not open for device '{self.name}' (port: {self.port}), cannot send command: {command}"
+            )
+            return {
+                "success": False,
+                "response": "",
+                "matched": [],
+                "elapsed_time": 0.0,
+            }
         
         # Send command
         with self.lock:
@@ -204,10 +235,10 @@ class Device:
                 time.sleep(check_interval)
                 
             except serial.SerialException as e:
-                CommonUtils.print_log_line(f"Serial error in send_command: {e}")
+                CommonUtils.print_log_line(f"Serial error on device '{self.name}' (port: {self.port}): {e}")
                 break
             except Exception as e:
-                CommonUtils.print_log_line(f"Unexpected error in send_command: {e}")
+                CommonUtils.print_log_line(f"Unexpected error on device '{self.name}' (port: {self.port}): {e}")
                 break
         
         # Process any remaining data in buffer

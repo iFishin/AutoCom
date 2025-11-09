@@ -144,7 +144,9 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
         if "ConfigForDevices" in dict_data:
             apply_configs_for_device(dict_data.get("ConfigForDevices", {}), dict_data.get("Devices", {}))
 
-        command_device_dict = CommandDeviceDict(dict_data)
+        # 创建 CommandExecutor，让它来创建 CommandDeviceDict
+        executor = CommandExecutor(dict_data)
+        command_device_dict = executor.command_device_dict
         
         # Save the DICT content to a file in the log_date_dir, for later reference
         dict_filename = os.path.basename(dict_path)  # Extract the file name from the path
@@ -172,125 +174,118 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
             apply_configs_for_commands(
                 command_device_dict.dict.get("ConfigForCommands", {}), command_device_dict.dict
             )
-        executor = CommandExecutor(command_device_dict)
 
-        try:
-            failure_count = 0
-            executed_count = 0  # Track actual number of COMPLETED iterations
-            
-            # Use while True for infinite loop mode, otherwise use for loop
-            if infinite_loop:
-                CommonUtils.print_log_line(
-                    line="🔄 Infinite loop mode enabled - Press Ctrl+C to stop",
-                    top_border=True,
-                    bottom_border=True,
-                    side_border=True,
-                    border_side_char="*",
-                    border_vertical_char="*",
-                )
-                iteration = 0
-                while True:
-                    iteration += 1
-                    current_iteration = executed_count + 1  # 显示当前正在执行的迭代编号
-                    CommonUtils.print_log_line(
-                        line=f"💬 Executing iteration {current_iteration}",
-                        top_border=True,
-                        bottom_border=True,
-                        side_border=True,
-                        border_side_char="+",
-                        border_vertical_char="+",
-                    )
-                    try:
-                        result = executor.execute()
-                        executed_count += 1  # 只有成功完成才增加计数
-                    except Exception as e:
-                        CommonUtils.print_log_line(f"❌ Error during iteration {current_iteration}: {e}")
-                        executed_count += 1  # 即使失败也算完成了一次
-                        result = False
-                    
-                    info = (
-                        f"✅ Iteration {executed_count} passed."
-                        if result
-                        else f"❌ Iteration {executed_count} failed."
-                    )
-                    if not result:
-                        failure_count += 1
-                        info += f" (Total: {failure_count} {'iteration' if failure_count == 1 else 'iterations'} failed)"
-                    else:
-                        info += f" (Total: {executed_count - failure_count} passed)"
-                    CommonUtils.print_log_line(
-                        line=info,
-                        top_border=True,
-                        bottom_border=True,
-                        side_border=True,
-                        border_side_char="|",
-                        border_vertical_char="-",
-                    )
-            else:
-                # Normal loop with specified count
-                for i in range(loop_count):
-                    current_iteration = executed_count + 1  # 显示当前正在执行的迭代编号
-                    CommonUtils.print_log_line(
-                        line=f"{'💬 Executing iteration ' + str(current_iteration) + '/' + str(loop_count)}",
-                        top_border=True,
-                        bottom_border=True,
-                        side_border=True,
-                        border_side_char="+",
-                        border_vertical_char="+",
-                    )
-                    try:
-                        result = executor.execute()
-                        executed_count += 1  # 只有成功完成才增加计数
-                    except Exception as e:
-                        CommonUtils.print_log_line(f"❌ Error during iteration {current_iteration}: {e}")
-                        executed_count += 1  # 即使失败也算完成了一次
-                        result = False
-                    
-                    info = (
-                        f"{'✅ ' + str(executed_count)}/{loop_count} iterations passed."
-                        if result
-                        else "❌ "
-                        + str(executed_count)
-                        + "/"
-                        + str(loop_count)
-                        + " iterations failed."
-                    )
-                    if not result:
-                        failure_count += 1
-                        info += f" ({failure_count}) {'iteration' if failure_count == 1 else 'iterations'} failed"
-                    CommonUtils.print_log_line(
-                        line=info,
-                        top_border=True,
-                        bottom_border=True,
-                        side_border=True,
-                        border_side_char="|",
-                        border_vertical_char="-",
-                    )
-                    # Wait 1 second between iterations
-                    # if i < loop_count - 1:
-                    #     time.sleep(1)  
-
-        finally:
-            # close all devices and save data
-            command_device_dict.close_all_devices()  # Use the new method to properly cleanup
-            executor.data_store.stop()
-            
-            # Use executed_count (actual iterations) instead of loop_count in summary
-            if executed_count == 0:
-                summary_line = "🧾 Summary: No iterations were executed."
-            elif failure_count == 0:
-                summary_line = f"🧾 Summary:{executed_count - failure_count}/{executed_count} iterations passed."
-            else:
-                summary_line = f"🧾 Summary:{failure_count}/{executed_count} iterations failed."
-            
+        failure_count = 0
+        executed_count = 0  # Track actual number of COMPLETED iterations
+        
+        # Use while True for infinite loop mode, otherwise use for loop
+        if infinite_loop:
             CommonUtils.print_log_line(
-                summary_line,
+                line="🔄 Infinite loop mode enabled - Press Ctrl+C to stop",
                 top_border=True,
                 bottom_border=True,
                 side_border=True,
-                border_side_char="|",
-                border_vertical_char="-",
+                border_side_char="*",
+                border_vertical_char="*",
             )
+            iteration = 0
+            while True:
+                iteration += 1
+                current_iteration = executed_count + 1  # 显示当前正在执行的迭代编号
+                CommonUtils.print_log_line(
+                    line=f"💬 Executing iteration {current_iteration}",
+                    top_border=True,
+                    bottom_border=True,
+                    side_border=True,
+                    border_side_char="+",
+                    border_vertical_char="+",
+                )
+                try:
+                    result = executor.execute()
+                    executed_count += 1  # 只有成功完成才增加计数
+                except Exception as e:
+                    # 获取设备信息用于错误提示
+                    device_info = []
+                    for dev_name, dev in command_device_dict.devices.items():
+                        if hasattr(dev, 'port'):
+                            device_info.append(f"{dev_name}({dev.port})")
+                        else:
+                            device_info.append(dev_name)
+                    devices_str = ", ".join(device_info) if device_info else "Unknown"
+                    
+                    CommonUtils.print_log_line(f"❌ Error during iteration {current_iteration}: {e}")
+                    CommonUtils.print_log_line(f"   Devices involved: {devices_str}")
+                    executed_count += 1  # 即使失败也算完成了一次
+                    result = False
+                
+                info = (
+                    f"✅ Iteration {executed_count} passed."
+                    if result
+                    else f"❌ Iteration {executed_count} failed."
+                )
+                if not result:
+                    failure_count += 1
+                    info += f" (Total: {failure_count} {'iteration' if failure_count == 1 else 'iterations'} failed)"
+                else:
+                    info += f" (Total: {executed_count - failure_count} passed)"
+                CommonUtils.print_log_line(
+                    line=info,
+                    top_border=True,
+                    bottom_border=True,
+                    side_border=True,
+                    border_side_char="|",
+                    border_vertical_char="-",
+                )
+        else:
+            # Normal loop with specified count
+            for i in range(loop_count):
+                current_iteration = executed_count + 1  # 显示当前正在执行的迭代编号
+                CommonUtils.print_log_line(
+                    line=f"{'💬 Executing iteration ' + str(current_iteration) + '/' + str(loop_count)}",
+                    top_border=True,
+                    bottom_border=True,
+                    side_border=True,
+                    border_side_char="+",
+                    border_vertical_char="+",
+                )
+                try:
+                    result = executor.execute()
+                    executed_count += 1  # 只有成功完成才增加计数
+                except Exception as e:
+                    # 获取设备信息用于错误提示
+                    device_info = []
+                    for dev_name, dev in command_device_dict.devices.items():
+                        if hasattr(dev, 'port'):
+                            device_info.append(f"{dev_name}({dev.port})")
+                        else:
+                            device_info.append(dev_name)
+                    devices_str = ", ".join(device_info) if device_info else "Unknown"
+                    
+                    CommonUtils.print_log_line(f"❌ Error during iteration {current_iteration}: {e}")
+                    CommonUtils.print_log_line(f"   Devices involved: {devices_str}")
+                    executed_count += 1  # 即使失败也算完成了一次
+                    result = False
+                
+                info = (
+                    f"{'✅ ' + str(executed_count)}/{loop_count} iterations passed."
+                    if result
+                    else "❌ "
+                    + str(executed_count)
+                    + "/"
+                    + str(loop_count)
+                    + " iterations failed."
+                )
+                if not result:
+                    failure_count += 1
+                    info += f" ({failure_count}) {'iteration' if failure_count == 1 else 'iterations'} failed"
+                CommonUtils.print_log_line(
+                    line=info,
+                    top_border=True,
+                    bottom_border=True,
+                    side_border=True,
+                    border_side_char="|",
+                    border_vertical_char="-",
+                )
 
     except FileNotFoundError:
         CommonUtils.print_log_line(f"Error: Dictionary file '{dict_path}' not found")
@@ -298,6 +293,28 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
     except json.JSONDecodeError:
         CommonUtils.print_log_line(f"Error: Invalid JSON format in '{dict_path}'")
         sys.exit(1)
+    finally:
+        # close all devices and save data
+        if 'command_device_dict' in locals():
+            command_device_dict.close_all_devices()  # Use the new method to properly cleanup
+        if 'executor' in locals():
+            executor.data_store.stop()
+        
+        # Use executed_count (actual iterations) instead of loop_count in summary
+        if executed_count == 0:
+            summary_line = "🧾 Summary: No iterations were executed."
+        elif failure_count == 0:
+            summary_line = f"🧾 Summary:{executed_count - failure_count}/{executed_count} iterations passed."
+        else:
+            summary_line = f"🧾 Summary:{failure_count}/{executed_count} iterations failed."
+        CommonUtils.print_log_line(
+            line=summary_line,
+            top_border=True,
+            bottom_border=True,
+            side_border=True,
+            border_side_char="|",
+                border_vertical_char="-",
+            )
 
 def execute_with_folder(path: str, files: list, config: json = None):
     template_dict = {}
@@ -307,7 +324,9 @@ def execute_with_folder(path: str, files: list, config: json = None):
     if "ConfigForDevices" in template_dict:
         apply_configs_for_device(template_dict.get("ConfigForDevices", {}), template_dict.get("Devices", {}))
         
-    command_device_dict = CommandDeviceDict(template_dict)
+    # 创建 CommandExecutor，让它来创建 CommandDeviceDict
+    executor = CommandExecutor(template_dict)
+    command_device_dict = executor.command_device_dict
 
     failure_count = 0
     try:
@@ -361,9 +380,9 @@ def execute_with_folder(path: str, files: list, config: json = None):
                 top_border=True,
                 bottom_border=True,
                 side_border=True,
-                border_side_char="|",
-                border_vertical_char="-",
-            )
+            border_side_char="|",
+            border_vertical_char="-",
+        )
             # Wait 1 second between files
             # time.sleep(1)
     

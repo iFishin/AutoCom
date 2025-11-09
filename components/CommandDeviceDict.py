@@ -1,4 +1,5 @@
 import serial
+import sys
 try:
     from utils.common import CommonUtils
     from components.Device import Device
@@ -104,10 +105,10 @@ class MonitorManager:
                     time.sleep(0.01)
                     
             except serial.SerialException as e:
-                CommonUtils.print_log_line(f"Serial error {self.device_name}: {e}")
+                CommonUtils.print_log_line(f"Serial error on device '{self.device_name}' (port: {self.device.port}): {e}")
                 break
             except Exception as e:
-                CommonUtils.print_log_line(f"Monitor error {self.device_name}: {e}")
+                CommonUtils.print_log_line(f"Monitor error on device '{self.device_name}' (port: {self.device.port}): {e}")
                 time.sleep(0.1)
                 
         CommonUtils.print_log_line(f"Monitor ended: {self.device_name}")
@@ -144,10 +145,11 @@ class MonitorManager:
 
 
 class CommandDeviceDict:
-    def __init__(self, dict):
+    def __init__(self, dict, data_store=None):
         self.dict = dict
         self.devices = {}
         self.log_date_dir = None
+        self._data_store = data_store
         
         # Simplified monitoring mechanism
         self.monitor_threads = {}  # Track monitor threads
@@ -156,6 +158,76 @@ class CommandDeviceDict:
         # Optimized data sharing mechanism
         self.device_monitors = {}  # device_name -> MonitorManager instance
         
+        # 首先处理所有常量，确保所有变量都可用
+        if "Constants" in dict:
+            need_input_constants = []
+            loaded_constants = []
+            
+            for key, value in dict["Constants"].items():
+                # 首先检查是否已经在 data_store 中有值
+                if self._data_store and self._data_store.get_data("Constants", key):
+                    loaded_constants.append(key)
+                    continue
+
+                if value == "":  # 空字符串，需要用户输入
+                    need_input_constants.append(key)
+                else:
+                    if self._data_store:
+                        self._data_store.store_data("Constants", key, value)
+                        loaded_constants.append(key)
+            
+            if loaded_constants:
+                CommonUtils.print_log_line(
+                    f"✓ Loaded {len(loaded_constants)} constants: {', '.join(loaded_constants)}",
+                    bottom_border=True,
+                )
+            
+            # 处理需要用户输入的常量
+            if need_input_constants:
+                CommonUtils.print_log_line(
+                    "The following constants need your input:",
+                    top_border=True
+                )
+                
+                for key in need_input_constants:
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        try:
+                            # 提示用户输入并去除首尾空格
+                            value = input(f"Please enter value for {key}: ").strip()
+                            
+                            if not value:  # 如果输入为空
+                                if attempt < max_retries - 1:
+                                    CommonUtils.print_log_line(f"Value cannot be empty. Please try again ({attempt + 1}/{max_retries})")
+                                    continue
+                                else:
+                                    CommonUtils.print_log_line(f"❌ No valid value provided for {key} after {max_retries} attempts")
+                                    sys.exit(1)
+                            
+                            # 存储用户输入的值
+                            if self._data_store:
+                                self._data_store.store_data("Constants", key, value)
+                            loaded_constants.append(key)
+                            CommonUtils.print_log_line(f"✓ Stored {key} = {value}")
+                            break
+                            
+                        except KeyboardInterrupt:
+                            CommonUtils.print_log_line("\n❌ Input cancelled by user")
+                            sys.exit(1)
+                        except Exception as e:
+                            if attempt < max_retries - 1:
+                                CommonUtils.print_log_line(f"Error: {e}. Please try again ({attempt + 1}/{max_retries})")
+                                continue
+                            else:
+                                CommonUtils.print_log_line(f"❌ Failed to get value for {key} after {max_retries} attempts: {e}")
+                                sys.exit(1)
+                
+                CommonUtils.print_log_line(
+                    f"✓ Successfully collected values for all {len(need_input_constants)} constants",
+                    bottom_border=True
+                )
+        
+        # 所有常量都已处理好，现在开始初始化设备
         for device in dict["Devices"]:
             if device["status"] == "enabled":
                 parity_map = {
@@ -170,17 +242,25 @@ class CommandDeviceDict:
                 parity = parity_map.get(parity_value, serial.PARITY_NONE)
 
                 device_name = device["name"]
+                # 处理可能包含变量的设备参数
+                port = CommonUtils.process_variables(device["port"], self._data_store)
+                baud_rate = CommonUtils.process_variables(device["baud_rate"], self._data_store)
+                stop_bits = CommonUtils.process_variables(device.get("stop_bits", serial.STOPBITS_ONE), self._data_store)
+                data_bits = CommonUtils.process_variables(device.get("data_bits", serial.EIGHTBITS), self._data_store)
+                line_ending = CommonUtils.process_variables(device.get("line_ending", "0d0a"), self._data_store)
+                
+                # 创建设备实例
                 self.devices[device_name] = Device(
                     name=device_name,
-                    port=device["port"],
-                    baud_rate=device["baud_rate"],
-                    stop_bits=device.get("stop_bits", serial.STOPBITS_ONE),
+                    port=port,
+                    baud_rate=baud_rate,
+                    stop_bits=stop_bits,
                     parity=parity,
-                    data_bits=device.get("data_bits", serial.EIGHTBITS),
+                    data_bits=data_bits,
                     flow_control=device.get("flow_control"),
                     dtr=device.get("dtr", False),
                     rts=device.get("rts", False),
-                    line_ending=device.get("line_ending", "0d0a"),  # Default CRLF in ASCII hex
+                    line_ending=line_ending,  # Default CRLF in ASCII hex
                 )
                 
                 # Setup logging - 使用环境变量中的日志目录（如果设置了）
@@ -190,7 +270,7 @@ class CommandDeviceDict:
                 
                 CommonUtils.set_log_file_path(self.log_date_dir)
                 CommonUtils.print_log_line(
-                    f"Device {device['name']} connected to port {device['port']}, baud rate {device['baud_rate']}",
+                    f"Device {device_name} connected to port {port}, baud rate {baud_rate}",
                     top_border=True,
                     bottom_border=True,
                 )

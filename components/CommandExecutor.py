@@ -1,5 +1,6 @@
 import time
 import threading
+import sys
 from concurrent.futures import ThreadPoolExecutor
 try:
     from utils.common import CommonUtils
@@ -13,16 +14,83 @@ except ModuleNotFoundError:
     from ..utils.ActionHandler import ActionHandler
 
 class CommandExecutor:
-    def __init__(self, command_device_dict, session_id=None):
-        self.command_device_dict = command_device_dict
+    def __init__(self, command_device_dict_or_dict, session_id=None):
+        # 创建 DataStore 实例
         self.data_store = DataStore(session_id=session_id)
         self.lock = threading.Lock()
+        
+        # 从字典数据中获取数据
+        dict_data = command_device_dict_or_dict if isinstance(command_device_dict_or_dict, dict) else command_device_dict_or_dict.dict
+        
+        # 处理常量
+        if "Constants" in dict_data:
+            need_input_constants = []
+            loaded_constants = []
+
+            for key, value in dict_data["Constants"].items():
+                if value == "":  # 空字符串，需要用户输入
+                    need_input_constants.append(key)
+                else:
+                    self.data_store.store_data("Constants", key, value)
+                    loaded_constants.append(key)
+
+            # 处理需要用户输入的常量
+            if need_input_constants:
+                CommonUtils.print_log_line(
+                    "The following constants need your input:",
+                    top_border=True,
+                )
+                
+                for key in need_input_constants:
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        try:
+                            # 提示用户输入并去除首尾空格
+                            value = input(f"Please enter value for {key}: ").strip()
+                            
+                            if not value:  # 如果输入为空
+                                if attempt < max_retries - 1:
+                                    CommonUtils.print_log_line(f"Value cannot be empty. Please try again ({attempt + 1}/{max_retries})")
+                                    continue
+                                else:
+                                    CommonUtils.print_log_line(f"❌ No valid value provided for {key} after {max_retries} attempts")
+                                    sys.exit(1)
+                            
+                            # 存储用户输入的值
+                            self.data_store.store_data("Constants", key, value)
+                            CommonUtils.print_log_line(f"✓ Stored {key} = {value}")
+                            break
+                            
+                        except KeyboardInterrupt:
+                            CommonUtils.print_log_line("\n❌ Input cancelled by user")
+                            sys.exit(1)
+                        except Exception as e:
+                            if attempt < max_retries - 1:
+                                CommonUtils.print_log_line(f"Error: {e}. Please try again ({attempt + 1}/{max_retries})")
+                                continue
+                            else:
+                                CommonUtils.print_log_line(f"❌ Failed to get value for {key} after {max_retries} attempts: {e}")
+                                sys.exit(1)
+                
+                CommonUtils.print_log_line(
+                    f"✓ Successfully collected values for all {len(need_input_constants)} constants",
+                    bottom_border=True,
+                )
+
+        # 创建或更新 CommandDeviceDict
+        if isinstance(command_device_dict_or_dict, dict):
+            self.command_device_dict = CommandDeviceDict(command_device_dict_or_dict, self.data_store)
+        else:
+            self.command_device_dict = command_device_dict_or_dict
+            # 注入 DataStore 实例到现有的 CommandDeviceDict
+            if self.command_device_dict._data_store is None:
+                self.command_device_dict._data_store = self.data_store
         
         # Check if there is a custom ActionHandler
         action_handler_class = ActionHandler  # Default to the base class
         
-        if "ConfigForActions" in command_device_dict.dict:
-            handler_class_path = command_device_dict.dict["ConfigForActions"].get("handler_class")
+        if "ConfigForActions" in self.command_device_dict.dict:
+            handler_class_path = self.command_device_dict.dict["ConfigForActions"].get("handler_class")
             if handler_class_path:
                 try:
                     # Dynamically import the specified handler class
@@ -40,20 +108,14 @@ class CommandExecutor:
     def execute_command(self, command) -> bool:
         self.isAllPassed = False
 
-        def handle_variables_from_str(param):
-            if CommonUtils.parse_variables_from_str(param):
-                variable_name = CommonUtils.parse_variables_from_str(param)
-                variable_name_dict = {}
-                for var in variable_name:
-                    var_value = self.data_store.get_data(device_name, var)
-                    variable_name_dict[var] = var_value
-                return CommonUtils.replace_variables_from_str(
-                    param, variable_name, **variable_name_dict
-                )
-            else:
-                return param
-
         # For backward compatibility, keep this method
+        def handle_variables_from_str(param, device_name):
+            if isinstance(param, str):
+                # 尝试从 Constants 和设备变量中获取变量值
+                result = CommonUtils.process_variables(param, self.data_store, device_name)
+                return result
+            return param
+            
         self.handle_variables_from_str = handle_variables_from_str
 
         device_name = command["device"]
@@ -63,17 +125,17 @@ class CommandExecutor:
         if "expected_responses" in command:
             for expected_response in command["expected_responses"]:
                 updated_expected_responses.append(
-                    handle_variables_from_str(expected_response)
+                    handle_variables_from_str(expected_response, device_name)
                 )
         
         if "command" in command:
-            cmd_str = handle_variables_from_str(command["command"])
+            cmd_str = handle_variables_from_str(command["command"], device_name)
         else:
             cmd_str = ""
         
         if "parameters" in command:
             for param in command["parameters"]:
-                cmd_str += handle_variables_from_str(param)
+                cmd_str += handle_variables_from_str(param, device_name)
         
         if "hex_mode" in command:
             hex_mode = command["hex_mode"]
