@@ -178,7 +178,7 @@ class CommandDeviceDict:
             
             if loaded_constants:
                 CommonUtils.print_log_line(
-                    f"✓ Loaded {len(loaded_constants)} constants: {', '.join(loaded_constants)}",
+                    f"[OK] Loaded {len(loaded_constants)} constants: {', '.join(loaded_constants)}",
                     bottom_border=True,
                 )
             

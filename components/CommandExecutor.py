@@ -19,6 +19,10 @@ class CommandExecutor:
         self.data_store = DataStore(session_id=session_id)
         self.lock = threading.Lock()
         
+        # 迭代追踪信息
+        self.current_iteration = None
+        self.total_iterations = None
+        
         # 从字典数据中获取数据
         dict_data = command_device_dict_or_dict if isinstance(command_device_dict_or_dict, dict) else command_device_dict_or_dict.dict
         
@@ -177,14 +181,11 @@ class CommandExecutor:
         def handle_response_actions(command, response, action_type):
             return self.action_handler.handle_response_actions(command, response, action_type, context)
 
-        # Split long strings
-        cmd_lines = CommonUtils.format_long_string(cmd_str, 18)
-        device_lines = CommonUtils.format_long_string(device_name, 8)
+        # Prepare command display string
         response_preview = response[:48] + "" if len(response) > 48 else response
-        response_lines = CommonUtils.format_long_string(response_preview, 48)
 
         if cmd_str.strip() == "":
-            cmd_lines = ["ℹ INFO"]
+            cmd_str = "ℹ INFO"
 
         # Check if all expected responses matched (success flag from device)
         if success and updated_expected_responses:
@@ -193,19 +194,11 @@ class CommandExecutor:
             CommonUtils.print_formatted_log(
                 now,
                 "✅ PASS",
-                device_lines[0],
-                cmd_lines[0],
+                device_name,
+                cmd_str,
                 status_msg,
-                True,
+                False,
             )
-            for i in range(
-                1, max(len(cmd_lines), len(response_lines), len(device_lines))
-            ):
-                cmd = cmd_lines[i] if i < len(cmd_lines) else ""
-                resp = response_lines[i] if i < len(response_lines) else ""
-                dev = device_lines[i] if i < len(device_lines) else ""
-                CommonUtils.print_formatted_log("", "", dev, cmd, resp)
-            CommonUtils.print_formatted_log("", "", "", "", "")
             self.isAllPassed = True
             
             # 使用新的 ActionHandler 处理 actions
@@ -230,19 +223,11 @@ class CommandExecutor:
             CommonUtils.print_formatted_log(
                 now,
                 "✅ PASS",
-                device_lines[0],
-                cmd_lines[0],
+                device_name,
+                cmd_str,
                 status_msg,
-                True,
+                False,
             )
-            for i in range(
-                1, max(len(cmd_lines), len(response_lines), len(device_lines))
-            ):
-                cmd = cmd_lines[i] if i < len(cmd_lines) else ""
-                resp = response_lines[i] if i < len(response_lines) else ""
-                dev = device_lines[i] if i < len(device_lines) else ""
-                CommonUtils.print_formatted_log("", "", dev, cmd, resp)
-            CommonUtils.print_formatted_log("", "", "", "", "")
             self.isAllPassed = True
             
             # 使用新的 ActionHandler 处理 actions
@@ -264,19 +249,11 @@ class CommandExecutor:
             CommonUtils.print_formatted_log(
                 now,
                 "❌ FAIL",
-                device_lines[0],
-                cmd_lines[0],
+                device_name,
+                cmd_str,
                 status_msg,
-                True,
+                False,
             )
-            for i in range(
-                1, max(len(cmd_lines), len(response_lines), len(device_lines))
-            ):
-                cmd = cmd_lines[i] if i < len(cmd_lines) else ""
-                resp = response_lines[i] if i < len(response_lines) else ""
-                dev = device_lines[i] if i < len(device_lines) else ""
-                CommonUtils.print_formatted_log("", "", dev, cmd, resp)
-            CommonUtils.print_formatted_log("", "", "", "", "")
             self.isAllPassed = False
             
             # 使用新的 ActionHandler 处理 actions
@@ -286,6 +263,16 @@ class CommandExecutor:
                 handle_response_actions(command, response, "error_response_actions")
         
         return self.isAllPassed
+    
+    def set_iteration_info(self, current_iteration, total_iterations=None):
+        """Set iteration information for logging purposes
+        
+        Args:
+            current_iteration: Current iteration number (1-based)
+            total_iterations: Total number of iterations (optional)
+        """
+        self.current_iteration = current_iteration
+        self.total_iterations = total_iterations
 
     def execute(self) -> bool:
         commands = self.command_device_dict.dict["Commands"]
@@ -293,12 +280,23 @@ class CommandExecutor:
             CommonUtils.print_log_line("No commands to execute.")
             return
 
-        CommonUtils.print_log_line(
-            f"  {'EXECUTED_POINT':^25} | {'RESULT':^10} | {'DEVICE':^10} | {'COMMAND':^25} | {'RESPONSE':^30}  ",
-            top_border=True,
-            bottom_border=True,
-        )
+        # Mark iteration in all device logs if iteration info is set
+        if self.current_iteration is not None:
+            for device_name, device in self.command_device_dict.devices.items():
+                device.mark_iteration(self.current_iteration, self.total_iterations)
 
+        # Print table header
+        CommonUtils.print_formatted_log(
+            time_str="Time",
+            result="Result",
+            device="Device",
+            command_str="Command",
+            response_str="Response",
+            first_line=True,
+            top_border=True,
+            bottom_border=True
+        )
+        
         i = 0
         self.isSinglePassed = True
         while i < len(commands):

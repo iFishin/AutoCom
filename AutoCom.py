@@ -22,36 +22,36 @@ except ModuleNotFoundError:
 
 
 def load_commands_from_file(file_path):
-    """安全加载 JSON 文件，尝试多种编码并在失败时给出友好提示。
+    """Safely load a JSON file, attempting multiple encodings and providing friendly error messages on failure.
 
-    优先尝试 UTF-8/UTF-8-SIG，然后回退到系统编码（GBK）或 latin-1，最后使用替换策略读取。
-    这样可以避免 Windows 下默认使用 GBK 导致无法解析 UTF-8 文件的情况。
+    Prioritize UTF-8/UTF-8-SIG, then fallback to system encoding (GBK) or latin-1, and finally use a replacement strategy for reading.
+    This helps avoid issues where the default GBK encoding on Windows prevents parsing of UTF-8 files.
     """
     encodings_to_try = ["utf-8", "utf-8-sig", "gbk", "latin-1"]
     for enc in encodings_to_try:
         try:
             with open(file_path, "r", encoding=enc) as file:
-                CommonUtils.print_log_line(f"Loading JSON '{file_path}' with encoding: {enc}")
+                CommonUtils.print_log_line(f"Loading JSON file '{file_path}' using encoding: {enc}")
                 return json.load(file)
         except UnicodeDecodeError:
-            # 尝试下一个编码
+            # Try next encoding
             continue
         except json.JSONDecodeError:
-            # 文件读取成功但 JSON 无效，抛出以便上层处理
+            # File read succeeded but JSON is invalid — re-raise for upper layer to handle
             raise
         except Exception:
-            # 其它异常也继续尝试
+            # Other errors, try next encoding
             continue
 
-    # 最后尝试以二进制方式读取并用替换策略解码，这样至少可以避免因编码问题崩溃
+    # Final attempt: read as binary and decode with replacement to avoid crashing on encoding issues
     try:
         with open(file_path, "rb") as f:
             raw = f.read()
         text = raw.decode("utf-8", errors="replace")
-        CommonUtils.print_log_line(f"Loaded JSON '{file_path}' by fallback decode (utf-8 replace).")
+        CommonUtils.print_log_line(f"Loaded JSON file '{file_path}' using fallback decoding (utf-8 with replace).")
         return json.loads(text)
     except Exception as e:
-        CommonUtils.print_log_line(f"❌ 无法加载 JSON 文件 '{file_path}': {e}")
+        CommonUtils.print_log_line(f"❌ Failed to load JSON file '{file_path}': {e}")
         raise
 
 def merge_config(config: json, dict_data: json):
@@ -144,7 +144,7 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
         if "ConfigForDevices" in dict_data:
             apply_configs_for_device(dict_data.get("ConfigForDevices", {}), dict_data.get("Devices", {}))
 
-        # 创建 CommandExecutor，让它来创建 CommandDeviceDict
+        # Create CommandExecutor to create CommandDeviceDict
         executor = CommandExecutor(dict_data)
         command_device_dict = executor.command_device_dict
         
@@ -201,8 +201,10 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
                     border_vertical_char="+",
                 )
                 try:
+                    # Set iteration info in executor for logging
+                    executor.set_iteration_info(current_iteration)
                     result = executor.execute()
-                    executed_count += 1  # 只有成功完成才增加计数
+                    executed_count += 1
                 except Exception as e:
                     # 获取设备信息用于错误提示
                     device_info = []
@@ -249,6 +251,8 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
                     border_vertical_char="+",
                 )
                 try:
+                    # Set iteration info in executor for logging
+                    executor.set_iteration_info(current_iteration, loop_count)
                     result = executor.execute()
                     executed_count += 1  # 只有成功完成才增加计数
                 except Exception as e:

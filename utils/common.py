@@ -4,6 +4,7 @@ from typing import List
 import os
 import re
 import sys
+import shutil
 
 
 class CommonUtils:
@@ -11,10 +12,28 @@ class CommonUtils:
     
     # Define global variables
     log_file_path = "EXECUTION_LOG.log"
+    terminal_width = None  # Auto-detect terminal width
     
     @classmethod
     def set_log_file_path(cls, path: str):
         cls.log_file_path = os.path.join(path, "EXECUTION_LOG.log")
+    
+    @classmethod
+    def get_terminal_width(cls) -> int:
+        """Get terminal width, with fallback to 120 if unable to detect"""
+        if cls.terminal_width is None:
+            try:
+                cls.terminal_width = shutil.get_terminal_size((120, 24)).columns
+                # Ensure minimum width of 80 and maximum of 200
+                cls.terminal_width = max(80, min(cls.terminal_width, 200))
+            except Exception:
+                cls.terminal_width = 120
+        return cls.terminal_width
+    
+    @classmethod
+    def reset_terminal_width(cls):
+        """Reset terminal width cache to force re-detection"""
+        cls.terminal_width = None
     
     def escape_control_characters(s: str, ignore_crlf: bool = True) -> str:
         r"""
@@ -103,7 +122,14 @@ class CommonUtils:
         Returns:
             Display width of the string
         """
-        emoji_pattern = re.compile(r'[\U00010000-\U0010FFFF]|[✅❌]')
+        # More comprehensive emoji pattern to catch most emoji
+        emoji_pattern = re.compile(
+            r'[\U0001F300-\U0001F9FF]'  # Emoji range
+            r'|[\U0001F600-\U0001F64F]'  # Emoticons
+            r'|[\U0001F900-\U0001F9FF]'  # Supplemental symbols
+            r'|[\U0001FA00-\U0001FA6F]'  # Chess symbols
+            r'|[✅❌📱💬🔄🧾💾]'  # Common single characters
+        )
         width = 0
         if not isinstance(s, str):
             return width
@@ -113,6 +139,35 @@ class CommonUtils:
             else:
                 width += 1
         return width
+    
+    @staticmethod
+    def _truncate_string(s: str, max_display_width: int) -> str:
+        """Truncate a string to a maximum display width, accounting for emoji
+        
+        Args:
+            s: String to truncate
+            max_display_width: Maximum display width
+            
+        Returns:
+            Truncated string
+        """
+        # Same comprehensive emoji pattern as get_string_display_width
+        emoji_pattern = re.compile(
+            r'[\U0001F300-\U0001F9FF]'
+            r'|[\U0001F600-\U0001F64F]'
+            r'|[\U0001F900-\U0001F9FF]'
+            r'|[\U0001FA00-\U0001FA6F]'
+            r'|[✅❌📱💬🔄🧾💾]'
+        )
+        current_width = 0
+        
+        for i, char in enumerate(s):
+            char_width = 2 if emoji_pattern.match(char) else 1
+            if current_width + char_width > max_display_width:
+                return s[:i]
+            current_width += char_width
+        
+        return s
 
     @classmethod
     def print_log_line(
@@ -123,12 +178,14 @@ class CommonUtils:
         side_border: bool = True,
         border_vertical_char: str = "-",
         border_side_char: str = "|",
-        length: int = 120,
+        length: int = None,
         align: str = "^",
         log_file: str = None,
         is_print: bool = True,
     ) -> str:
         """Print and save formatted log line with borders
+        
+        Automatically adapts to terminal width if length is not specified.
 
         Args:
             line: Line to print
@@ -137,63 +194,90 @@ class CommonUtils:
             side_border: Whether to print side border
             border_vertical_char: Character for top and bottom borders
             border_side_char: Side border character
-            length: Total length of the line
+            length: Total length of the line (auto-detect if None)
             align: Text alignment ('^' for center, '<' for left, '>' for right)
+            log_file: Log file path (uses default if None)
+            is_print: Whether to print to console
 
         Returns:
             Formatted log line string
         """
         if log_file is None:
             log_file = cls.log_file_path
-
+        
+        # Auto-detect terminal width if length not specified
+        if length is None:
+            length = cls.get_terminal_width()
+        
         if top_border:
             border = border_vertical_char * length
-            print(border)
+            if is_print:
+                print(border)
             FileHandler.write_file(log_file, border + "\n", "a")
         
         if side_border:
             content_length = length - len(border_side_char) * 2 - 2
             # Adjust line length for emoji characters
             display_width = cls.get_string_display_width(line)
-            padding = content_length - display_width
-            if padding > 0:
-                if align == '^':
-                    left_pad = padding // 2
-                    right_pad = padding - left_pad
-                    formatted_line = ' ' * left_pad + line + ' ' * right_pad
-                elif align == '<':
-                    formatted_line = line + ' ' * padding
-                else:  # align == '>'
-                    formatted_line = ' ' * padding + line
+            
+            # If line is too long, truncate with ellipsis
+            if display_width > content_length:
+                # Truncate and add ellipsis
+                truncated_line = cls._truncate_string(line, content_length - 3)
+                display_width = cls.get_string_display_width(truncated_line) + 3
+                formatted_line = truncated_line + "..."
             else:
-                formatted_line = line
+                padding = content_length - display_width
+                if padding > 0:
+                    if align == '^':
+                        left_pad = padding // 2
+                        right_pad = padding - left_pad
+                        formatted_line = ' ' * left_pad + line + ' ' * right_pad
+                    elif align == '<':
+                        formatted_line = line + ' ' * padding
+                    else:  # align == '>'
+                        formatted_line = ' ' * padding + line
+                else:
+                    formatted_line = line
+            
             line = f"{border_side_char} {formatted_line} {border_side_char}"
         else:
-            # Similar adjustment for non-bordered lines
+            # Non-bordered line with width adaptation
             display_width = cls.get_string_display_width(line)
-            padding = length - display_width
-            if padding > 0:
-                if align == '^':
-                    left_pad = padding // 2
-                    right_pad = padding - left_pad
-                    formatted_line = ' ' * left_pad + line + ' ' * right_pad
-                elif align == '<':
-                    formatted_line = line + ' ' * padding
-                else:  # align == '>'
-                    formatted_line = ' ' * padding + line
+            if display_width > length:
+                # Truncate if too long
+                line = cls._truncate_string(line, length - 3) + "..."
             else:
-                formatted_line = line
-            line = formatted_line
+                padding = length - display_width
+                if padding > 0:
+                    if align == '^':
+                        left_pad = padding // 2
+                        right_pad = padding - left_pad
+                        line = ' ' * left_pad + line + ' ' * right_pad
+                    elif align == '<':
+                        line = line + ' ' * padding
+                    else:  # align == '>'
+                        line = ' ' * padding + line
         
         if is_print:
-            print(line)
+            try:
+                print(line)
+            except UnicodeEncodeError:
+                # Handle unicode encoding errors for terminals with limited encoding support
+                try:
+                    print(line.encode('utf-8', 'replace').decode('utf-8', 'replace'))
+                except UnicodeEncodeError:
+                    # Last resort: remove problematic characters
+                    print(line.encode('ascii', 'replace').decode('ascii'))
         FileHandler.write_file(log_file, line + "\n", "a")
         
         if bottom_border:
             border = border_vertical_char * length
-            print(border)
+            if is_print:
+                print(border)
             FileHandler.write_file(log_file, border + "\n", "a")
         return line
+
 
     @staticmethod
     def print_formatted_log(
@@ -203,8 +287,10 @@ class CommonUtils:
         command_str: str,
         response_str: str,
         first_line: bool = False,
+        top_border: bool = False,
+        bottom_border: bool = False
     ) -> str:
-        """Print and save formatted log line
+        """Print and save formatted log line with adaptive column widths
 
         Args:
             time_str: Time string
@@ -212,39 +298,98 @@ class CommonUtils:
             device: Device name
             command_str: Command string
             response_str: Response string
-            first_line: Whether this is the first line
+            first_line: Whether this is the first line (not used)
+            top_border: Whether to print top border
+            bottom_border: Whether to print bottom border
 
         Returns:
             Formatted log line string
         """
-        # Define field widths
-        fields = [
-            (time_str, 25),
-            (result, 10),
-            (device, 10),
-            (command_str, 25),
-            (response_str, 30)
-        ]
-        if not first_line:
-            # For continuation lines, replace time and result with spaces
-            fields[0] = (" " * 25, 25)
-            fields[1] = (" " * 10, 10)
-            # Replace empty device with space
-            if not device.strip():
-                fields[2] = (" " * 10, 10)
-
-        # Format each field with center alignment
-        formatted_fields = []
-        for content, width in fields:
-            display_width = CommonUtils.get_string_display_width(content)
-            padding = max(0, width - display_width)
-            left_pad = padding // 2
-            right_pad = padding - left_pad
-            formatted_fields.append(f"{' ' * left_pad}{content}{' ' * right_pad}")
-        # Join fields with separators
-        log_content = " | ".join(formatted_fields)
+        log_file = CommonUtils.log_file_path
         
-        return CommonUtils.print_log_line(log_content, side_border=True)
+        # Get terminal width
+        width = CommonUtils.get_terminal_width()
+        
+        # Define column widths as percentages of available space
+        # Reserve 13 chars for separators and borders: "| " + " | " (4x) + " |"
+        content_width = width - 13
+        
+        # Proportional column width allocation
+        # Time: 14%, Result: 10%, Device: 10%, Command: 32%, Response: 33%
+        col_widths = {
+            'time': max(13, int(content_width * 0.14)),
+            'result': max(9, int(content_width * 0.10)),
+            'device': max(10, int(content_width * 0.10)),
+            'command': max(25, int(content_width * 0.32)),
+            'response': max(25, int(content_width * 0.33))
+        }
+        
+        # Handle empty line
+        if not any([time_str, result, device, command_str, response_str]):
+            sep = '-' * width
+            try:
+                print(sep)
+            except UnicodeEncodeError:
+                try:
+                    print(sep.encode('utf-8', 'replace').decode('utf-8', 'replace'))
+                except UnicodeEncodeError:
+                    print(sep.encode('ascii', 'replace').decode('ascii'))
+            FileHandler.write_file(log_file, sep + "\n", "a")
+            return sep
+        
+        # Format each column
+        def pad_col(text, col_width, align='left'):
+            text = str(text) if text else ""
+            # Normalize time format - ensure it's exactly 19 characters (YYYY-MM-DD_HH:MM:SS:mmm)
+            if align == 'left' and col_width == col_widths.get('time', 0):
+                # This is the time column
+                if len(text) > 19:
+                    text = text[:19]  # Truncate to standard time format length
+                elif len(text) > 0 and len(text) < 19:
+                    text = text.ljust(19)  # Pad if shorter
+            
+            # Get the display width accounting for emoji being 2 chars wide
+            display_width = CommonUtils.get_string_display_width(text)
+            
+            # If text is too long for the column, truncate it
+            if display_width > col_width:
+                text = CommonUtils._truncate_string(text, col_width - 1)
+                display_width = CommonUtils.get_string_display_width(text)
+            
+            # Calculate padding needed based on display width, not character count
+            pad_needed = max(0, col_width - display_width)
+            
+            if align == 'center':
+                left_pad = pad_needed // 2
+                right_pad = pad_needed - left_pad
+                return ' ' * left_pad + text + ' ' * right_pad
+            elif align == 'right':
+                return ' ' * pad_needed + text
+            else:  # left
+                return text + ' ' * pad_needed
+        
+        # Build row
+        row = '| {} | {} | {} | {} | {} |'.format(
+            pad_col(time_str or "", col_widths['time'], 'left'),
+            pad_col(result or "", col_widths['result'], 'center'),
+            pad_col(device or "", col_widths['device'], 'center'),
+            pad_col(command_str or "", col_widths['command'], 'left'),
+            pad_col(response_str or "", col_widths['response'], 'left')
+        )
+            
+        try:
+            if top_border:
+                print('-' * len(row))
+            print(row)
+            if bottom_border:
+                print('-' * len(row))
+        except UnicodeEncodeError:
+            try:
+                print(row.encode('utf-8', 'replace').decode('utf-8', 'replace'))
+            except UnicodeEncodeError:
+                print(row.encode('ascii', 'replace').decode('ascii'))
+        FileHandler.write_file(log_file, row + "\n", "a")
+        return row
 
     @staticmethod
     def check_ordered_responses(response: str, expected_responses: List[str]) -> bool:

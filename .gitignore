@@ -144,6 +144,7 @@ dmypy.json
 .DS_Store
 cython_debug/
 .pypirc
+dict.json
 
 # ============================================================================
 # AutoCom 项目特定
