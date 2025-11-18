@@ -338,7 +338,7 @@ class CommonUtils:
             return sep
         
         # Format each column
-        def pad_col(text, col_width, align='left'):
+        def pad_col(text, col_width, align='left', col_name=''):
             text = str(text) if text else ""
             # Normalize time format - ensure it's exactly 19 characters (YYYY-MM-DD_HH:MM:SS:mmm)
             if align == 'left' and col_width == col_widths.get('time', 0):
@@ -353,7 +353,11 @@ class CommonUtils:
             
             # If text is too long for the column, truncate it
             if display_width > col_width:
-                text = CommonUtils._truncate_string(text, col_width - 1)
+                # For command and response columns, add '*' at the end to indicate truncation
+                if col_name in ['command', 'response']:
+                    text = CommonUtils._truncate_string(text, col_width - 2) + '*'
+                else:
+                    text = CommonUtils._truncate_string(text, col_width - 1)
                 display_width = CommonUtils.get_string_display_width(text)
             
             # Calculate padding needed based on display width, not character count
@@ -370,11 +374,11 @@ class CommonUtils:
         
         # Build row
         row = '| {} | {} | {} | {} | {} |'.format(
-            pad_col(time_str or "", col_widths['time'], 'left'),
-            pad_col(result or "", col_widths['result'], 'center'),
-            pad_col(device or "", col_widths['device'], 'center'),
-            pad_col(command_str or "", col_widths['command'], 'left'),
-            pad_col(response_str or "", col_widths['response'], 'left')
+            pad_col(time_str or "", col_widths['time'], 'left', 'time'),
+            pad_col(result or "", col_widths['result'], 'center', 'result'),
+            pad_col(device or "", col_widths['device'], 'center', 'device'),
+            pad_col(command_str or "", col_widths['command'], 'left', 'command'),
+            pad_col(response_str or "", col_widths['response'], 'left', 'response')
         )
             
         try:

@@ -34,19 +34,19 @@ def print_header(text):
 
 def print_success(text):
     """打印成功信息"""
-    print(f"{Colors.GREEN}✅ {text}{Colors.END}")
+    print(f"{Colors.GREEN}OK {text}{Colors.END}")
 
 def print_error(text):
     """打印错误信息"""
-    print(f"{Colors.RED}❌ {text}{Colors.END}")
+    print(f"{Colors.RED}NG {text}{Colors.END}")
 
 def print_warning(text):
     """打印警告信息"""
-    print(f"{Colors.YELLOW}⚠️  {text}{Colors.END}")
+    print(f"{Colors.YELLOW}!! {text}{Colors.END}")
 
 def print_info(text):
     """打印信息"""
-    print(f"{Colors.BLUE}ℹ️  {text}{Colors.END}")
+    print(f"{Colors.BLUE}:: {text}{Colors.END}")
 
 def run_command(cmd, check=True, capture=False):
     """运行命令"""
@@ -198,7 +198,7 @@ def build():
         
         dist_dir = ROOT_DIR / "dist"
         if dist_dir.exists():
-            print("\n📦 构建产物:")
+            print("\nPackages:")
             for file in dist_dir.iterdir():
                 size = file.stat().st_size / 1024
                 print(f"   - {file.name} ({size:.1f} KB)")
@@ -216,10 +216,11 @@ def install():
         print_success("安装成功!")
         
         # 验证安装
-        result = run_command("autocom -v", capture=True)
+        result = test()
         if result:
-            print_success(f"验证: {result}")
-        return True
+            print_success("安装验证通过")
+        else:
+            print_error("安装验证失败")
     else:
         print_error("安装失败")
         return False
@@ -260,7 +261,7 @@ def version(new_version=None):
     if set_version(new_version):
         print_success(f"版本已更新: {current} -> {new_version}")
         
-        print("\n📝 后续步骤:")
+        print("\nNext steps:")
         print("  1. git add version.py")
         print(f"  2. git commit -m \"Bump version to v{new_version}\"")
         print(f"  3. git tag v{new_version}")
@@ -290,7 +291,7 @@ def publish():
         return False
     
     # 列出文件
-    print("\n📦 将发布以下文件:")
+    print("\nFiles to publish:")
     for file in dist_dir.iterdir():
         print(f"   - {file.name}")
     
@@ -303,13 +304,13 @@ def publish():
     
     # 上传
     print_info("上传到 PyPI...")
-    if run_command(f'"{sys.executable}" -m twine upload dist/*'):
+    if run_command(f'"{sys.executable}" -m twine upload dist/* --disable-progress-bar'):
         print_success("发布成功!")
         
         current = get_current_version()
         if current:
-            print(f"\n🎉 AutoCom v{current} 已发布到 PyPI!")
-            print(f"   用户可以通过以下命令安装:")
+            print(f"\nAutoCom v{current} published to PyPI!")
+            print(f"   Users can install via:")
             print(f"   pip install autocom=={current}")
         return True
     else:

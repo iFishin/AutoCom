@@ -65,6 +65,7 @@ class Device:
         self.log_file = None
         
         self.response_buffer = deque()  # Buffer for command responses
+        self.last_iteration_success = None  # Track result of last iteration
         # Try to open the serial port and handle common failures (e.g. permission, not found)
         try:
             self.ser.open()
@@ -275,6 +276,11 @@ class Device:
                     timestamp = self._get_timestamp()
                     log_line = f"({timestamp})---> {command}"
                     self.write_to_log(log_line)
+                else:
+                    # If command is empty, just log that
+                    timestamp = self._get_timestamp()
+                    log_line = f"({timestamp})---> <EMPTY COMMAND>"
+                    self.write_to_log(log_line)
                     
             # Step 4. Wait for response with timeout
             raw_response = []
@@ -331,10 +337,19 @@ class Device:
                     
                 except serial.SerialException as e:
                     CommonUtils.print_log_line(f"Serial error on device '{self.name}' (port: {self.port}): {e}")
-                    break
+                    # Attempt to reopen the port 3 times
+                    for attempt in range(3):
+                        try:
+                            if not self.ser.is_open:
+                                self.ser.open()
+                            break  # Successfully reopened
+                        except Exception as reopen_exception:
+                            CommonUtils.print_log_line(f"Failed to reopen serial port '{self.port}' on attempt {attempt + 1}: {reopen_exception}")
+                            time.sleep(5)  # Wait before retrying
+                    sys.exit(1)
                 except Exception as e:
                     CommonUtils.print_log_line(f"Unexpected error on device '{self.name}' (port: {self.port}): {e}")
-                    break
+                    sys.exit(1)
             
             # Step 5. Process any remaining data in buffer
             while b"\n" in buffer:
@@ -400,24 +415,44 @@ class Device:
                 self.log_file.flush()
     
     def mark_iteration(self, iteration_num, total_iterations=None):
-        """Mark the beginning of a new iteration in the log file
+        """Mark the end of previous iteration and beginning of a new iteration in the log file
         
         Args:
             iteration_num: Current iteration number (1-based)
             total_iterations: Total number of iterations (optional, for display as "X/Y")
         """
         separator = "=" * 80
-        timestamp = self._get_timestamp()
         
+        # Write separator
+        self.write_to_log(separator)
+        
+        # If this is not the first iteration, print the result of the previous iteration
+        if iteration_num > 1 and self.last_iteration_success is not None:
+            previous_num = iteration_num - 1
+            status = "Passed" if self.last_iteration_success else "Failed"
+            if total_iterations:
+                previous_marker = f"{'─' * 30} Iteration {previous_num}/{total_iterations} {status} {'─' * 30}"
+            else:
+                previous_marker = f"{'─' * 30} Iteration {previous_num} {status} {'─' * 30}"
+            self.write_to_log(previous_marker)
+        
+        # Print current iteration marker
         if total_iterations:
-            marker = f"{'─' * 30} Iteration {iteration_num}/{total_iterations} Started {'─' * 30}"
+            current_marker = f"{'─' * 30} Iteration {iteration_num}/{total_iterations} Started {'─' * 30}"
         else:
-            marker = f"{'─' * 30} Iteration {iteration_num} Started {'─' * 30}"
+            current_marker = f"{'─' * 30} Iteration {iteration_num} Started {'─' * 30}"
+        self.write_to_log(current_marker)
         
-        # Write separator and marker to log file
+        # Write separator
         self.write_to_log(separator)
-        self.write_to_log(marker)
-        self.write_to_log(separator)
+    
+    def set_iteration_result(self, success):
+        """Set the result of the current iteration
+        
+        Args:
+            success: Boolean indicating if the iteration was successful
+        """
+        self.last_iteration_success = success
 
     def close(self):
         """Close device and cleanup resources"""

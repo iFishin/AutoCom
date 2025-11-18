@@ -61,6 +61,12 @@ def merge_config(config: json, dict_data: json):
         elif isinstance(value, dict):
             merge_config(value, dict_data[key])
 
+def ensure_working_directories(temps_dir, data_store_dir, device_logs_dir):
+    """Ensure all working directories exist"""
+    os.makedirs(temps_dir, exist_ok=True)
+    os.makedirs(data_store_dir, exist_ok=True)
+    os.makedirs(device_logs_dir, exist_ok=True)
+
 def apply_configs_for_device(configForDevice: json, dictForDevices: json):
     # Use Global Configurations for all devices
     for device in dictForDevices:
@@ -219,6 +225,7 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
                     CommonUtils.print_log_line(f"   Devices involved: {devices_str}")
                     executed_count += 1  # 即使失败也算完成了一次
                     result = False
+                    sys.exit(1)
                 
                 info = (
                     f"✅ Iteration {executed_count} passed."
@@ -269,6 +276,7 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
                     CommonUtils.print_log_line(f"   Devices involved: {devices_str}")
                     executed_count += 1  # 即使失败也算完成了一次
                     result = False
+                    sys.exit(1)
                 
                 info = (
                     f"{'✅ ' + str(executed_count)}/{loop_count} iterations passed."
@@ -618,15 +626,10 @@ def run_main():
     # 获取安装包目录（dicts/configs 等资源文件所在目录）
     package_dir = os.path.dirname(os.path.abspath(__file__))
     
-    # 在当前工作目录下创建 temps 和 device_logs
+    # 在当前工作目录下创建 temps 和 device_logs 的路径（但暂不创建目录）
     temps_dir = os.path.join(current_work_dir, "temps")
     data_store_dir = os.path.join(temps_dir, "data_store")
     device_logs_dir = os.path.join(current_work_dir, "device_logs")
-    
-    # 确保目录存在
-    os.makedirs(temps_dir, exist_ok=True)
-    os.makedirs(data_store_dir, exist_ok=True)
-    os.makedirs(device_logs_dir, exist_ok=True)
     
     # 设置全局日志目录（供 CommandDeviceDict 使用）
     os.environ['AUTOCOM_DEVICE_LOGS_DIR'] = device_logs_dir
@@ -907,6 +910,9 @@ Visit: https://github.com/iFishin/AutoCom
                 # 都不存在,使用当前目录的路径(让后续错误处理显示正确的路径)
                 dict_path = current_dict_path
 
+        # Ensure working directories exist before execution
+        ensure_working_directories(temps_dir, data_store_dir, device_logs_dir)
+        
         start_time = time.time()
         try:
             execute_with_loop(dict_path, args.loop, args.infinite, config)
@@ -946,6 +952,9 @@ Visit: https://github.com/iFishin/AutoCom
             ),
         )
         
+        # Ensure working directories exist before execution
+        ensure_working_directories(temps_dir, data_store_dir, device_logs_dir)
+        
         try:
             start_time = time.time()
             execute_with_folder(folder_path, sorted_files, config)
@@ -972,6 +981,9 @@ Visit: https://github.com/iFishin/AutoCom
         folder_to_monitor = "temps"
         if args.folder:
             folder_to_monitor = args.folder  # 如果指定了文件夹，则使用指定的路径
+
+        # Ensure working directories exist before execution
+        ensure_working_directories(temps_dir, data_store_dir, device_logs_dir)
 
         CommonUtils.print_log_line(
             line=f"Monitoring mode enabled. Monitoring folder: {folder_to_monitor}",

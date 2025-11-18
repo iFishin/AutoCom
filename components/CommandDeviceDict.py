@@ -106,7 +106,16 @@ class MonitorManager:
                     
             except serial.SerialException as e:
                 CommonUtils.print_log_line(f"Serial error on device '{self.device_name}' (port: {self.device.port}): {e}")
-                break
+                # Attempt to reopen the port 3 times
+                for attempt in range(3):
+                    try:
+                        if not self.ser.is_open:
+                            self.ser.open()
+                        break  # Successfully reopened
+                    except Exception as reopen_exception:
+                        CommonUtils.print_log_line(f"Failed to reopen serial port '{self.port}' on attempt {attempt + 1}: {reopen_exception}")
+                        time.sleep(5)  # Wait before retrying
+                sys.exit(1)
             except Exception as e:
                 CommonUtils.print_log_line(f"Monitor error on device '{self.device_name}' (port: {self.device.port}): {e}")
                 time.sleep(0.1)
