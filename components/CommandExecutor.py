@@ -278,7 +278,7 @@ class CommandExecutor:
         commands = self.command_device_dict.dict["Commands"]
         if not commands:
             CommonUtils.print_log_line("No commands to execute.")
-            return
+            return False
 
         # Mark iteration in all device logs if iteration info is set
         if self.current_iteration is not None:

@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "一款用于自动化执行串口指令的脚本，支持多设备、多指令的串行和并行执行"
 readme = "README.md"
 authors = [
-    {name = "iFishin", email = "your.email@example.com"}
+    {name = "iFishin", email = "i@ifishin.top"}
 ]
 license = {text = "MIT"}
 classifiers = [

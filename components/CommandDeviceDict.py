@@ -109,11 +109,11 @@ class MonitorManager:
                 # Attempt to reopen the port 3 times
                 for attempt in range(3):
                     try:
-                        if not self.ser.is_open:
-                            self.ser.open()
+                        if not self.device.ser.is_open:
+                            self.device.ser.open()
                         break  # Successfully reopened
                     except Exception as reopen_exception:
-                        CommonUtils.print_log_line(f"Failed to reopen serial port '{self.port}' on attempt {attempt + 1}: {reopen_exception}")
+                        CommonUtils.print_log_line(f"Failed to reopen serial port '{self.device.port}' on attempt {attempt + 1}: {reopen_exception}")
                         time.sleep(5)  # Wait before retrying
                 sys.exit(1)
             except Exception as e:
@@ -263,9 +263,9 @@ class CommandDeviceDict:
                     name=device_name,
                     port=port,
                     baud_rate=baud_rate,
-                    stop_bits=stop_bits,
+                    stop_bits=int(stop_bits),
                     parity=parity,
-                    data_bits=data_bits,
+                    data_bits=int(data_bits),
                     flow_control=device.get("flow_control"),
                     dtr=device.get("dtr", False),
                     rts=device.get("rts", False),
@@ -416,18 +416,19 @@ class CommandDeviceDict:
         end_time = time.time()
         
         CommonUtils.print_log_line(f"Command '{command}' completed in {end_time - start_time:.2f}s")
-        CommonUtils.print_log_line(f"Response length: {len(result)} characters")
-        CommonUtils.print_log_line(f"Response preview: {result[:100]}{'...' if len(result) > 100 else ''}")
+        result_text = result["response"] if isinstance(result, dict) else result
+        CommonUtils.print_log_line(f"Response length: {len(result_text)} characters")
+        CommonUtils.print_log_line(f"Response preview: {result_text[:100]}{'...' if len(result_text) > 100 else ''}")
         
         # Check result
-        if "ERROR:" in result:
+        if "ERROR:" in result_text:
             CommonUtils.print_log_line("❌ Command execution error")
-        elif len(result.strip()) == 0:
+        elif len(result_text.strip()) == 0:
             CommonUtils.print_log_line("⚠️ Warning: Empty response received")
         else:
             CommonUtils.print_log_line("✅ Command executed successfully")
         
-        return result
+        return result_text
 
     def send_command_with_monitor(self, device_name, command, timeout, hex_mode, expected_responses, original_send_command):
         """

@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import shutil
+from components.DataStore import DataStore
 
 
 class CommonUtils:
@@ -35,6 +36,7 @@ class CommonUtils:
         """Reset terminal width cache to force re-detection"""
         cls.terminal_width = None
     
+    @staticmethod
     def escape_control_characters(s: str, ignore_crlf: bool = True) -> str:
         r"""
         Escapes control characters and extended ASCII characters in the text to the format \\x{XX}.
@@ -51,13 +53,14 @@ class CommonUtils:
             for c in s
         )
         
+    @staticmethod
     def remove_control_characters(s: str, ignore_crlf: bool = True) -> str:
         r"""
         Removes control characters and extended ASCII characters from the text.
 
         Args:
             s (str): Input string (characters must have Unicode code points in the range 0-255).
-            ignore_crlf (bool): Whether to ignore the removal of \r and \n (default is False).
+            ignore_crlf (bool): Whether to ignore the removal of \r and \n (default is True).
 
         Returns:
             str: The string with control characters removed.
@@ -78,22 +81,29 @@ class CommonUtils:
                     'remove' (remove null characters), or 'ignore' (ignore null characters).
 
         Returns:
-        str: Decoded string.
+            str: Decoded string.
         """
-        encoding_list = ["utf-8", "gbk", "big5", "latin1"]
-        
+        encoding_list = ["utf-8", "utf-8-sig", "gbk", "big5", "latin1"]
         for encoding in encoding_list:
             try:
                 decoded_str = bytes_data.decode(encoding)
-                if replace_null == 'escape':
-                    decoded_str = CommonUtils.escape_control_characters(decoded_str)
-                elif replace_null == 'remove':
-                    decoded_str = CommonUtils.remove_control_characters(decoded_str)
-                elif replace_null == 'ignore':
-                    pass
-                return decoded_str
             except UnicodeDecodeError:
                 continue
+            if replace_null == 'escape':
+                decoded_str = CommonUtils.escape_control_characters(decoded_str)
+            elif replace_null == 'remove':
+                decoded_str = CommonUtils.remove_control_characters(decoded_str)
+            elif replace_null == 'ignore':
+                pass
+            return decoded_str
+        decoded_str = bytes_data.decode("latin1")
+        if replace_null == 'escape':
+            decoded_str = CommonUtils.escape_control_characters(decoded_str)
+        elif replace_null == 'remove':
+            decoded_str = CommonUtils.remove_control_characters(decoded_str)
+        elif replace_null == 'ignore':
+            pass
+        return decoded_str
 
     @staticmethod
     def format_long_string(s: str, width: int) -> List[str]:
@@ -178,9 +188,9 @@ class CommonUtils:
         side_border: bool = True,
         border_vertical_char: str = "-",
         border_side_char: str = "|",
-        length: int = None,
+        length: int = 0,
         align: str = "^",
-        log_file: str = None,
+        log_file: str = "",
         is_print: bool = True,
     ) -> str:
         """Print and save formatted log line with borders
@@ -426,12 +436,12 @@ class CommonUtils:
         Returns:
             List of variable names found in the string
         """
-        pattern = re.compile(r'\{(\w+|_)\}')
+        pattern = re.compile(r'\{([A-Za-z0-9_]+)\}')
         found_variables = re.findall(pattern, s)
         return found_variables
     
     @staticmethod
-    def process_variables(param_value: str, data_store: object = None, device_name: str = None) -> str:
+    def process_variables(param_value: str, data_store: DataStore | None = None, device_name: str = "") -> str:
         """Process variables in a string and handle interactive input for empty values
         
         Args:
@@ -539,11 +549,11 @@ class FileHandler:
         """
         try:
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            full_path = os.path.join(base_dir, file_path)
+            full_path = file_path if os.path.isabs(file_path) else os.path.join(base_dir, file_path)
 
             if not os.path.exists(full_path):
                 print(f"File not found: {full_path}")
-                return None
+                return ""
 
             try:
                 with open(full_path, "r", encoding=encoding) as f:
@@ -556,7 +566,7 @@ class FileHandler:
                     return f.read()
         except Exception as e:
             print(f"Error reading file {full_path}: {str(e)}")
-            return None
+            return ""
 
     @staticmethod
     def write_file(
@@ -575,7 +585,7 @@ class FileHandler:
         """
         try:
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            full_path = os.path.join(base_dir, file_path)
+            full_path = file_path if os.path.isabs(file_path) else os.path.join(base_dir, file_path)
 
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
 
