@@ -672,3 +672,146 @@ class ActionHandler:
             CommonUtils.print_log_line(f"❌ Error occurred while fetching network page: {str(e)}")
             CommonUtils.print_log_line("")
             return False
+    
+    def handle_send_file(self, config, command, response, context):
+        """
+        向设备串口发送文本文件功能（支持证书、配置文件等）
+
+        用法:
+        {
+            "send_file": "certs/server.crt"
+        }
+
+        或使用 dict 格式，指定编码和行结束符:
+        {
+            "send_file": {
+                "path": "certs/server.crt",
+                "encoding": "utf-8",
+                "line_ending": "lf"
+            }
+        }
+
+        参数说明:
+        - path: 文本文件路径，支持相对路径（基于当前工作目录 os.getcwd()）或绝对路径
+        - encoding: 可选，文件编码方式，默认为 'utf-8'，可选 'gbk'、'latin-1' 等
+        - line_ending: 可选，行结束符转换规则，默认为 'lf'
+          * 'lf': 使用 LF（\\n，0x0a），Unix/Linux/Mac 风格
+          * 'crlf': 使用 CRLF（\\r\\n，0x0d0a），Windows 风格
+          * 'cr': 使用 CR（\\r，0x0d），旧 Mac 风格
+          * 'none': 保持原样，不做转换
+
+        行为:
+        - 以文本模式读取文件，使用指定编码转换为字符串
+        - 标准化行结束符（CRLF/LF/CR 都转为 LF）
+        - 根据 line_ending 参数转换为目标格式
+        - 将转换后的内容通过设备串口发送，记录原始大小和实际写入大小
+        - 在设备日志中记录文件名、原始大小、写入大小和转换格式
+
+        返回:
+        - True: 发送成功
+        - False: 文件不存在、串口未打开或发送失败
+
+        示例场景（发送证书）:
+        {
+            "send_file": {
+                "path": "certs/certificate.pem",
+                "encoding": "utf-8",
+                "line_ending": "lf"
+            }
+        }
+        """
+        import os
+
+        # Resolve file path from config
+        if isinstance(config, str):
+            file_path = config
+            encoding = "utf-8"
+            line_ending = "lf"
+        elif isinstance(config, dict):
+            file_path = config.get("path")
+            encoding = config.get("encoding", "utf-8")
+            line_ending = config.get("line_ending", "lf")
+        else:
+            CommonUtils.print_log_line("Error: invalid send_file config")
+            return False
+
+        file_path = self.handle_variables_from_str(file_path)
+
+        # If path is relative, base it on current working directory
+        if not os.path.isabs(file_path):
+            cwd = os.getcwd()
+            file_path = os.path.join(cwd, file_path)
+
+        # Find device from context
+        device = context.get("device") if context else None
+        device_name = context.get("device_name") if context else None
+
+        if not device:
+            CommonUtils.print_log_line(f"Error: device not provided in action context for send_file ({file_path})")
+            return False
+
+        # Read text file
+        try:
+            with open(file_path, "r", encoding=encoding) as f:
+                text_content = f.read()
+        except FileNotFoundError:
+            CommonUtils.print_log_line(f"Error: file not found: {file_path}")
+            return False
+        except UnicodeDecodeError as e:
+            CommonUtils.print_log_line(f"Error: encoding error when reading '{file_path}' with {encoding}: {e}")
+            return False
+        except Exception as e:
+            CommonUtils.print_log_line(f"Error reading file '{file_path}': {e}")
+            return False
+
+        original_size = len(text_content.encode(encoding))
+
+        # Normalize line endings: convert all CRLF/CR to LF first
+        normalized_content = text_content.replace("\r\n", "\n").replace("\r", "\n")
+
+        # Convert to target line ending format
+        if line_ending.lower() == "crlf":
+            final_content = normalized_content.replace("\n", "\r\n")
+        elif line_ending.lower() == "cr":
+            final_content = normalized_content.replace("\n", "\r")
+        elif line_ending.lower() == "none":
+            final_content = text_content  # Keep original as-is
+        else:  # "lf" or default
+            final_content = normalized_content
+
+        # Convert to bytes
+        try:
+            data = final_content.encode(encoding)
+        except Exception as e:
+            CommonUtils.print_log_line(f"Error encoding content for '{file_path}': {e}")
+            return False
+
+        # Write to serial port
+        try:
+            written = 0
+            with device.lock:
+                if not (hasattr(device, 'ser') and getattr(device.ser, 'is_open', False)):
+                    CommonUtils.print_log_line(f"Serial port not open for device '{device_name or device.name}', cannot send file: {file_path}")
+                    return False
+
+                # PySerial's write returns number of bytes written
+                written = device.ser.write(data)
+                try:
+                    device.ser.flush()
+                except Exception:
+                    # flush may not be supported on some transports
+                    pass
+
+            CommonUtils.print_log_line(f"Sent file '{os.path.basename(file_path)}' to device '{device_name or device.name}': original_size={original_size} bytes, written={written} bytes, encoding={encoding}, line_ending={line_ending}")
+
+            # Also write to device log if available
+            try:
+                timestamp = device._get_timestamp() if hasattr(device, '_get_timestamp') else time.strftime("%Y-%m-%d_%H:%M:%S")
+            except Exception:
+                # Best-effort logging to device file
+                pass
+
+            return True
+        except Exception as e:
+            CommonUtils.print_log_line(f"Error sending file to device '{device_name or getattr(device, 'name', 'Unknown')}': {e}")
+            return False

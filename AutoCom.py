@@ -6,7 +6,6 @@ import os
 import re
 import queue
 import sys
-import argparse
 
 # 根据运行方式选择导入路径
 try:
@@ -19,7 +18,6 @@ except ModuleNotFoundError:
     from .components.CommandDeviceDict import CommandDeviceDict
     from .components.CommandExecutor import CommandExecutor
     from .version import __version__
-
 
 def load_commands_from_file(file_path):
     """Safely load a JSON file, attempting multiple encodings and providing friendly error messages on failure.
@@ -62,10 +60,17 @@ def merge_config(config: json, dict_data: json):
             merge_config(value, dict_data[key])
 
 def ensure_working_directories(temps_dir, data_store_dir, device_logs_dir):
-    """Ensure all working directories exist"""
-    os.makedirs(temps_dir, exist_ok=True)
-    os.makedirs(data_store_dir, exist_ok=True)
-    os.makedirs(device_logs_dir, exist_ok=True)
+    """Ensure all working directories exist
+    
+    Args:
+        temps_dir: Path to temporary directory (can be str or Path)
+        data_store_dir: Path to data store directory (can be str or Path)
+        device_logs_dir: Path to device logs directory (can be str or Path)
+    """
+    from pathlib import Path
+    Path(temps_dir).mkdir(parents=True, exist_ok=True)
+    Path(data_store_dir).mkdir(parents=True, exist_ok=True)
+    Path(device_logs_dir).mkdir(parents=True, exist_ok=True)
 
 def apply_configs_for_device(configForDevice: json, dictForDevices: json):
     # Use Global Configurations for all devices
@@ -155,8 +160,9 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
         command_device_dict = executor.command_device_dict
         
         # Save the DICT content to a file in the log_date_dir, for later reference
-        dict_filename = os.path.basename(dict_path)  # Extract the file name from the path
-        output_file_path = os.path.join(command_device_dict.log_date_dir, dict_filename)
+        from pathlib import Path
+        dict_filename = Path(dict_path).name  # Extract the file name from the path
+        output_file_path = Path(command_device_dict.log_date_dir) / dict_filename
 
         try:
             with open(output_file_path, "w") as output_file:
@@ -342,8 +348,9 @@ def execute_with_folder(path: str, files: list, config: json = None):
 
     failure_count = 0
     try:
+        from pathlib import Path
         for file in files:
-            dict_path = os.path.join(path, file)
+            dict_path = str(Path(path) / file)
             dict_data = load_commands_from_file(dict_path)
             
             # Force merge `Commands` key from dictionary file to `command_device_dict`
@@ -442,21 +449,21 @@ def monitor_folder(folder_path, file_queue, stop_event):
             ]
 
             # 遍历文件，检查是否有新增或修改的文件
+            from pathlib import Path
             for file_name in json_files:
                 if stop_event.is_set():
                     break
                     
-                file_path = os.path.join(folder_path, file_name)
+                file_path = Path(folder_path) / file_name
                 
                 # 获取文件修改时间和大小
-                mod_time = os.path.getmtime(file_path)
-                file_size = os.path.getsize(file_path)
+                mod_time = file_path.stat().st_mtime
+                file_size = file_path.stat().st_size
                 
                 # 计算文件内容的哈希值
                 try:
-                    with open(file_path, "rb") as f:
-                        content = f.read()
-                        content_hash = hash(content)
+                    content = file_path.read_bytes()
+                    content_hash = hash(content)
                 except Exception:
                     # 如果无法读取文件，则跳过
                     continue
@@ -517,8 +524,9 @@ def process_file_queue(file_queue, stop_event):
                 command_device_dict = CommandDeviceDict(dict_data)
                 
                 # Save the dict content to a file in the log_date_dir
-                dict_filename = os.path.basename(file_path)
-                output_file_path = os.path.join(command_device_dict.log_date_dir, dict_filename)
+                from pathlib import Path
+                dict_filename = Path(file_path).name
+                output_file_path = Path(command_device_dict.log_date_dir) / dict_filename
 
                 try:
                     with open(output_file_path, "w") as output_file:
@@ -617,416 +625,3 @@ def process_file_queue(file_queue, stop_event):
             border_side_char="|",
             border_vertical_char="-",
         )
-
-def run_main():
-    """主程序入口函数,用于被 CLI 调用"""
-    # 获取当前工作目录（用户执行命令的目录）
-    current_work_dir = os.getcwd()
-    
-    # 获取安装包目录（dicts/configs 等资源文件所在目录）
-    package_dir = os.path.dirname(os.path.abspath(__file__))
-    
-    # 在当前工作目录下创建 temps 和 device_logs 的路径（但暂不创建目录）
-    temps_dir = os.path.join(current_work_dir, "temps")
-    data_store_dir = os.path.join(temps_dir, "data_store")
-    device_logs_dir = os.path.join(current_work_dir, "device_logs")
-    
-    # 设置全局日志目录（供 CommandDeviceDict 使用）
-    os.environ['AUTOCOM_DEVICE_LOGS_DIR'] = device_logs_dir
-    
-    parser = argparse.ArgumentParser(
-        description="AutoCom command execution tool",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Examples:\n"
-               "  autocom -d dict.json -l 3              # 循环执行3次\n"
-               "  autocom -d dict.json -i                # 无限循环\n"
-               "  autocom -f dicts/                      # 文件夹模式\n"
-               "  autocom -m temps/                      # 监控模式\n"
-               "  autocom -d dict.json -c config.json    # 使用配置文件\n"
-    )
-    
-    # 添加版本参数
-    parser.add_argument(
-        "-v",
-        "--version",
-        action="version",
-        version=f"AutoCom v{__version__}",
-        help="Show version information and exit"
-    )
-    
-    group1 = parser.add_mutually_exclusive_group()
-    group1.add_argument(
-        "-f",
-        "--folder",
-        type=str,
-        help="Path to the folder containing dictionary JSON files (default: dicts)",
-    )
-    group1.add_argument(
-        "-d",
-        "--dict",
-        type=str,
-        help="Path to the dictionary JSON file (default: dicts/dict.json)",
-    )
-
-    parser.add_argument(
-        "-l",
-        "--loop",
-        default=3,
-        type=int,
-        help="Number of times to loop execution (default: 3)",
-    )
-    parser.add_argument(
-        "-i",
-        "--infinite",
-        action="store_true",
-        help="Enable infinite loop mode - keep running until Ctrl+C is pressed",
-    )
-    parser.add_argument(
-        "-c",
-        "--config",
-        type=str,
-        help="Path to the configuration JSON file (default: config.json)",
-    )
-    parser.add_argument(
-        "-m",
-        "--monitor",
-        type=str,
-        help="Enable monitoring mode (you can also use -c/--config with this)",
-    )
-    parser.add_argument(
-        "--init",
-        action="store_true",
-        help="Initialize current directory with AutoCom project structure (creates dicts, configs, temps folders with examples)",
-    )
-
-    # 检查是否没有提供任何参数
-    if len(sys.argv) == 1:
-        # 显示欢迎信息
-        print()
-        print(f"🚀 AutoCom v{__version__}")
-        print("   串口自动化指令执行工具 - 支持多设备、多指令的串行和并行执行")
-        print()
-        print(f"📂 工作目录: {current_work_dir}")
-        print(f"💾 数据存储目录: {data_store_dir}")
-        print(f"📋 设备日志目录: {device_logs_dir}")
-        print()
-        print("🎯 初始化执行目录:")
-        print("   autocom --init                      # 在当前目录创建执行结构和示例文件")
-        print()
-        print("📖 快速开始:")
-        print("   autocom -d dict.json -l 3           # 执行字典文件，循环3次")
-        print("   autocom -d dict.json -i             # 无限循环模式")
-        print("   autocom -f dicts/                   # 执行文件夹内所有字典")
-        print("   autocom -m temps/                   # 监控模式")
-        print()
-        print("🔍 更多帮助:")
-        print("   autocom --help                      # 查看完整帮助")
-        print("   autocom -v                          # 查看版本信息")
-        print()
-        print("📚 文档: https://github.com/iFishin/AutoCom")
-        print()
-        print()
-        sys.exit(0)
-    
-    args = parser.parse_args()
-
-    # 处理 --init 参数
-    if args.init:
-        CommonUtils.print_log_line("🚀 Initializing AutoCom project structure...", top_border=True)
-        
-        try:
-            # 创建目录结构
-            dirs_to_create = {
-                "dicts": "Dictionary files (JSON)",
-                "configs": "Configuration files (JSON)",
-                "temps": "Temporary data storage",
-                "device_logs": "Device execution logs"
-            }
-            
-            for dir_name, description in dirs_to_create.items():
-                dir_path = os.path.join(current_work_dir, dir_name)
-                if os.path.exists(dir_path):
-                    CommonUtils.print_log_line(f"   ⚠️  Directory '{dir_name}/' already exists - skipped")
-                else:
-                    os.makedirs(dir_path, exist_ok=True)
-                    CommonUtils.print_log_line(f"   ✅ Created '{dir_name}/' - {description}")
-            
-            # 生成示例文件
-            dest_dicts = os.path.join(current_work_dir, "dicts")
-            dest_configs = os.path.join(current_work_dir, "configs")
-            
-            # 生成示例字典文件 - dict.json
-            dict_example_path = os.path.join(dest_dicts, "dict.json")
-            if not os.path.exists(dict_example_path):
-                dict_example = {
-                    "Devices": [
-                        {
-                            "name": "DeviceA",
-                            "status": "enabled",
-                            "port": "COM3",
-                            "baud_rate": 115200,
-                            "stop_bits": 1,
-                            "parity": None,
-                            "data_bits": 8,
-                            "flow_control": None,
-                            "dtr": False,
-                            "rts": False
-                        }
-                    ],
-                    "Commands": [
-                        {
-                            "name": "Echo Test",
-                            "device": "DeviceA",
-                            "order": 1,
-                            "command": "AT\\r\\n",
-                            "expected_response": "OK",
-                            "timeout": 3000,
-                            "status": "enabled"
-                        },
-                        {
-                            "name": "Version Check",
-                            "device": "DeviceA",
-                            "order": 2,
-                            "command": "AT+GMR\\r\\n",
-                            "expected_response": "OK",
-                            "timeout": 3000,
-                            "status": "enabled"
-                        }
-                    ]
-                }
-                with open(dict_example_path, "w", encoding="utf-8") as f:
-                    json.dump(dict_example, f, indent=2, ensure_ascii=False)
-                CommonUtils.print_log_line(f"   📄 Created example: dicts/dict.json")
-            else:
-                CommonUtils.print_log_line(f"   ⚠️  dicts/dict.json already exists - skipped")
-            
-            # 生成示例配置文件
-            config_example_path = os.path.join(dest_configs, "example.json")
-            if not os.path.exists(config_example_path):
-                config_example = {
-                    "ConfigForDevices": {
-                        "baud_rate": 115200,
-                        "stop_bits": 1,
-                        "parity": None,
-                        "data_bits": 8
-                    },
-                    "ConfigForCommands": {
-                        "timeout": 3000,
-                        "status": "enabled"
-                    }
-                }
-                with open(config_example_path, "w", encoding="utf-8") as f:
-                    json.dump(config_example, f, indent=2, ensure_ascii=False)
-                CommonUtils.print_log_line(f"   📄 Created example: configs/example.json")
-            else:
-                CommonUtils.print_log_line(f"   ⚠️  configs/example.json already exists - skipped")
-            
-            # 创建 README
-            readme_path = os.path.join(current_work_dir, "README.md")
-            if not os.path.exists(readme_path):
-                readme_content = """# AutoCom Project
-
-## Directory Structure
-
-- `dicts/` - Dictionary files (command definitions)
-- `configs/` - Configuration files
-- `temps/` - Temporary data storage
-- `device_logs/` - Device execution logs
-
-## Quick Start
-
-```bash
-# Execute a dictionary file
-autocom -d dicts/dict.json -l 3
-
-# Execute with config
-autocom -d dicts/dict.json -c configs/example.json -l 5
-
-# Monitor mode
-autocom -m temps/
-```
-
-## Documentation
-
-Visit: https://github.com/iFishin/AutoCom
-"""
-                with open(readme_path, "w", encoding="utf-8") as f:
-                    f.write(readme_content)
-                CommonUtils.print_log_line(f"   📝 Created README.md")
-            else:
-                CommonUtils.print_log_line(f"   ⚠️  README.md already exists - skipped")
-            
-            CommonUtils.print_log_line(
-                "✨ Initialization complete! You can now use AutoCom in this directory.",
-                bottom_border=True,
-                side_border=True,
-                border_side_char="="
-            )
-            CommonUtils.print_log_line("💡 Tip: Edit files in dicts/ to customize your commands")
-            CommonUtils.print_log_line("💡 Tip: Run 'autocom -d dicts/dict.json -l 3' to test")
-            
-        except Exception as e:
-            CommonUtils.print_log_line(f"❌ Error during initialization: {e}", bottom_border=True)
-            sys.exit(1)
-        
-        sys.exit(0)
-
-    # 初始化 config 变量（防止未定义错误）
-    config = None
-    config_path = None
-
-    if args.config:
-        # 配置文件相对于安装包目录
-        if os.path.isabs(args.config):
-            config_path = args.config
-        else:
-            config_path = os.path.join(package_dir, "configs", args.config)
-        
-        try:
-            with open(config_path, "r") as file:
-                config = json.load(file)
-        except FileNotFoundError:
-            CommonUtils.print_log_line(f"Error: Config file '{config_path}' not found")
-            sys.exit(1)
-        except json.JSONDecodeError:
-            CommonUtils.print_log_line(f"Error: Invalid JSON format in '{config_path}'")
-            sys.exit(1)
-
-    if args.dict:
-        # 处理字典文件路径
-        if os.path.isabs(args.dict):
-            # 绝对路径直接使用
-            dict_path = args.dict
-        else:
-            # 相对路径:优先从当前工作目录查找,如果不存在则从包目录查找
-            current_dict_path = os.path.join(current_work_dir, args.dict)
-            package_dict_path = os.path.join(package_dir, "dicts", args.dict)
-            
-            if os.path.exists(current_dict_path):
-                dict_path = current_dict_path
-            elif os.path.exists(package_dict_path):
-                dict_path = package_dict_path
-            else:
-                # 都不存在,使用当前目录的路径(让后续错误处理显示正确的路径)
-                dict_path = current_dict_path
-
-        # Ensure working directories exist before execution
-        ensure_working_directories(temps_dir, data_store_dir, device_logs_dir)
-        
-        start_time = time.time()
-        try:
-            execute_with_loop(dict_path, args.loop, args.infinite, config)
-        except KeyboardInterrupt:
-            CommonUtils.print_log_line("Execution interrupted by user")
-        except FileNotFoundError as e:
-            CommonUtils.print_log_line(f"Error: Dictionary file not found: {e}")
-            sys.exit(1)
-        except json.JSONDecodeError as e:
-            CommonUtils.print_log_line(f"Error: Invalid JSON format: {e}")
-            sys.exit(1)
-        finally:
-            end_time = time.time()
-            execution_time = end_time - start_time
-            hours = int(execution_time // 3600)
-            minutes = int((execution_time % 3600) // 60)
-            seconds = execution_time % 60
-            CommonUtils.print_log_line(
-                f"Total execution time: {hours:02d}:{minutes:02d}:{seconds:06.3f}",
-                top_border=True,
-                bottom_border=True,
-            )
-    elif args.folder:
-        # 文件夹路径相对于安装包目录
-        if os.path.isabs(args.folder):
-            folder_path = args.folder
-        else:
-            folder_path = os.path.join(package_dir, "dicts", args.folder)
-        
-        json_files = [f for f in os.listdir(folder_path) if f.endswith(".json")]
-        sorted_files = sorted(
-            json_files,
-            key=lambda x: (
-                int(re.match(r"(\d+)", x).group(1))
-                if re.match(r"(\d+)", x)
-                else float("inf")
-            ),
-        )
-        
-        # Ensure working directories exist before execution
-        ensure_working_directories(temps_dir, data_store_dir, device_logs_dir)
-        
-        try:
-            start_time = time.time()
-            execute_with_folder(folder_path, sorted_files, config)
-        except KeyboardInterrupt:
-            CommonUtils.print_log_line("Execution interrupted by user")
-        except FileNotFoundError as e:
-            CommonUtils.print_log_line(f"Error: Folder or file not found: {e}")
-            sys.exit(1)
-        except json.JSONDecodeError as e:
-            CommonUtils.print_log_line(f"Error: Invalid JSON format: {e}")
-            sys.exit(1)
-        finally:
-            end_time = time.time()
-            execution_time = end_time - start_time
-            hours = int(execution_time // 3600)
-            minutes = int((execution_time % 3600) // 60)
-            seconds = execution_time % 60
-            CommonUtils.print_log_line(
-                f"Total execution time: {hours:02d}:{minutes:02d}:{seconds:06.3f}",
-                top_border=True,
-                bottom_border=True,
-            )
-    elif args.monitor:
-        folder_to_monitor = "temps"
-        if args.folder:
-            folder_to_monitor = args.folder  # 如果指定了文件夹，则使用指定的路径
-
-        # Ensure working directories exist before execution
-        ensure_working_directories(temps_dir, data_store_dir, device_logs_dir)
-
-        CommonUtils.print_log_line(
-            line=f"Monitoring mode enabled. Monitoring folder: {folder_to_monitor}",
-            top_border=True,
-            bottom_border=True,
-            side_border=True,
-            border_side_char="+",
-            border_vertical_char="+"
-        )
-
-        # 初始化文件队列
-        file_queue = queue.Queue(maxsize=64)  # 设置队列大小为64
-        
-        # 用于控制线程停止的事件
-        stop_event = threading.Event()
-
-        # 启动监控线程
-        monitor_thread = threading.Thread(
-            target=monitor_folder, args=(folder_to_monitor, file_queue, stop_event), daemon=True
-        )
-        monitor_thread.start()
-
-        # 启动文件处理线程
-        process_thread = threading.Thread(
-            target=process_file_queue, args=(file_queue, stop_event), daemon=True
-        )
-        process_thread.start()
-
-        # 主线程保持运行，但响应中断信号
-        try:
-            CommonUtils.print_log_line("Monitoring started. Press Ctrl+C to stop.")
-            while not stop_event.is_set():
-                time.sleep(0.1)  # 更短的睡眠时间，更快响应
-        except KeyboardInterrupt:
-            CommonUtils.print_log_line("Monitoring interrupted by user.")
-            stop_event.set()  # 通知所有线程停止
-            
-            # 等待线程结束
-            monitor_thread.join(timeout=2)
-            process_thread.join(timeout=2)
-            
-            CommonUtils.print_log_line("All monitoring threads stopped.")
-            sys.exit(0)
-
-if __name__ == "__main__":
-    run_main()

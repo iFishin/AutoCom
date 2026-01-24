@@ -93,26 +93,26 @@ class DataStore:
     def _cleanup_old_files(self):
         """Clean up old data files based on cleanup_days setting"""
         try:
-            data_dir = os.path.dirname(self.filename)
-            if not os.path.exists(data_dir):
+            from pathlib import Path
+            data_dir = Path(self.filename).parent
+            if not data_dir.exists():
                 return
             
             current_time = time.time()
             cutoff_time = current_time - (self.cleanup_days * 24 * 3600)
             
             # Find all session data files
-            pattern = os.path.join(data_dir, "session_*.json")
-            files = glob.glob(pattern)
+            files = list(data_dir.glob("session_*.json"))
             
             cleaned_count = 0
             for filepath in files:
                 try:
-                    file_time = os.path.getmtime(filepath)
+                    file_time = filepath.stat().st_mtime
                     if file_time < cutoff_time:
-                        os.remove(filepath)
+                        filepath.unlink()
                         # Also remove backup file if exists
-                        backup_file = f"{filepath}.backup"
-                        if os.path.exists(backup_file):
+                        backup_file = filepath.with_suffix('.json.backup')
+                        if backup_file.exists():
                             os.remove(backup_file)
                         cleaned_count += 1
                 except Exception as e:
@@ -404,14 +404,15 @@ class DataStore:
         Returns:
             List of tuples: (session_id, filepath, modified_time)
         """
-        if not os.path.exists(data_dir):
+        from pathlib import Path
+        data_path = Path(data_dir)
+        if not data_path.exists():
             return []
         
         current_time = time.time()
         cutoff_time = current_time - (days * 24 * 3600)
         
-        pattern = os.path.join(data_dir, "session_*.json")
-        files = glob.glob(pattern)
+        files = list(data_path.glob("session_*.json"))
         
         sessions = []
         for filepath in files:
@@ -443,16 +444,16 @@ class DataStore:
             Dictionary of loaded data, or empty dict if not found
         """
         try:
+            from pathlib import Path
             if filepath:
-                target_file = filepath
+                target_file = Path(filepath)
             elif session_id:
-                target_file = os.path.join(data_dir, f"session_{session_id}.json")
+                target_file = Path(data_dir) / f"session_{session_id}.json"
             else:
                 return {}
             
-            if os.path.exists(target_file):
-                with open(target_file, "r") as f:
-                    return json.load(f)
+            if target_file.exists():
+                return json.loads(target_file.read_text())
         except Exception as e:
             CommonUtils.print_log_line(f"Error loading session data: {e}")
         

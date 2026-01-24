@@ -2,6 +2,7 @@ import serial
 import sys
 try:
     from utils.common import CommonUtils
+    from utils.dirs import get_dirs
     from components.Device import Device
 except ModuleNotFoundError:
     from ..utils.common import CommonUtils
@@ -10,7 +11,6 @@ import os
 import re
 import time
 import threading
-import queue
 
 
 class MonitorManager:
@@ -157,7 +157,7 @@ class CommandDeviceDict:
     def __init__(self, dict, data_store=None):
         self.dict = dict
         self.devices = {}
-        self.log_date_dir = None
+        self.log_date_dir = str(get_dirs()._session_dir)
         self._data_store = data_store
         
         # Simplified monitoring mechanism
@@ -273,11 +273,9 @@ class CommandDeviceDict:
                 )
                 
                 # Setup logging - 使用环境变量中的日志目录（如果设置了）
-                log_dir = os.environ.get('AUTOCOM_DEVICE_LOGS_DIR', 'device_logs')
-                self.log_date_dir = os.path.join(log_dir, time.strftime("%Y-%m-%d_%H-%M-%S"))
+                # self.log_date_dir = str(log_dir / time.strftime("%Y-%m-%d_%H-%M-%S"))
                 log_path = self.devices[device_name].setup_logging(self.log_date_dir)
                 
-                CommonUtils.set_log_file_path(self.log_date_dir)
                 CommonUtils.print_log_line(
                     f"Device {device_name} connected to port {port}, baud rate {baud_rate}",
                     top_border=True,

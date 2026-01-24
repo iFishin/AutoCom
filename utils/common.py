@@ -5,19 +5,25 @@ import os
 import re
 import sys
 import shutil
-from components.DataStore import DataStore
-
+from pathlib import Path
 
 class CommonUtils:
     """Common utility functions class"""
     
     # Define global variables
-    log_file_path = "EXECUTION_LOG.log"
+    log_file_path = None
     terminal_width = None  # Auto-detect terminal width
     
     @classmethod
-    def set_log_file_path(cls, path: str):
-        cls.log_file_path = os.path.join(path, "EXECUTION_LOG.log")
+    def init_log_file_path(cls, log_dir: str):
+        """Initialize log file path from a directory path
+        
+        Args:
+            log_dir: Directory path for logs (should be a fully resolved path from dirs)
+        """
+        from pathlib import Path
+        log_path = Path(log_dir) / "EXECUTION_LOG.log"
+        cls.log_file_path = str(log_path)
     
     @classmethod
     def get_terminal_width(cls) -> int:
@@ -190,7 +196,7 @@ class CommonUtils:
         border_side_char: str = "|",
         length: int = 0,
         align: str = "^",
-        log_file: str = "",
+        log_file: str = None,
         is_print: bool = True,
     ) -> str:
         """Print and save formatted log line with borders
@@ -212,19 +218,19 @@ class CommonUtils:
         Returns:
             Formatted log line string
         """
-        if log_file is None:
+        if not log_file:
             log_file = cls.log_file_path
         
         # Auto-detect terminal width if length not specified
-        if length is None:
+        if length == 0:
             length = cls.get_terminal_width()
         
         if top_border:
             border = border_vertical_char * length
             if is_print:
                 print(border)
-            FileHandler.write_file(log_file, border + "\n", "a")
-        
+            if log_file:
+                FileHandler.write_file(log_file, border + "\n", "a")
         if side_border:
             content_length = length - len(border_side_char) * 2 - 2
             # Adjust line length for emoji characters
@@ -235,7 +241,7 @@ class CommonUtils:
                 # Truncate and add ellipsis
                 truncated_line = cls._truncate_string(line, content_length - 3)
                 display_width = cls.get_string_display_width(truncated_line) + 3
-                formatted_line = truncated_line + "..."
+                formatted_line = truncated_line + "..."                
             else:
                 padding = content_length - display_width
                 if padding > 0:
@@ -268,7 +274,6 @@ class CommonUtils:
                         line = line + ' ' * padding
                     else:  # align == '>'
                         line = ' ' * padding + line
-        
         if is_print:
             try:
                 print(line)
@@ -279,13 +284,15 @@ class CommonUtils:
                 except UnicodeEncodeError:
                     # Last resort: remove problematic characters
                     print(line.encode('ascii', 'replace').decode('ascii'))
-        FileHandler.write_file(log_file, line + "\n", "a")
+        if log_file:
+            FileHandler.write_file(log_file, line + "\n", "a")
         
         if bottom_border:
             border = border_vertical_char * length
             if is_print:
                 print(border)
-            FileHandler.write_file(log_file, border + "\n", "a")
+            if log_file:
+                FileHandler.write_file(log_file, border + "\n", "a")
         return line
 
 
@@ -441,7 +448,7 @@ class CommonUtils:
         return found_variables
     
     @staticmethod
-    def process_variables(param_value: str, data_store: DataStore | None = None, device_name: str = "") -> str:
+    def process_variables(param_value: str, data_store: "DataStore | None" = None, device_name: str = "") -> str:
         """Process variables in a string and handle interactive input for empty values
         
         Args:
@@ -541,41 +548,43 @@ class FileHandler:
         """Read file content
 
         Args:
-            file_path: Path to the file
+            file_path: Path to the file (should be absolute or properly resolved)
             encoding: File encoding, defaults to utf-8
 
         Returns:
-            File content string, returns None if error occurs
+            File content string, returns empty string if error occurs
         """
         try:
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            full_path = file_path if os.path.isabs(file_path) else os.path.join(base_dir, file_path)
+            from pathlib import Path
+            file_path_obj = Path(file_path)
 
-            if not os.path.exists(full_path):
-                print(f"File not found: {full_path}")
+            if not file_path_obj.exists():
+                print(f"File not found: {file_path_obj}")
                 return ""
 
             try:
-                with open(full_path, "r", encoding=encoding) as f:
-                    return f.read()
+                return file_path_obj.read_text(encoding=encoding)
             except UnicodeDecodeError:
                 print(
                     f"Encoding error when reading file. Trying with different encoding..."
                 )
-                with open(full_path, "r", encoding="latin-1") as f:
-                    return f.read()
+                return file_path_obj.read_text(encoding="latin-1")
         except Exception as e:
-            print(f"Error reading file {full_path}: {str(e)}")
+            print(f"Error reading file {file_path}: {str(e)}")
             return ""
 
     @staticmethod
     def write_file(
-        file_path: str, content: str, mode: str = "w", encoding: str = "utf-8"
+        file_path: str,
+        content: str,
+        mode: str = "w",
+        encoding: str = "utf-8",
+        newline: bool = True,
     ) -> bool:
         """Write content to file
 
         Args:
-            file_path: Path to the file
+            file_path: Path to the file (should be absolute or properly resolved)
             content: Content to write
             mode: Write mode, defaults to 'w' for overwrite
             encoding: File encoding, defaults to utf-8
@@ -584,22 +593,15 @@ class FileHandler:
             True if write successful, False if failed
         """
         try:
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            full_path = file_path if os.path.isabs(file_path) else os.path.join(base_dir, file_path)
+            p = Path(file_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
 
-            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+            if newline and not content.endswith("\n"):
+                content += "\n"
 
-            try:
-                with open(full_path, mode, encoding=encoding) as f:
-                    f.write(content)
-                return True
-            except UnicodeEncodeError:
-                print(
-                    f"Encoding error when writing file. Trying with different encoding..."
-                )
-                with open(full_path, mode, encoding="latin-1") as f:
-                    f.write(content)
-                return True
+            with p.open(mode, encoding=encoding) as f:
+                f.write(content)
+            return True
         except Exception as e:
-            print(f"Error writing to file {full_path}: {str(e)}")
+            print(f"Error writing to file {file_path}: {e}")
             return False

@@ -530,12 +530,13 @@ class Device:
 
     def setup_logging(self, log_dir):
         """Setup logging for this device with safe filename."""
-        if not os.path.exists(log_dir):
-            os.makedirs(log_dir)
+        from pathlib import Path
+        log_path_obj = Path(log_dir)
+        log_path_obj.mkdir(parents=True, exist_ok=True)
         
         safe_port_name = self._sanitize_filename(self.port)
         log_filename = f"{self.name}_{safe_port_name}.log"
-        log_path = os.path.join(log_dir, log_filename)
+        log_path = log_path_obj / log_filename
         
         self.log_file = open(log_path, "w", encoding="utf-8")
-        return log_path
+        return str(log_path)

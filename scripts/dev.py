@@ -163,16 +163,24 @@ def test():
     # 测试 CLI 命令
     print("\n检查 CLI 命令...")
     # 尝试直接调用
-    result = subprocess.run(["autocom", "-v"], capture_output=True, text=True, cwd=ROOT_DIR)
-    if result.returncode == 0 and result.stdout:
-        print_success(f"autocom 命令: {result.stdout.strip()}")
-    else:
-        # 尝试通过 python -m 调用
-        result2 = subprocess.run(["python", "-m", "cli", "-v"], capture_output=True, text=True, cwd=ROOT_DIR)
+    try:
+        result = subprocess.run(["autocom", "-v"], capture_output=True, text=True, cwd=ROOT_DIR, timeout=5)
+        if result.returncode == 0 and result.stdout:
+            print_success(f"autocom 命令: {result.stdout.strip()}")
+            return failed == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    
+    # 尝试通过 python -m 调用
+    try:
+        result2 = subprocess.run([sys.executable, "-m", "cli", "-v"], capture_output=True, text=True, cwd=ROOT_DIR, timeout=5)
         if result2.returncode == 0:
             print_success(f"CLI 模块: {result2.stdout.strip()}")
-        else:
-            print_warning("autocom 命令未安装 (运行 'python scripts/dev.py install' 安装)")
+            return failed == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    
+    print_warning("autocom 命令未安装 (运行 'python scripts/dev.py install' 安装)")
     
     return failed == 0
 
