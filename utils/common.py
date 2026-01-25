@@ -513,11 +513,6 @@ class CommonUtils:
                     if var_value is not None:
                         var_values[var] = var_value
                         continue
-                    
-            # 如果找不到变量
-            CommonUtils.print_log_line(f"❌ Variable '{var}' not found in Constants")
-            CommonUtils.print_log_line("   Note: Variables must be defined in Constants block")
-            sys.exit(1)
             
         return CommonUtils.replace_variables_from_str(param_value, vars, **var_values)
         

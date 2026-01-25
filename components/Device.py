@@ -329,6 +329,27 @@ class Device:
                                                 buffer.extend(chunk)
                                         break
                     
+                    # Handle data in buffer without newline: wait for timeout to confirm it's the last data
+                    if buffer and b"\n" not in buffer:
+                        # Wait 500ms to see if more data arrives
+                        wait_start = time.time()
+                        data_received_during_wait = False
+                        
+                        while (time.time() - wait_start) < 0.5:  # Wait 500ms for more data
+                            with self.lock:
+                                if self.ser.in_waiting > 0:
+                                    chunk = self.ser.read(min(self.ser.in_waiting, 512))
+                                    buffer.extend(chunk)
+                                    data_received_during_wait = True
+                                    break  # Exit wait loop and process new data
+                            
+                            time.sleep(0.01)  # Check every 10ms
+                        
+                        # If timeout occurred with no new data, this is the last incomplete line
+                        # Manually add newline to process it
+                        if not data_received_during_wait and buffer:
+                            buffer.extend(b'\n')  # Add newline character
+                    
                     # Early exit if all expectations matched
                     if expected_responses and next_expected_idx >= len(expected_responses):
                         break
