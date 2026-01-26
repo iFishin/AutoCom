@@ -396,6 +396,9 @@ class ActionHandler:
         {
             "execute_command_by_order": command_order
         }
+        
+        注意: 在并行执行期间，此命令会被延迟到并行执行完毕后执行，
+        以避免在多设备并行通信时干扰响应匹配。
         """
         CommonUtils.print_log_line(
             f"ℹ Executing command with order {order}"
@@ -404,7 +407,13 @@ class ActionHandler:
 
         for cmd in self.executor.command_device_dict.dict["Commands"]:
             if cmd["order"] == order:
-                self.executor.execute_command(cmd)
+                # 检查是否在并行执行期间
+                if self.executor.defer_response_actions:
+                    # 在并行执行期间，收集此 action，稍后执行
+                    self.executor.deferred_response_actions.append((command, response, "success_response_actions", context))
+                else:
+                    # 不在并行执行期间，直接执行
+                    self.executor.enqueue_deferred_command(cmd)
                 break
         return True
 

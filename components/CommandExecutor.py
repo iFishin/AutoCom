@@ -2,6 +2,7 @@ import time
 import threading
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
 try:
     from utils.common import CommonUtils
     from components.DataStore import DataStore
@@ -19,9 +20,17 @@ class CommandExecutor:
         self.data_store = DataStore(session_id=session_id)
         self.lock = threading.Lock()
         
+        # 后台命令执行队列（用于处理 success_response_actions 中的嵌套命令）
+        self.deferred_command_queue = Queue()
+        self.deferred_execution_thread = None
+        
         # 迭代追踪信息
         self.current_iteration = None
         self.total_iterations = None
+        
+        # 并行执行期间的延迟 actions 收集（避免在并行期间干扰串口通信）
+        self.defer_response_actions = False  # 标志：是否延迟处理 execute_command_by_order
+        self.deferred_response_actions = []  # 收集延迟的 (command, response, action_type, context)
         
         # 从字典数据中获取数据
         dict_data = command_device_dict_or_dict if isinstance(command_device_dict_or_dict, dict) else command_device_dict_or_dict.dict
@@ -108,6 +117,48 @@ class CommandExecutor:
             
         # Create an instance of ActionHandler
         self.action_handler = action_handler_class(self)
+        
+        # 启动后台命令执行线程
+        self._start_deferred_execution_thread()
+    
+    def _start_deferred_execution_thread(self):
+        """启动后台线程处理延迟执行的命令（避免嵌套锁导致的死锁）"""
+        self.deferred_execution_thread = threading.Thread(
+            target=self._deferred_execution_worker,
+            daemon=False
+        )
+        self.deferred_execution_thread.start()
+    
+    def _deferred_execution_worker(self):
+        """后台线程工作函数，处理延迟执行的命令"""
+        while True:
+            try:
+                item = self.deferred_command_queue.get(timeout=1)
+                if item is None:  # Sentinel value to stop the thread
+                    self.deferred_command_queue.task_done()
+                    break
+                
+                cmd = item
+                try:
+                    self.execute_command(cmd)
+                except Exception as e:
+                    CommonUtils.print_log_line(f"❌ Error executing deferred command: {e}")
+                finally:
+                    self.deferred_command_queue.task_done()
+                    
+            except:  # Queue.Empty exception
+                continue
+    
+    def enqueue_deferred_command(self, command):
+        """将命令加入后台执行队列，避免嵌套锁死锁"""
+        self.deferred_command_queue.put(command)
+    
+    def _handle_response_actions_with_defer(self, command, response, action_type, context):
+        """处理 response_actions，execute_command_by_order 会在并行执行期间被延迟"""
+        # 正常处理 response_actions
+        def handle_response_actions(command, response, action_type):
+            return self.action_handler.handle_response_actions(command, response, action_type, context)
+        return handle_response_actions(command, response, action_type)
 
     def execute_command(self, command) -> bool:
         self.isAllPassed = False
@@ -205,7 +256,7 @@ class CommandExecutor:
             with self.lock:  # 使用锁确保原子性
                 isActionPassed = all([
                     handle_actions(command, response, "success_actions"),
-                    handle_response_actions(command, response, "success_response_actions"),
+                    self._handle_response_actions_with_defer(command, response, "success_response_actions", context),
                     handle_response_actions(command, response, "error_response_actions")
                 ])
                 if not isActionPassed:
@@ -234,7 +285,7 @@ class CommandExecutor:
             with self.lock:
                 isActionPassed = all([
                     handle_actions(command, response, "success_actions"),
-                    handle_response_actions(command, response, "success_response_actions"),
+                    self._handle_response_actions_with_defer(command, response, "success_response_actions", context),
                     handle_response_actions(command, response, "error_response_actions")
                 ])
                 if not isActionPassed:
@@ -259,7 +310,7 @@ class CommandExecutor:
             # 使用新的 ActionHandler 处理 actions
             with self.lock:  # 使用锁确保原子性
                 handle_actions(command, response, "error_actions")
-                handle_response_actions(command, response, "success_response_actions")
+                self._handle_response_actions_with_defer(command, response, "success_response_actions", context)
                 handle_response_actions(command, response, "error_response_actions")
         
         return self.isAllPassed
@@ -328,7 +379,39 @@ class CommandExecutor:
                 if not result:
                     self.isSinglePassed = False
                 i += 1
+        
+        # 等待所有延迟执行的命令完成
+        self._wait_for_deferred_commands()
+        
         return self.isSinglePassed
+    
+    def _wait_for_deferred_commands(self):
+        """等待所有延迟执行的命令完成"""
+        # 将所有后台队列中的命令执行完毕
+        self.deferred_command_queue.join()
+    
+    def shutdown(self):
+        """关闭后台执行线程"""
+        try:
+            # 首先等待队列中所有任务完成（最多等待 10 秒）
+            self.deferred_command_queue.join()
+        except Exception as e:
+            CommonUtils.print_log_line(f"Warning: Error while waiting for deferred commands: {e}")
+        
+        # 发送停止信号
+        try:
+            self.deferred_command_queue.put(None)  # Sentinel value
+        except Exception as e:
+            CommonUtils.print_log_line(f"Warning: Error while sending stop signal to deferred execution thread: {e}")
+        
+        # 等待线程退出（最多等待 5 秒）
+        if self.deferred_execution_thread and self.deferred_execution_thread.is_alive():
+            try:
+                self.deferred_execution_thread.join(timeout=5)
+                if self.deferred_execution_thread.is_alive():
+                    CommonUtils.print_log_line("Warning: Deferred execution thread did not terminate within 5 seconds")
+            except Exception as e:
+                CommonUtils.print_log_line(f"Warning: Error while joining deferred execution thread: {e}")
 
     def _execute_parallel_commands(self, commands) -> bool:
         # Group commands by device to avoid contention on same serial port
@@ -340,27 +423,40 @@ class CommandExecutor:
                 device_groups[device] = []
             device_groups[device].append(cmd)
 
-        # Execute commands for each device in parallel
-        with ThreadPoolExecutor(max_workers=len(device_groups)) as executor:
-            futures = []
+        # 在并行执行期间，延迟处理 execute_command_by_order，避免打乱并行流程
+        previous_defer_state = self.defer_response_actions
+        self.defer_response_actions = True
+        self.deferred_response_actions.clear()
 
-            # Submit device command groups to thread pool
-            for device_commands in device_groups.values():
-                future = executor.submit(self._execute_device_commands, device_commands)
-                futures.append(future)
+        try:
+            # Execute commands for each device in parallel
+            with ThreadPoolExecutor(max_workers=len(device_groups)) as executor:
+                futures = []
 
-            # Wait for all command groups to complete
-            for future in futures:
-                try:
-                    result = future.result(timeout=30)
-                    if not result:
-                        isAllPassed = False
-                except Exception as e:
-                    CommonUtils.print_log_line(
-                        f"Error executing parallel commands: {e}"
-                    )
-                    self.isParallelPassed = False
-            return self.isParallelPassed
+                # Submit device command groups to thread pool
+                for device_commands in device_groups.values():
+                    future = executor.submit(self._execute_device_commands, device_commands)
+                    futures.append(future)
+
+                # Wait for all command groups to complete
+                for future in futures:
+                    try:
+                        result = future.result(timeout=30)
+                        if not result:
+                            self.isParallelPassed = False
+                    except Exception as e:
+                        CommonUtils.print_log_line(
+                            f"Error executing parallel commands: {e}"
+                        )
+                        self.isParallelPassed = False
+        finally:
+            # 并行执行完毕后，恢复之前的延迟状态
+            self.defer_response_actions = previous_defer_state
+            
+            # 现在执行收集的所有延迟 actions
+            self._execute_deferred_response_actions()
+            
+        return self.isParallelPassed
 
     def _execute_device_commands(self, device_commands) -> bool:
         # Execute commands for a single device sequentially
@@ -369,3 +465,14 @@ class CommandExecutor:
             if not self.execute_command(cmd):
                 isAllPassed = False
         return isAllPassed
+    
+    def _execute_deferred_response_actions(self):
+        """执行所有延迟的 execute_command_by_order 操作"""
+        if not self.deferred_response_actions:
+            return
+        
+        for command, response, action_type, context in self.deferred_response_actions:
+            try:
+                self.action_handler.handle_response_actions(command, response, action_type, context)
+            except Exception as e:
+                CommonUtils.print_log_line(f"❌ Error processing deferred {action_type}: {e}")

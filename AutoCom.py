@@ -316,7 +316,16 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
         if 'command_device_dict' in locals():
             command_device_dict.close_all_devices()  # Use the new method to properly cleanup
         if 'executor' in locals():
-            executor.data_store.stop()
+            try:
+                # 关闭后台执行线程
+                executor.shutdown()
+            except Exception as e:
+                CommonUtils.print_log_line(f"Warning: Error shutting down executor: {e}")
+            
+            try:
+                executor.data_store.stop()
+            except Exception as e:
+                CommonUtils.print_log_line(f"Warning: Error stopping data store: {e}")
         
         # Use executed_count (actual iterations) instead of loop_count in summary
         if executed_count == 0:
@@ -414,8 +423,17 @@ def execute_with_folder(path: str, files: list, config: json = None):
     finally:
         # close all devices and save data
         command_device_dict.close_all_devices()  # Use the new method to properly cleanup
-        executor.data_store.force_save()  # Use force_save instead of non-existent save_to_file
-        executor.data_store.stop()
+        try:
+            executor.shutdown()
+        except Exception as e:
+            CommonUtils.print_log_line(f"Warning: Error shutting down executor: {e}")
+        
+        try:
+            executor.data_store.force_save()  # Use force_save instead of non-existent save_to_file
+            executor.data_store.stop()
+        except Exception as e:
+            CommonUtils.print_log_line(f"Warning: Error stopping data store: {e}")
+        
         CommonUtils.print_log_line(
             f"{'✅ ' + str(len(files) - failure_count) + '/' + str(len(files))} files passed."
             if failure_count == 0
@@ -598,6 +616,12 @@ def process_file_queue(file_queue, stop_event):
                         CommonUtils.print_log_line(f"Error closing devices: {e}")
                         
                 if executor:
+                    try:
+                        # 关闭后台执行线程
+                        executor.shutdown()
+                    except Exception as e:
+                        CommonUtils.print_log_line(f"Error shutting down executor: {e}")
+                    
                     try:
                         executor.data_store.force_save()  # Use force_save instead of non-existent save_to_file
                         executor.data_store.stop()
