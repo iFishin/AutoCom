@@ -128,16 +128,41 @@ class ActionHandler:
             return True
         
         actions = command[action_type]
+        result = True
+        
         if isinstance(actions, dict):
+            # success_response_actions 或 error_response_actions 格式（键为匹配条件，值为 actions 列表）
             for key, action_list in actions.items():
                 if key in response:
                     CommonUtils.print_log_line(f"ℹ Response contains `{key}`")
+                    CommonUtils.print_log_line("")
+                    # 对每个 action 进行处理
                     for action in action_list:
-                        self.handle_actions({"temp_actions": [action]}, response, "temp_actions", context)
+                        try:
+                            found = False
+                            for action_key, value in action.items():
+                                if action_key in self.handlers:
+                                    # 直接调用处理器
+                                    handler_result = self.handlers[action_key](value, command, response, context)
+                                    if handler_result is False:
+                                        result = False
+                                    found = True
+                                    break
+                            
+                            if not found:
+                                CommonUtils.print_log_line(f"Unknown action type: {action}")
+                                result = False
+                        except Exception as e:
+                            device_name = context.get('device_name', 'Unknown')
+                            device = context.get('device')
+                            port_info = f" (port: {device.port})" if device and hasattr(device, 'port') else ""
+                            CommonUtils.print_log_line(f"Error processing response action on device '{device_name}'{port_info}: {e}")
+                            result = False
         elif isinstance(actions, list):
+            # 简单的 actions 列表格式
             return self.handle_actions({"temp_actions": actions}, response, "temp_actions", context)
         
-        return True
+        return result
     
     
     # ---------------------------------------------------------
