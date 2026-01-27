@@ -8,6 +8,7 @@ import argparse
 import serial
 import queue
 import threading
+from datetime import datetime
 
 # 根据运行方式选择导入路径
 try:
@@ -41,16 +42,8 @@ def main():
 
 def run_main():
     """主程序入口函数,用于被 CLI 调用"""
-    # 获取路径管理对象
+    # 获取路径管理对象（此时不创建目录）
     dirs = get_dirs()
-    
-    # 转换为字符串用于环境变量和 set_log_file_path
-    device_logs_dir = str(dirs.device_logs_dir)
-    temps_dir = str(dirs.temp_dir)
-    data_store_dir = str(dirs.data_store_dir)
-    
-    # 初始化CommonUtils 写入路径
-    CommonUtils.init_log_file_path(str(get_dirs().session_dir))
 
     parser = argparse.ArgumentParser(
         description="AutoCom command execution tool",
@@ -203,8 +196,13 @@ def run_main():
         # 使用 dirs 辅助方法获取字典文件路径（优先从工作目录，再从包目录）
         dict_path = dirs.get_dict_path(args.dict)
 
-        # Ensure working directories exist before execution
-        ensure_working_directories(temps_dir, data_store_dir, device_logs_dir)
+        # 显式创建工作目录
+        device_logs_dir = str(dirs.device_logs_dir)
+        temps_dir = str(dirs.temp_dir)
+        data_store_dir = str(dirs.data_store_dir)
+        
+        # 初始化 CommonUtils 日志路径（在创建了 device_logs 目录后）
+        CommonUtils.init_log_file_path(str(dirs.session_dir))
 
         start_time = time.time()
         try:
@@ -232,6 +230,14 @@ def run_main():
         # 使用 dirs 辅助方法获取文件夹路径（优先从工作目录，再从包目录）
         folder_path = str(dirs.get_folder_path(args.folder))
 
+        # 显式创建工作目录
+        device_logs_dir = str(dirs.device_logs_dir)
+        temps_dir = str(dirs.temp_dir)
+        data_store_dir = str(dirs.data_store_dir)
+        
+        # 初始化 CommonUtils 日志路径（在创建了 device_logs 目录后）
+        CommonUtils.init_log_file_path(str(dirs.session_dir))
+
         import re
 
         json_files = [f for f in os.listdir(folder_path) if f.endswith(".json")]
@@ -243,9 +249,6 @@ def run_main():
                 else float("inf")
             ),
         )
-
-        # Ensure working directories exist before execution
-        ensure_working_directories(temps_dir, data_store_dir, device_logs_dir)
 
         try:
             start_time = time.time()

@@ -65,29 +65,53 @@ class Dirs:
             self._root = Path.cwd().resolve()
         return self._root
 
+    def log_dir_safe(self) -> Path:
+        """获取日志目录路径，不自动创建"""
+        return self.root / "logs"
+
     @property
     def log_dir(self) -> Path:
-        return _ensure_dir(self.root / "logs")
+        return _ensure_dir(self.log_dir_safe())
+
+    def temp_dir_safe(self) -> Path:
+        """获取临时目录路径，不自动创建"""
+        return self.root / "temps"
 
     @property
     def temp_dir(self) -> Path:
-        return _ensure_dir(self.root / "temps")
+        return _ensure_dir(self.temp_dir_safe())
+
+    def data_store_dir_safe(self) -> Path:
+        """获取数据存储目录路径，不自动创建"""
+        return self.temp_dir_safe() / "data_store"
 
     @property
     def data_store_dir(self) -> Path:
-        return _ensure_dir(self.temp_dir / "data_store")
+        return _ensure_dir(self.data_store_dir_safe())
+
+    def device_logs_dir_safe(self) -> Path:
+        """获取设备日志目录路径，不自动创建"""
+        return self.root / "device_logs"
 
     @property
     def device_logs_dir(self) -> Path:
-        return _ensure_dir(self.root / "device_logs")
+        return _ensure_dir(self.device_logs_dir_safe())
+
+    def dicts_dir_safe(self) -> Path:
+        """获取字典目录路径，不自动创建"""
+        return self.root / "dicts"
 
     @property
     def dicts_dir(self) -> Path:
-        return _ensure_dir(self.root / "dicts")
+        return _ensure_dir(self.dicts_dir_safe())
+
+    def configs_dir_safe(self) -> Path:
+        """获取配置目录路径，不自动创建"""
+        return self.root / "configs"
 
     @property
     def configs_dir(self) -> Path:
-        return _ensure_dir(self.root / "configs")
+        return _ensure_dir(self.configs_dir_safe())
 
     # ========= 包资源目录（只读） =========
     @property
