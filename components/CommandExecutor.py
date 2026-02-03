@@ -154,8 +154,13 @@ class CommandExecutor:
         self.deferred_command_queue.put(command)
     
     def _handle_response_actions_with_defer(self, command, response, action_type, context):
-        """处理 response_actions，execute_command_by_order 会在并行执行期间被延迟"""
-        # 正常处理 response_actions
+        """处理 response_actions，在并行执行期间延迟所有响应处理"""
+        # 如果在并行执行期间，收集所有响应处理，包括 retry，稍后统一执行
+        if self.defer_response_actions:
+            self.deferred_response_actions.append((command, response, action_type, context))
+            return True
+        
+        # 不在并行执行期间，直接处理
         def handle_response_actions(command, response, action_type):
             return self.action_handler.handle_response_actions(command, response, action_type, context)
         return handle_response_actions(command, response, action_type)
@@ -351,19 +356,26 @@ class CommandExecutor:
         i = 0
         self.isSinglePassed = True
         while i < len(commands):
+            # 在处理任何命令前，检查是否有延迟的 response actions 需要执行
+            # 这确保触发的命令在适当的时机执行，不会打断并行块
+            if not commands[i].get("concurrent_strategy") == "parallel" and self.deferred_response_actions:
+                self._execute_deferred_response_actions()
+            
             if commands[i].get("status") == "disabled":
                 i += 1
                 continue
 
             # Handle parallel execution strategy
             if commands[i].get("concurrent_strategy") == "parallel":
-                # Collect all consecutive parallel commands
+                # Collect all consecutive parallel commands with the same order
+                current_order = commands[i].get("order")
                 parallel_commands = [commands[i]]
                 next_idx = i + 1
 
                 while (
                     next_idx < len(commands)
                     and commands[next_idx].get("concurrent_strategy") == "parallel"
+                    and commands[next_idx].get("order") == current_order
                 ):
                     parallel_commands.append(commands[next_idx])
                     next_idx += 1
@@ -426,7 +438,7 @@ class CommandExecutor:
         # 在并行执行期间，延迟处理 execute_command_by_order，避免打乱并行流程
         previous_defer_state = self.defer_response_actions
         self.defer_response_actions = True
-        self.deferred_response_actions.clear()
+        # 不要清空列表，因为可能有来自之前并行块的延迟命令，只在执行时才清空
 
         try:
             # Execute commands for each device in parallel
@@ -453,8 +465,8 @@ class CommandExecutor:
             # 并行执行完毕后，恢复之前的延迟状态
             self.defer_response_actions = previous_defer_state
             
-            # 现在执行收集的所有延迟 actions
-            self._execute_deferred_response_actions()
+            # 不在这里执行延迟 actions，而是留到主循环中的适当时机
+            # （在执行下一个非并行指令前执行，以避免打断后续的并行块）
             
         return self.isParallelPassed
 
@@ -471,8 +483,20 @@ class CommandExecutor:
         if not self.deferred_response_actions:
             return
         
-        for command, response, action_type, context in self.deferred_response_actions:
+        # 保存当前的延迟列表，然后清空它
+        actions_to_execute = self.deferred_response_actions.copy()
+        self.deferred_response_actions.clear()
+        
+        for item in actions_to_execute:
             try:
-                self.action_handler.handle_response_actions(command, response, action_type, context)
+                # 处理两种格式：新格式（字典）和旧格式（元组）
+                if isinstance(item, dict) and item.get("action_type") == "deferred_execute":
+                    # 新格式：直接执行命令
+                    cmd = item["command"]
+                    self.execute_command(cmd)
+                else:
+                    # 旧格式：处理响应操作
+                    command, response, action_type, context = item
+                    self.action_handler.handle_response_actions(command, response, action_type, context)
             except Exception as e:
-                CommonUtils.print_log_line(f"❌ Error processing deferred {action_type}: {e}")
+                CommonUtils.print_log_line(f"❌ Error processing deferred action: {e}")

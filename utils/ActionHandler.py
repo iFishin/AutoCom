@@ -252,11 +252,20 @@ class ActionHandler:
         }
         """
         device = context["device"]
+        device_name = context.get("device_name", "Unknown")
         cmd_str = context["cmd_str"]
         updated_expected_responses = context["expected_responses"]
 
+        # 只有在命令字符串不为空时才重试
+        if not cmd_str or cmd_str.strip() == "ℹ INFO":
+            CommonUtils.print_log_line(
+                f"⚠️ Skip retry: No valid command to retry on device '{device_name}'"
+            )
+            CommonUtils.print_log_line("")
+            return False
+
         CommonUtils.print_log_line(
-            f"Starting retry operation, will retry {command['command']} {retry_times} times..."
+            f"Starting retry operation, will retry '{cmd_str}' {retry_times} times on device '{device_name}'..."
         )
         CommonUtils.print_log_line("")
 
@@ -283,7 +292,7 @@ class ActionHandler:
 
             if success:
                 CommonUtils.print_log_line(
-                    f"✅ Retry {command['command']} successful!"
+                    f"✅ Retry successful on device '{device_name}'!"
                 )
                 CommonUtils.print_log_line("")
 
@@ -296,9 +305,10 @@ class ActionHandler:
                 return True
             else:
                 CommonUtils.print_log_line(
-                    "❌ Retry failed, trying again..."
+                    f"❌ Retry attempt {attempt + 1} failed on device '{device_name}', "
+                    + ("trying again..."
                     if attempt < retry_times - 1
-                    else "❌ All retries failed!"
+                    else "all retries exhausted!")
                 )
                 CommonUtils.print_log_line("")
                 self.executor.isAllPassed = False
@@ -422,7 +432,7 @@ class ActionHandler:
             "execute_command_by_order": command_order
         }
         
-        注意: 在并行执行期间，此命令会被延迟到并行执行完毕后执行，
+        注意: 此命令会被延迟到当前并行执行块完毕后执行，
         以避免在多设备并行通信时干扰响应匹配。
         """
         CommonUtils.print_log_line(
@@ -432,12 +442,17 @@ class ActionHandler:
 
         for cmd in self.executor.command_device_dict.dict["Commands"]:
             if cmd["order"] == order:
-                # 检查是否在并行执行期间
+                # 始终延迟执行，确保不打断并行块
+                # 如果在并行执行期间，加入延迟响应处理队列
+                # 否则加入后台命令队列
                 if self.executor.defer_response_actions:
-                    # 在并行执行期间，收集此 action，稍后执行
-                    self.executor.deferred_response_actions.append((command, response, "success_response_actions", context))
+                    # 在并行执行期间，收集此命令以供并行完成后执行
+                    self.executor.deferred_response_actions.append({
+                        "command": cmd,
+                        "action_type": "deferred_execute"
+                    })
                 else:
-                    # 不在并行执行期间，直接执行
+                    # 不在并行执行期间，但仍然延迟执行以避免嵌套问题
                     self.executor.enqueue_deferred_command(cmd)
                 break
         return True
