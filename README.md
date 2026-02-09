@@ -17,7 +17,7 @@
 ## 📑 目录
 
 - [AutoCom](#autocom)
-
+  - [📑 目录](#-目录)
   - [📁 项目结构](#-项目结构)
     - [📂 目录说明](#-目录说明)
   - [安装](#安装)
@@ -25,25 +25,9 @@
     - [从 GitHub 直接安装](#从-github-直接安装)
     - [从源码安装](#从源码安装)
     - [手动打包安装](#手动打包安装)
-  - [📦 打包和发布](#-打包和发布)
-    - [打包前准备](#打包前准备)
-    - [构建发行包](#构建发行包)
-    - [本地测试安装](#本地测试安装)
-    - [发布到 PyPI](#发布到-pypi)
-      - [1. 注册 PyPI 账号](#1-注册-pypi-账号)
-      - [2. 配置 API Token](#2-配置-api-token)
-      - [3. 上传到 PyPI](#3-上传到-pypi)
-      - [4. 验证发布](#4-验证发布)
-    - [版本更新流程](#版本更新流程)
-    - [版本号规范](#版本号规范)
-    - [自动化脚本](#自动化脚本)
   - [🚀 快速开始](#-快速开始)
     - [命令行使用](#命令行使用)
     - [Python API 使用](#python-api-使用)
-  - [📑 目录](#-目录)
-
-- [AutoCom Feature Checklist](#autocom-feature-checklist)
-
   - [执行方式](#执行方式)
   - [格式框架](#格式框架)
     - [设备](#设备)
@@ -57,9 +41,6 @@
       - [指令参数](#指令参数)
       - [指令列表全局配置](#指令列表全局配置)
     - [临时性数据](#临时性数据)
-  - [使用示例](#使用示例)
-
-  ---
 
 ## 📁 项目结构
 
@@ -163,175 +144,6 @@ pip install dist/autocom-x.x.x-py3-none-any.whl
 
 ---
 
-## 📦 打包和发布
-
-### 打包前准备
-
-1. **安装打包工具**
-
-```bash
-pip install build twine
-```
-
-2. **准备包结构**
-
-运行准备脚本,将源代码复制到 `autocom/` 目录:
-
-```bash
-python scripts/prepare_package.py
-```
-
-### 构建发行包
-
-使用 `build` 工具构建源码包（.tar.gz）和 wheel 包（.whl）：
-
-```bash
-python -m build
-```
-
-构建成功后，会在 `dist/` 目录生成两个文件：
-- `autocom-1.0.0-py3-none-any.whl` - wheel 包（推荐安装方式）
-- `autocom-1.0.0.tar.gz` - 源码包
-
-### 本地测试安装
-
-创建虚拟环境测试包安装：
-
-```bash
-# 创建测试虚拟环境
-python -m venv test_venv
-
-# Windows 激活虚拟环境
-.\test_venv\Scripts\Activate.ps1
-
-# Linux/Mac 激活虚拟环境
-source test_venv/bin/activate
-
-# 安装 wheel 包
-pip install dist/autocom-1.0.0-py3-none-any.whl
-
-# 测试安装
-autocom -v
-python -c "import autocom; print(autocom.__version__)"
-
-# 退出虚拟环境
-deactivate
-```
-
-### 发布到 PyPI
-
-#### 1. 注册 PyPI 账号
-
-在 [PyPI](https://pypi.org/account/register/) 注册账号
-
-#### 2. 配置 API Token
-
-在 PyPI 账号设置中生成 API Token，然后配置到本地：
-
-```bash
-# 创建 .pypirc 文件（Linux/Mac 在 ~/.pypirc，Windows 在 %USERPROFILE%\.pypirc）
-# 内容如下：
-[pypi]
-username = __token__
-password = pypi-AgEIcHlwaS5vcmc...（你的 API Token）
-```
-
-#### 3. 上传到 PyPI
-
-```bash
-# 上传到 PyPI
-twine upload dist/*
-
-# 或者先上传到 TestPyPI 测试
-twine upload --repository testpypi dist/*
-```
-
-#### 4. 验证发布
-
-```bash
-# 从 PyPI 安装
-pip install autocom
-
-# 测试
-autocom -v
-```
-
-### 版本更新流程
-
-当需要发布新版本时：
-
-1. **更新版本号**
-
-使用 `scripts/update_version.py` 脚本更新版本:
-
-```bash
-# 语法: python scripts/update_version.py <新版本号> "<更新说明>"
-python scripts/update_version.py 1.1.0 "添加新功能: XXX"
-```
-
-这个脚本会:
-- 更新 `version.py` 中的版本号
-- 更新 `AutoCom.py` 中的版本号
-- 在 `VERSION_HISTORY` 中添加更新日志
-- 自动验证版本号格式(语义化版本)
-
-2. **测试新版本**
-
-```bash
-# 运行测试
-python scripts/test_package.py
-
-# 查看版本
-python AutoCom.py -v
-```
-
-3. **提交代码**
-
-```bash
-git add .
-git commit -m "Release v1.1.0: 添加新功能"
-git tag v1.1.0
-git push origin main --tags
-```
-
-4. **构建并发布**
-
-```bash
-# 清理旧的构建文件
-rm -rf dist/ build/ *.egg-info
-
-# 重新构建
-python scripts/prepare_package.py
-python -m build
-
-# 上传到 PyPI
-twine upload dist/*
-```
-
-### 版本号规范
-
-本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 规范：
-
-- **主版本号（Major）**：不兼容的 API 修改
-- **次版本号（Minor）**：向下兼容的功能性新增
-- **修订号（Patch）**：向下兼容的问题修正
-
-示例：`1.2.3` 表示主版本1，次版本2，修订号3
-
-### 自动化脚本
-
-项目提供了几个辅助脚本(位于 `scripts/` 目录):
-
-- `prepare_package.py` - 准备包结构
-- `update_version.py` - 更新版本号
-- `test_package.py` - 测试包安装
-
-详细文档(位于 `docs/` 目录):
-- [About.md](docs/About.md) - 项目详细介绍
-- [AutoCom字典使用示例.md](docs/AutoCom字典使用示例.md) - 字典配置示例
-
----
-
 ## 🚀 快速开始
 
 ### 命令行使用
@@ -388,7 +200,7 @@ executor.data_store.stop()
 `python AutoCom.py -f <dictFilePath> -c <configFile>`
 
 > 文件夹内的文件命名得加上前缀区分执行顺序：`[<order>]<filename>.json`
-> 
+>
 
 - **监听文件夹内新文件**
 
@@ -707,7 +519,6 @@ def handle_test(self, text, command, response, context):
 > - order
 >
 > 这个执行序号如若遇到序号相同的情形，指令重排之后，相同序号的指令则会按照原始排列出现的顺序执行
-
 
 #### 指令列表全局配置
 
