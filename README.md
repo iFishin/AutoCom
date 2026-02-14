@@ -58,7 +58,6 @@ AutoCom/
 ├── 📂 configs/            # 设备配置文件目录
 ├── AutoCom.py             # 主程序入口
 ├── cli.py                 # 命令行接口
-├── setup.py               # 安装脚本
 ├── version.py             # 版本信息
 ├── __init__.py            # 包初始化文件
 └── README.md              # 项目说明文档
@@ -75,7 +74,7 @@ AutoCom/
   - `Started.md` - 快速开始指南
   - `DEV.md` - 开发指南和工具说明
   - `About.md` - 项目详细说明和设计文档
-  - `Todo.md` - 待办事项和未来计划
+  - `ToDO.md` - 待办事项和未来计划
   - `Actions.md` - 所有 Action 操作项的详细说明
 - **dicts/** - 存放指令字典配置文件
 - **configs/** - 存放设备配置模板文件
@@ -365,7 +364,7 @@ def handle_test(self, text, command, response, context):
 
 ### 指令
 
-<details> 
+<details>
 <summary><font size="6">Commands</font></summary>
 <pre><code class="language-json">
 "Commmands": [
