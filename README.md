@@ -1,15 +1,14 @@
-<div align="center">
-
 # AutoCom
 
 *一款用于自动化执行串口指令的脚本,支持多设备、多指令的串行和并行执行。*
+
+<div align="center">
 
 ![Cross Platform](https://img.shields.io/badge/cross--platform-Windows%20%26%20Linux-success.svg)
 ![Serial Communication](https://img.shields.io/badge/communication-Serial%20Port-orange.svg)
 ![Multi-Device](https://img.shields.io/badge/support-Multi--Device-blueviolet.svg)
 ![Automation](https://img.shields.io/badge/type-Automation%20Tool-red.svg)
 ![PyPI](https://img.shields.io/badge/PyPI-autocom-blue.svg)
-
 </div>
 
 ---
@@ -34,7 +33,6 @@
       - [设备参数](#设备参数)
       - [设备列表全局配置](#设备列表全局配置)
     - [操作项](#操作项)
-      - [操作项参数](#操作项参数)
       - [操作项全局配置](#操作项全局配置)
       - [操作项编写指南](#操作项编写指南)
     - [指令](#指令)
@@ -44,30 +42,23 @@
 
 ## 📁 项目结构
 
-```
+```plain
 AutoCom/
-├── 📂 components/          # 核心组件模块
-│   ├── CommandDeviceDict.py
-│   ├── CommandExecutor.py
-│   ├── DataStore.py
-│   └── Device.py
+├── 📂 components/         # 核心组件模块
+│   └── *.py
 ├── 📂 utils/              # 工具类和辅助函数
-│   ├── ActionHandler.py
-│   ├── CommonUtils.py
-│   └── custom_actions.py
+│   └── *.py
+├── 📂 tests/              # 测试文件目录
+│   └── *.py
 ├── 📂 scripts/            # 构建和维护脚本
-│   ├── prepare_package.py    # 打包前准备脚本
-│   ├── test_package.py       # 包测试脚本
-│   └── update_version.py     # 版本更新脚本
+│   └── *.py
 ├── 📂 docs/               # 项目文档
-│   ├── About.md              # 项目详细介绍
-│   └── AutoCom字典使用示例.md # 字典配置示例
-├── 📂 dicts/              # 字典配置文件目录 (用户创建)
-├── 📂 configs/            # 设备配置文件目录 (用户创建)
-├── 📂 temps/              # 临时数据存储目录 (自动生成)
-├── 📂 device_logs/        # 设备日志目录 (自动生成)
+│   └── *.md
+├── 📂 dicts/              # 字典配置文件目录
+├── 📂 configs/            # 设备配置文件目录
 ├── AutoCom.py             # 主程序入口
 ├── cli.py                 # 命令行接口
+├── setup.py               # 安装脚本
 ├── version.py             # 版本信息
 ├── __init__.py            # 包初始化文件
 └── README.md              # 项目说明文档
@@ -78,18 +69,18 @@ AutoCom/
 - **components/** - 核心功能组件,包含设备管理、指令执行、数据存储等核心模块
 - **utils/** - 工具函数和操作处理器,包含自定义 Action 扩展接口
 - **scripts/** - 开发和维护脚本
-  - `prepare_package.py` - 打包前准备,同步源代码到 autocom/ 目录
-  - `test_package.py` - 测试包安装和功能
-  - `update_version.py` - 自动更新版本号和版本历史
+  - `dev.py` - 统一开发工具,集成测试、构建、发布等功能
+  - `update_actions_doc.py` - 更新 Actions.md 文档
 - **docs/** - 项目文档
+  - `Started.md` - 快速开始指南
+  - `DEV.md` - 开发指南和工具说明
   - `About.md` - 项目详细说明和设计文档
-  - `AutoCom字典使用示例.md` - 字典配置文件使用示例和最佳实践
-- **dicts/** - 存放指令字典配置文件 (需要使用 `autocom --init` 初始化创建)
-- **configs/** - 存放设备配置模板文件 (需要使用 `autocom --init` 初始化创建)
+  - `Todo.md` - 待办事项和未来计划
+  - `Actions.md` - 所有 Action 操作项的详细说明
+- **dicts/** - 存放指令字典配置文件
+- **configs/** - 存放设备配置模板文件
 - **temps/** - 临时数据存储,运行时自动创建
 - **device_logs/** - 设备执行日志,运行时自动创建
-
-> 💡 **提示**: 首次使用前,运行 `autocom --init` 初始化项目结构并生成示例配置文件。
 
 ---
 
@@ -132,14 +123,8 @@ pip install -e .
 如果你想自己打包:
 
 ```bash
-# 1. 准备包结构
-python scripts/prepare_package.py
-
-# 2. 构建包
-python -m build
-
-# 3. 安装
-pip install dist/autocom-x.x.x-py3-none-any.whl
+python scripts/dev.py build
+pip install dist/autocom-<version>-py3-none-any.whl
 ```
 
 ---
@@ -158,7 +143,7 @@ autocom -d dicts/dict.json -l 3
 autocom -d dicts/dict.json -i
 
 # 使用配置文件
-autocom -d dicts/dict.json -c configs/FCM100D.json
+autocom -d dicts/dict.json -c configs/config.json
 
 # 执行文件夹内所有字典文件
 autocom -f dicts/
@@ -210,8 +195,8 @@ executor.data_store.stop()
 
 ### 设备
 
-<details> 
-<summary><font size="6">Devices</font></summary> 
+<details>
+<summary><font size="6">Devices</font></summary>
 <pre><code class="json">
 "Devices": [
         {
@@ -252,19 +237,19 @@ executor.data_store.stop()
 
 #### 设备参数
 
-| Device    | 内容                                | 作用                 |
-| --------- | ----------------------------------- | -------------------- |
-| name      | 设备名称（如 "DeviceA"、"DeviceB"） | 标识不同的设备       |
-| status    | 设备状态（"enabled"/"disabled"）    | 表示设备当前状态     |
-| port      | 串口名称（如 "COM65"）              | 指定设备物理连接端口 |
-| baud_rate | 波特率（如 115200）                 | 设定通信速率         |
-| stop_bits | 停止位（1/2）                       | 设定停止位           |
-| parity    | 奇偶校验（"None"/"Even"/"Odd"）     | 设定奇偶校验         |
-| data_bits | 数据位（5/6/7/8）                   | 设定数据位           |
-| flow_control | 流控制配置                        | 设定流控制           |
-| dtr       | DTR信号（true/false）               | 设定DTR信号          |
-| rts       | RTS信号（true/false）               | 设定RTS信号          |
-| <u>monitor</u> | 是否持续监听设备（true/false）          | 设定是否持续监听日志 |
+| Device         | 内容                                | 作用                 |
+| -------------- | ----------------------------------- | -------------------- |
+| name           | 设备名称（如 "DeviceA"、"DeviceB"） | 标识不同的设备       |
+| status         | 设备状态（"enabled"/"disabled"）    | 表示设备当前状态     |
+| port           | 串口名称（如 "COM65"）              | 指定设备物理连接端口 |
+| baud_rate      | 波特率（如 115200）                 | 设定通信速率         |
+| stop_bits      | 停止位（1/2）                       | 设定停止位           |
+| parity         | 奇偶校验（"None"/"Even"/"Odd"）     | 设定奇偶校验         |
+| data_bits      | 数据位（5/6/7/8）                   | 设定数据位           |
+| flow_control   | 流控制配置                          | 设定流控制           |
+| dtr            | DTR信号（true/false）               | 设定DTR信号          |
+| rts            | RTS信号（true/false）               | 设定RTS信号          |
+| <u>monitor</u> | 是否持续监听设备（true/false）      | 设定是否持续监听日志 |
 
 > 配置执行设备的基本信息。
 >
@@ -276,8 +261,8 @@ executor.data_store.stop()
 >
 > 覆盖逻辑为：**`ConfigForDevices`中的键值对只会替换`Devices`中相对应不存在的键值对**，相反的，如果`Devices`中存在`status: "enabled"`，且你在`ConfigForDevices`中也设置了该属性，则不会利用全局配置来替换。
 
-<details> 
-<summary><font size="6">With ConfigForDevices</font></summary> 
+<details>
+<summary><font size="6">With ConfigForDevices</font></summary>
 <pre><code class="language-json">
  "ConfigForDevices": {
         "status": "enabled",
@@ -317,23 +302,8 @@ executor.data_store.stop()
 
 新版中，已剥离了Actions操作项的函数，单独设计成一个扩展的类，Actions类中包含了所有操作项的实现逻辑。用户可以根据自己的需求，自定义操作项的实现逻辑，方便扩展和维护。
 
-#### 操作项参数
-
-| actions                  | 格式                                                         | 说明                     |
-| ------------------------ | ------------------------------------------------------------ | ------------------------ |
-| retry                    | {"retry": 3}                                                 | 重试指令执行次数，会执行success_actions |
-| save                     | {"save": {"device": "DeviceA", "variable": "version_info", "value": "HCM511S"}} | 保存数据                 |
-| save_conditional         | {"save_conditional": {"device": "DeviceA","pattern": "\\+QVERSION: (.+)", "variable": "version_info"}} | 保存指令指定响应结果     |
-| wait                     | { "wait": {"duration": wait_time_in_milliseconds} }                                                 | 等待指定时间, 单位为毫秒   |
-| set_status               | {"set_status": "enabled"} OR {"set_status": "disabled"}      | 设置指令状态             |
-| print                    | {"print": "Hello World"}                                     | 打印指定内容             |
-| set_status_by_order      | {"set_status_by_order": {"order": 2, "status": "enabled" } } | 设置指定指令状态         |
-| execute_command          | {"execute_command": 3}                                       | 忽略status，执行指定指令 |
-| execute_command_by_order | { "execute_command_by_order": 3 }                            | 忽略status，执行指定指令 |
-| generate_random_str      | { "generate_random_str": { "device": "DeviceA", "length": 100, "variable": "random_data" } } | 生成指定长度随机字符串           |
-| calculate_length | { "calculate_length": { "data": "{random_data}", "device": "DeviceA", "variable": "random_data_length" } } | 计算字符串长度           |
-| replace_str | { "replace_str": { "device": "DeviceA", "data": "{ble_address}", "original_str": ":", "new_str": "" } } | 字符串替换，这里的device为存入的目标设备 |
-
+> 📖 **详细文档**: 查看 [docs/Actions.md](docs/Actions.md) 获取所有操作项的完整说明、参数详解和使用示例。
+>
 > actions也是一个list类型，包含了针对特定情境的处理方式，如果指令包含了相应的actions项，则会顺序执行列表内的所有action项。
 
 #### 操作项全局配置
@@ -357,7 +327,7 @@ executor.data_store.stop()
 
 在分离ActionHandler之后，在`utils/ActionHandler`中编写了常用到的action操作，下面用一个简单的例子来讲解自定义Action编写方法：
 
-~~~python
+```python
 def handle_test(self, text, command, response, context):
     """
     测试功能
@@ -371,7 +341,7 @@ def handle_test(self, text, command, response, context):
     CommonUtils.print_log_line(f"ℹ Test action executed with message: {test_message}")
     CommonUtils.print_log_line("")
     return True
-~~~
+```
 
 首先先了解这个Action是指的什么。上面注释中所描述的`{ "test": "test_message" }`是一个Action项，也是一个Object对象，这个Action项的名称为`test`，而这个Action的内容则是`test_message`。在执行时，这个Action会被传入到`handle_test`函数中。
 然后看看传入的参数列表：
@@ -382,24 +352,23 @@ def handle_test(self, text, command, response, context):
 ④ `response`这个是指当前指令执行后响应内容，<u>这个类型是`List`</u>,得注意。
 ⑤ `context`这个是指当前执行上下文，包含了当前设备、指令等信息。这里的context内容目前为：
 
-~~~json
+```json
 {
         "device": device,
         "device_name": device_name,
         "cmd_str": cmd_str,
         "expected_responses": updated_expected_responses
 }
-~~~
+```
 
 > 由于ActionHandler扩展性太多，后续可能变更，请以实际代码逻辑为准。
-
 
 ### 指令
 
 <details> 
-<summary><font size="6">Commands</font></summary> 
+<summary><font size="6">Commands</font></summary>
 <pre><code class="language-json">
-"Commmands": [		
+"Commmands": [
         {
             "command": "AT+QRST",
             "status": "enabled",
@@ -474,21 +443,21 @@ def handle_test(self, text, command, response, context):
 
 #### 指令参数
 
-| Command                   | 内容                             | 作用                 |
-| ------------------------- | -------------------------------- | -------------------- |
-| <u>command</u>            | AT指令字符串（如 "AT+QRST"）     | 发送给设备的具体指令 |
-| status                    | 指令状态（"enabled"/"disabled"） | 指定指令是否可用     |
-| <u>expected_responses</u> | 预期响应列表（如 ["OK","RDY"]）  | 判断指令执行成功条件 |
-| device                    | 目标设备名称                     | 指定执行指令的设备   |
-| order                     | 执行顺序（整数）                 | 确定指令执行顺序     |
-| <u>parameters</u>         | 指令参数列表                     | 提供指令所需参数     |
-| timeout                   | 超时时间（毫秒）                 | 设定指令执行时限     |
-| concurrent_strategy       | "sequential"或"parallel"         | 设定指令并发策略     |
-| **error_actions**         | 错误处理配置                     | 定义错误响应处理方式 |
-| **success_actions**       | 成功后续操作                     | 指定成功后的附加动作 |
-| **error_response_actions** | 错误响应后续操作                 | 特定错误响应后的动作 |
-| **success_response_actions** | 成功响应后续操作                 | 特定成功响应后的动作 |
-| ~~dependencies~~          | 依赖指令列表                     | 设定指令执行依赖项   |
+| Command                     | 内容                             | 作用                 |
+| --------------------------- | -------------------------------- | -------------------- |
+| <u>command</u>              | AT指令字符串（如 "AT+QRST"）     | 发送给设备的具体指令 |
+| status                      | 指令状态（"enabled"/"disabled"） | 指定指令是否可用     |
+| <u>expected_responses</u>   | 预期响应列表（如 ["OK","RDY"]）  | 判断指令执行成功条件 |
+| device                      | 目标设备名称                     | 指定执行指令的设备   |
+| order                       | 执行顺序（整数）                 | 确定指令执行顺序     |
+| <u>parameters</u>           | 指令参数列表                     | 提供指令所需参数     |
+| timeout                     | 超时时间（毫秒）                 | 设定指令执行时限     |
+| concurrent_strategy         | "sequential"或"parallel"         | 设定指令并发策略     |
+| **error_actions**           | 错误处理配置                     | 定义错误响应处理方式 |
+| **success_actions**         | 成功后续操作                     | 指定成功后的附加动作 |
+| **error_response_actions**  | 错误响应后续操作                 | 特定错误响应后的动作 |
+| **success_response_actions**| 成功响应后续操作                 | 特定成功响应后的动作 |
+| ~~dependencies~~            | 依赖指令列表                     | 设定指令执行依赖项   |
 
 > - command
 > - expected_responses
@@ -524,8 +493,8 @@ def handle_test(self, text, command, response, context):
 
 > 覆盖逻辑同`ConfigForDevices`,用于简化重复的属性配置。
 
-<details> 
-<summary><font size="6">With ConfigForDevices</font></summary> 
+<details>
+<summary><font size="6">With ConfigForDevices</font></summary>
 <pre><code class="language-json">
     "ConfigForCommands": {
         "status": "enabled",
@@ -598,8 +567,8 @@ def handle_test(self, text, command, response, context):
 
 ### 临时性数据
 
-<details> 
-<summary><font size="6">Temp-Data</font></summary> 
+<details>
+<summary><font size="6">Temp-Data</font></summary>
 <pre><code class="language-json">
 {
   "DeviceB": {
@@ -628,4 +597,3 @@ def handle_test(self, text, command, response, context):
 > 用于获取指定设备名中的变量值。操作方法为（data_store为实例）：
 >
 > `data_store.get_data(<device_name>, <variable_name>)`
-
