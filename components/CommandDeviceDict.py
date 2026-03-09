@@ -126,7 +126,7 @@ class MonitorManager:
         """Process single line of data"""
         current_time = time.time()
         timestamp = (
-            time.strftime("%Y-%m-%d_%H:%M:%S", time.localtime(current_time))
+            time.strftime("%y%m%d_%H:%M:%S", time.localtime(current_time))
             + f":{int((current_time % 1) * 1000):03d}"
         )
         
@@ -273,7 +273,7 @@ class CommandDeviceDict:
                 )
                 
                 # Setup logging - 使用环境变量中的日志目录（如果设置了）
-                # self.log_date_dir = str(log_dir / time.strftime("%Y-%m-%d_%H-%M-%S"))
+                # self.log_date_dir = str(log_dir / time.strftime("%y%m%d_%H-%M-%S"))
                 log_path = self.devices[device_name].setup_logging(self.log_date_dir)
                 
                 CommonUtils.print_log_line(
@@ -462,7 +462,7 @@ class CommandDeviceDict:
                     
                     # Log sent command
                     timestamp = (
-                        time.strftime("%Y-%m-%d_%H:%M:%S", time.localtime())
+                        time.strftime("%y%m%d_%H:%M:%S", time.localtime())
                         + f":{int((time.time() % 1) * 1000):03d}"
                     )
                     device.write_to_log(f"({timestamp})---> {command}")
@@ -501,7 +501,7 @@ class CommandDeviceDict:
                 error_msg = f"ERROR: No response for command: {command} (timeout: {timeout}s)"
                 CommonUtils.print_log_line(f"No response for command: {command}")
                 timestamp = (
-                    time.strftime("%Y-%m-%d_%H:%M:%S", time.localtime())
+                    time.strftime("%y%m%d_%H:%M:%S", time.localtime())
                     + f":{int((time.time() % 1) * 1000):03d}"
                 )
                 return f"[{timestamp}] {error_msg}"
@@ -510,7 +510,7 @@ class CommandDeviceDict:
             response_with_timestamp = []
             for line in response_lines:
                 timestamp = (
-                    time.strftime("%Y-%m-%d_%H:%M:%S", time.localtime())
+                    time.strftime("%y%m%d_%H:%M:%S", time.localtime())
                     + f":{int((time.time() % 1) * 1000):03d}"
                 )
                 response_with_timestamp.append(f"[{timestamp}] {line}")

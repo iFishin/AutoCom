@@ -129,7 +129,7 @@ class Dirs:
     @property
     def session_dir(self) -> Path:
         if self._session_dir is None:
-            ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            ts = datetime.now().strftime("%y%m%d_%H-%M-%S")
             self._session_dir = _ensure_dir(self.device_logs_dir / ts)
         return self._session_dir
 

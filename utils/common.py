@@ -332,11 +332,11 @@ class CommonUtils:
         content_width = width - 13
         
         # Proportional column width allocation
-        # Time: 14%, Result: 10%, Device: 10%, Command: 32%, Response: 33%
+        # Time: 18%, Result: 8%, Device: 8%, Command: 32%, Response: 33%
         col_widths = {
-            'time': max(13, int(content_width * 0.14)),
-            'result': max(9, int(content_width * 0.10)),
-            'device': max(10, int(content_width * 0.10)),
+            'time': max(13, int(content_width * 0.18)),
+            'result': max(9, int(content_width * 0.08)),
+            'device': max(10, int(content_width * 0.08)),
             'command': max(25, int(content_width * 0.32)),
             'response': max(25, int(content_width * 0.33))
         }
