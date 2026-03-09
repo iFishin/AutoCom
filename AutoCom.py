@@ -151,6 +151,10 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
     if config:
         merge_config(config, dict_data)
     
+    # Initialize counters before try block to avoid UnboundLocalError in finally
+    executed_count = 0
+    failure_count = 0
+    
     try:
         if "ConfigForDevices" in dict_data:
             apply_configs_for_device(dict_data.get("ConfigForDevices", {}), dict_data.get("Devices", {}))
@@ -304,12 +308,17 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
                     border_side_char="|",
                     border_vertical_char="-",
                 )
-
+    except KeyboardInterrupt:
+        CommonUtils.print_log_line("Execution interrupted by user")
+        sys.exit(1)
     except FileNotFoundError:
         CommonUtils.print_log_line(f"Error: Dictionary file '{dict_path}' not found")
         sys.exit(1)
     except json.JSONDecodeError:
         CommonUtils.print_log_line(f"Error: Invalid JSON format in '{dict_path}'")
+        sys.exit(1)
+    except (RuntimeError, Exception) as e:
+        CommonUtils.print_log_line(f"Fatal: {e}")
         sys.exit(1)
     finally:
         # close all devices and save data

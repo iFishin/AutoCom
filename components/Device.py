@@ -75,19 +75,17 @@ class Device:
             self._start_logging_thread()
         except serial.SerialException as e:
             CommonUtils.print_log_line(
-                f"Failed to open serial port for device '{self.name}' (port: {self.port}): {e}"
+                f"<!> Failed to open serial port for device '{self.name}' (port: {self.port})"
             )
             # Mark that opening failed so callers can handle it gracefully
             self.open_failed = True
-            CommonUtils.print_log_line("Fatal: serial port open failed, exiting.")
-            sys.exit(1)
+            raise RuntimeError(f"Failed to open serial port for device '{self.name}' (port: {self.port})") from e
         except Exception as e:
             CommonUtils.print_log_line(
                 f"Unexpected error opening serial port for device '{self.name}' (port: {self.port}): {e}"
             )
             self.open_failed = True
-            CommonUtils.print_log_line("Fatal: unexpected error opening serial port, exiting.")
-            sys.exit(1)
+            raise RuntimeError(f"Unexpected error opening serial port for device '{self.name}': {e}") from e
     
     def _start_logging_thread(self):
         """Start the continuous logging thread"""

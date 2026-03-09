@@ -24,6 +24,7 @@
 | replace_str | `{"replace_str": {"device": "...", "variable": "...", "data": "...", "original_str": "...", "new_str": "..."}}` | 字符串替换 |
 | wifi_connect | `{"wifi_connect": {"ssid": "...", "password": "...", "timeout": 10}}` | 连接 WiFi |
 | get_wifi_config | `{"get_wifi_config": {"device_ip": "...", "ssid": "...", "password": "..."}}` | 发送 WiFi 配置 |
+| post_wifi_config | `{...}` | 发送WiFi配置到指定设备IP (通过GET请求) |
 | get_network_page | `{"get_network_page": {"device_ip": "...", "url": "/"}}` | 获取网络页面 |
 | send_file | `{"send_file": "path/to/file.txt"}` | 发送文件到设备 |
 
@@ -271,6 +272,23 @@
 {
     "get_wifi_config": {
         "device_ip": "192.168.88.1",
+        "ssid": "MyWiFi",
+        "password": "MyPassword"
+    }
+}
+```
+
+---
+
+### post_wifi_config
+
+**说明:** 发送WiFi配置到指定设备IP (通过GET请求)
+
+**格式:**
+```json
+{
+    "post_wifi_config": {
+        "device_ip": "192.168.1.1",
         "ssid": "MyWiFi",
         "password": "MyPassword"
     }

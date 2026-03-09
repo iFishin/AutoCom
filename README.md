@@ -1,14 +1,15 @@
+<div align="center">
+
 # AutoCom
 
 *一款用于自动化执行串口指令的脚本,支持多设备、多指令的串行和并行执行。*
-
-<div align="center">
 
 ![Cross Platform](https://img.shields.io/badge/cross--platform-Windows%20%26%20Linux-success.svg)
 ![Serial Communication](https://img.shields.io/badge/communication-Serial%20Port-orange.svg)
 ![Multi-Device](https://img.shields.io/badge/support-Multi--Device-blueviolet.svg)
 ![Automation](https://img.shields.io/badge/type-Automation%20Tool-red.svg)
 ![PyPI](https://img.shields.io/badge/PyPI-autocom-blue.svg)
+
 </div>
 
 ---
@@ -27,7 +28,7 @@
   - [🚀 快速开始](#-快速开始)
     - [命令行使用](#命令行使用)
     - [Python API 使用](#python-api-使用)
-  - [执行方式](#执行方式)
+  - [从源代码中执行](#从源代码中执行)
   - [格式框架](#格式框架)
     - [设备](#设备)
       - [设备参数](#设备参数)
@@ -39,6 +40,8 @@
       - [指令参数](#指令参数)
       - [指令列表全局配置](#指令列表全局配置)
     - [临时性数据](#临时性数据)
+    - [全局常量](#全局常量)
+      - [全局常量使用方法](#全局常量使用方法)
 
 ## 📁 项目结构
 
@@ -173,22 +176,21 @@ executor.data_store.stop()
 
 ---
 
-## 执行方式
+## 从源代码中执行
 
 - **单个字典文件执行**
 
-`python AutoCom.py -d <xxx.json> -l <times> [-c <configFile>]`
+`python cli.py -d <xxx.json> -l <times> [-c <configFile>]`
 
 - **文件夹内所有字典文件顺序执行**
 
-`python AutoCom.py -f <dictFilePath> -c <configFile>`
-
+`python cli.py -f <dictFilePath> -c <configFile>`
 > 文件夹内的文件命名得加上前缀区分执行顺序：`[<order>]<filename>.json`
 >
 
 - **监听文件夹内新文件**
 
-`python -m <monitoredFilePath>`
+`python cli.py -m <monitoredFilePath>`
 
 ## 格式框架
 
@@ -369,7 +371,7 @@ def handle_test(self, text, command, response, context):
 <pre><code class="language-json">
 "Commmands": [
         {
-            "command": "AT+QRST",
+            "command": "AT+COMMAND1",
             "status": "enabled",
             "expected_responses": [
                 "OK",
@@ -396,7 +398,7 @@ def handle_test(self, text, command, response, context):
             ]
         },
         {
-            "command": "AT+QSTAAPINFO=\"TestForFish\",\"12345678\"",
+            "command": "AT+COMMAND2",
             "status": "enabled",
             "expected_responses": [
                 "OK"
@@ -442,21 +444,22 @@ def handle_test(self, text, command, response, context):
 
 #### 指令参数
 
-| Command                     | 内容                             | 作用                 |
-| --------------------------- | -------------------------------- | -------------------- |
-| <u>command</u>              | AT指令字符串（如 "AT+QRST"）     | 发送给设备的具体指令 |
-| status                      | 指令状态（"enabled"/"disabled"） | 指定指令是否可用     |
-| <u>expected_responses</u>   | 预期响应列表（如 ["OK","RDY"]）  | 判断指令执行成功条件 |
-| device                      | 目标设备名称                     | 指定执行指令的设备   |
-| order                       | 执行顺序（整数）                 | 确定指令执行顺序     |
-| <u>parameters</u>           | 指令参数列表                     | 提供指令所需参数     |
-| timeout                     | 超时时间（毫秒）                 | 设定指令执行时限     |
-| concurrent_strategy         | "sequential"或"parallel"         | 设定指令并发策略     |
-| **error_actions**           | 错误处理配置                     | 定义错误响应处理方式 |
-| **success_actions**         | 成功后续操作                     | 指定成功后的附加动作 |
-| **error_response_actions**  | 错误响应后续操作                 | 特定错误响应后的动作 |
-| **success_response_actions**| 成功响应后续操作                 | 特定成功响应后的动作 |
-| ~~dependencies~~            | 依赖指令列表                     | 设定指令执行依赖项   |
+| Command                     | 内容                                       | 作用                 |
+| --------------------------- | ------------------------------------------ | -------------------- |
+| command                     | AT指令字符串（如 "AT+RST"）                | 发送给设备的具体指令 |
+| hex_mode                    | 是否以十六进制模式发送指令（true/false）   | 设定指令发送格式     |
+| status                      | 指令状态（"enabled"/"disabled"）           | 指定指令是否可用     |
+| expected_responses          | 预期响应列表（如 ["OK","RDY"]）            | 判断指令执行成功条件 |
+| device                      | 目标设备名称                               | 指定执行指令的设备   |
+| order                       | 执行顺序（数字）                           | 确定指令执行顺序     |
+| <u>parameters</u>           | 指令参数列表                               | 提供指令所需参数     |
+| timeout                     | 超时时间（毫秒）                           | 设定指令执行时限     |
+| concurrent_strategy         | "sequential"或"parallel"                   | 设定指令并发策略     |
+| **error_actions**           | 错误处理配置                               | 定义错误响应处理方式 |
+| **success_actions**         | 成功后续操作                               | 指定成功后的附加动作 |
+| **error_response_actions**  | 错误响应后续操作                           | 特定错误响应后的动作 |
+| **success_response_actions**| 成功响应后续操作                           | 特定成功响应后的动作 |
+| ~~dependencies~~            | 依赖指令列表                               | 设定指令执行依赖项   |
 
 > - command
 > - expected_responses
@@ -507,7 +510,7 @@ def handle_test(self, text, command, response, context):
     },
     "Commands": [
         {
-            "command": "AT+QRST",
+            "command": "AT+RST",
             "expected_responses": [
                 "OK",
                 "RDY"
@@ -521,7 +524,7 @@ def handle_test(self, text, command, response, context):
             "order": 1
         },
         {
-            "command": "AT+QECHO=1",
+            "command": "AT+ECHO=1",
             "expected_responses": [
                 "OK"
             ],
@@ -534,7 +537,7 @@ def handle_test(self, text, command, response, context):
             "order": 1
         },
         {
-            "command": "AT+QRST",
+            "command": "AT+RST",
             "expected_responses": [
                 "OK",
                 "RDY"
@@ -548,7 +551,7 @@ def handle_test(self, text, command, response, context):
             "order": 1
         },
         {
-            "command": "AT+QECHO=1",
+            "command": "AT+ECHO=1",
             "expected_responses": [
                 "OK"
             ],
@@ -596,3 +599,104 @@ def handle_test(self, text, command, response, context):
 > 用于获取指定设备名中的变量值。操作方法为（data_store为实例）：
 >
 > `data_store.get_data(<device_name>, <variable_name>)`
+
+### 全局常量
+
+> 全局常量是指在指令字典文件中，`Constants`属性块内定义的常量。这些常量可以在指令参数、操作项参数等地方通过`{constant_name}`的方式引用，方便在多个地方使用同一个值，并且只需要修改一处即可。
+>
+> 常量的命名格式为全大写字母和下划线的组合，例如`AP_NAME`、`AP_PASSWORD`等。使用时需要确保常量名称与定义时一致，并且在引用时使用花括号包裹起来。
+>
+> ℹ 当常量中没有给定相对应的值的时候，在你执行字典文件时会提示你输入该常量的值，输入完成后会自动替换指令参数中的相应常量引用，并且将你输入的值存储到临时数据中，供后续指令参数调用。
+
+#### 全局常量使用方法
+
+`Constants`属性块与`Commands`和`Devices`等属性块是平级的，位于指令字典文件的根层级。你可以在`Constants`中定义任意数量的常量，例如：
+
+```json
+{
+    "Constants": {
+        "DeviceA_PORT": "COM14",
+        "AP_NAME": "MyAccessPoint",
+        "AP_PASSWORD": "SecurePass123",
+        "Target_SSID": "TargetNetwork",
+        "Target_PASSWORD": "targetpass456"
+    },
+    "Devices": [...],
+    "Commands": [...]
+}
+```
+
+在上面的例子中，我们定义了四个常量：`AP_NAME`、`AP_PASSWORD`、`Target_SSID`和`Target_PASSWORD`。你可以在指令参数中通过`{AP_NAME}`、`{AP_PASSWORD}`等方式引用这些常量，例如：
+
+```json
+{
+    "command": "AT+SOFTAP=\"{AP_NAME}\",\"{AP_PASSWORD}\"",
+    "expected_responses": [
+        "OK"
+    ],
+    "device": "DeviceA",
+    "order": 1,
+    "parameters": [],
+    "timeout": 3000,
+    "success_actions": [
+        {
+            "wifi_connect": {
+                "ssid": "{AP_NAME}",
+                "password": "{AP_PASSWORD}",
+                "timeout": 20
+            }
+        }
+    ]
+}
+```
+
+当然，你也可以在执行字典中各个地方穿插全局常量的引用，你甚至可以在`Devices`属性块中引用全局常量，例如：
+
+```json
+{
+    "Constants": {
+        "DeviceA_PORT": "COM14",
+        "AP_NAME": "MyAccessPoint",
+        "AP_PASSWORD": "SecurePass123"
+    },
+    "Devices": [
+        {
+            "name": "DeviceA",
+            "status": "enabled",
+            "port": "{DeviceA_PORT}",
+            "baud_rate": 115200,
+            "stop_bits": 1,
+            "parity": null,
+            "data_bits": 8,
+            "flow_control": {
+                "xon_xoff": false,
+                "rts_cts": false,
+                "dsr_dtr": false
+            },
+            "dtr": false,
+            "rts": false
+        }
+    ],
+    "Commands": [
+        {
+            "command": "AT+SOFTAP=\"{AP_NAME}\",\"{AP_PASSWORD}\"",
+            "expected_responses": [
+                "OK"
+            ],
+            "device": "DeviceA",
+            "order": 1,
+            "parameters": [],
+            "timeout": 3000,
+            "success_actions": [
+                {
+                    "wifi_connect": {
+                        "ssid": "{AP_NAME}",
+                        "password": "{AP_PASSWORD}",
+                        "timeout": 20
+                    }
+                }
+            ]
+        }
+    ]
+}
+```
