@@ -683,6 +683,58 @@ class ActionHandler:
             CommonUtils.print_log_line("")
             return False
 
+        
+    def handle_post_wifi_config(self, config, command, response, context):
+        """
+        发送WiFi配置到指定设备IP (通过GET请求)
+
+        用法:
+        {
+            "post_wifi_config": {
+                "device_ip": "192.168.1.1",
+                "ssid": "MyWiFi",
+                "password": "MyPassword"
+            }
+        }
+        """
+        import requests
+
+        # 获取并处理参数
+        device_ip = self.handle_variables_from_str(config["device_ip"])
+        ssid = self.handle_variables_from_str(config["ssid"])
+        password = self.handle_variables_from_str(config["password"])
+
+        # 构建目标URL
+        config_url = f"http://{device_ip}/index.html"
+
+        # 构建请求头
+        config_headers = {
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
+
+        # 构建请求载荷
+        config_data = {
+            "ssid": ssid,
+            "pwd": password
+        }
+
+        CommonUtils.print_log_line(f"ℹ Sending WiFi configuration to device {device_ip}")
+        CommonUtils.print_log_line(f"  Target URL: {config_url}")
+
+        try:
+            # 发送WiFi配置
+            try:
+                requests.post(url=config_url, headers=config_headers, data=config_data, timeout=5)
+                CommonUtils.print_log_line(f"ℹ WiFi configuration request sent successfully!")
+            except Exception as e:
+                CommonUtils.print_log_line(f"ℹ Request encountered an error.")
+                CommonUtils.print_log_line(f"ℹ Proceeding to wait and retry...")
+            
+        except Exception as e:
+            CommonUtils.print_log_line(f"❌ Error occurred while sending WiFi configuration: {str(e)}")
+            CommonUtils.print_log_line("")
+            return False
+
     def handle_get_network_page(self, config, command, response, context):
         """
         获取网络页面内容 (通过GET请求)
@@ -855,7 +907,7 @@ class ActionHandler:
 
             # Also write to device log if available
             try:
-                timestamp = device._get_timestamp() if hasattr(device, '_get_timestamp') else time.strftime("%Y-%m-%d_%H:%M:%S")
+                timestamp = device._get_timestamp() if hasattr(device, '_get_timestamp') else time.strftime("%y%m%d_%H:%M:%S")
             except Exception:
                 # Best-effort logging to device file
                 pass

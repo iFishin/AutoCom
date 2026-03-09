@@ -217,7 +217,7 @@ class CommandExecutor:
         matched = result["matched"]
         
         now = (
-            time.strftime("%Y-%m-%d_%H:%M:%S", time.localtime())
+            time.strftime("%y%m%d_%H:%M:%S", time.localtime())
             + f":{int((time.time() % 1) * 1000):03d}"
         )
 
