@@ -9,7 +9,25 @@ updates:
     open-pull-requests-limit: 10
     labels:
       - "dependencies"
+      - "python"
+    groups:
+      major-updates:
+        update-types: ["major"]
+        labels: ["major-update"]
+      minor-patch:
+        update-types: ["minor", "patch"]
+        labels: ["minor-patch-update"]
+    ignore:
+      - dependency-name: "pytest"
+        versions: [">=7.0.0"]
+      - dependency-name: "black"
+        update-types: ["version-update:semver-major"]
+    pull-request-branch-name:
+      separator: "-"
+    reviewers:
+      - "iFishin"
 
+  # GitHub Actions 依赖
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -20,3 +38,9 @@ updates:
     labels:
       - "actions"
       - "dependencies"
+    groups:
+      actions:
+        patterns: ["*"]
+        update-types: ["major", "minor", "patch"]
+    reviewers:
+      - "iFishin"

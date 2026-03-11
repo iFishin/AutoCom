@@ -1,0 +1,101 @@
+name: Actions Doc Updater
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'utils/ActionHandler.py'
+      - 'scripts/update_actions_doc.py'
+  push:
+    branches: [ main ]
+    paths:
+      - 'utils/ActionHandler.py'
+      - 'scripts/update_actions_doc.py'
+
+jobs:
+  detect-and-update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      
+      - name: Check if interface files changed
+        id: check-interface
+        run: |
+          # 获取变更的文件列表
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            # PR事件：比较PR的head和base
+            git fetch origin ${{ github.base_ref }}
+            CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+          else
+            # Push事件：比较上次提交
+            CHANGED_FILES=$(git diff --name-only HEAD^ HEAD)
+          fi
+          
+          # 定义接口文件模式（根据你的项目调整）
+          INTERFACE_PATTERNS="(interface|api|schema|models?|actions?)\.py"
+          
+          # 检查是否有接口文件变更
+          echo "$CHANGED_FILES" | while read file; do
+            if echo "$file" | grep -E "$INTERFACE_PATTERNS"; then
+              echo "Interface changed: $file"
+              echo "changed=true" >> $GITHUB_OUTPUT
+              break
+            fi
+          done
+          
+          echo "changed=${changed:-false}" >> $GITHUB_OUTPUT
+      
+      - name: Setup Python
+        if: steps.check-interface.outputs.changed == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Install tool and dependencies
+        if: steps.check-interface.outputs.changed == 'true'
+        run: |
+          pip install -e .
+          # 如果有文档生成需要的额外包
+          pip install pyyaml jinja2  # 常用文档生成依赖
+      
+      - name: Generate documentation
+        if: steps.check-interface.outputs.changed == 'true'
+        id: generate-docs
+        run: |
+          # 运行你的文档生成脚本
+          python scripts/update_actions_doc.py
+          
+          # 检查文件是否真的变化了
+          if git diff --name-only | grep -q "docs/Actions.md"; then
+            echo "updated=true" >> $GITHUB_OUTPUT
+          else
+            echo "updated=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Commit and push
+        if: steps.generate-docs.outputs.updated == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add docs/Actions.md
+          git commit -m "docs: auto-update Actions.md [skip ci]"
+          git push
+      
+      - name: Comment on PR
+        if: github.event_name == 'pull_request' && steps.generate-docs.outputs.updated == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '📝 **文档已自动更新**\n\n检测到接口变更，`Actions.md` 已同步更新。'
+            })

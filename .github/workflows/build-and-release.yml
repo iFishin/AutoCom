@@ -1,0 +1,73 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # 仅在 v x.y.z 格式的 tag 时触发
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write  # 需要写入权限来上传 release 资源
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
+      
+      - name: Build distribution
+        run: python scripts/dev.py build
+      
+      - name: Get version from tag
+        id: get_version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag_name=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+      
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.get_version.outputs.tag_name }}
+          release_name: Release ${{ steps.get_version.outputs.tag_name }}
+          body: |
+            # AutoCom ${{ steps.get_version.outputs.tag_name }}
+            
+            See [CHANGELOG](https://github.com/iFishin/AutoCom/blob/main/README.md) for details.
+          draft: false
+          prerelease: false
+      
+      - name: Upload wheel to Release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./dist/autocom-${{ steps.get_version.outputs.version }}-py3-none-any.whl
+          asset_name: autocom-${{ steps.get_version.outputs.version }}-py3-none-any.whl
+          asset_content_type: application/octet-stream
+      
+      - name: Upload source distribution to Release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./dist/autocom-${{ steps.get_version.outputs.version }}.tar.gz
+          asset_name: autocom-${{ steps.get_version.outputs.version }}.tar.gz
+          asset_content_type: application/gzip
