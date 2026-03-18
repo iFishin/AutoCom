@@ -246,7 +246,7 @@ class CommandExecutor:
         # Check if all expected responses matched (success flag from device)
         if success and updated_expected_responses:
             # 有期望响应且全部匹配成功
-            status_msg = f"Passed ({elapsed_time:.2f}s, matched {len(matched)}/{len(updated_expected_responses)})"
+            status_msg = f"Passed ({elapsed_time*1000:.2f}ms, matched {len(matched)}/{len(updated_expected_responses)})"
             CommonUtils.print_formatted_log(
                 now,
                 "✅ PASS",

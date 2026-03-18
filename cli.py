@@ -42,6 +42,33 @@ def main():
 
 def run_main():
     """主程序入口函数,用于被 CLI 调用"""
+    # 在初始化目录之前检查参数，避免不传参数时创建目录
+    if len(sys.argv) == 1:
+        # 显示欢迎信息
+        print()
+        print(f"🚀 AutoCom v{__version__}")
+        print("   串口自动化指令执行工具 - 支持多设备、多指令的串行和并行执行")
+        print()
+        print("🎯 初始化执行目录:")
+        print(
+            "   autocom --init                      # 在当前目录创建执行结构和示例文件"
+        )
+        print()
+        print("📖 快速开始:")
+        print("   autocom -d dict.json -l 3           # 执行字典文件，循环3次")
+        print("   autocom -d dict.json -i             # 无限循环模式")
+        print("   autocom -f dicts/                   # 执行文件夹内所有字典")
+        print("   autocom -m temps/                   # 监控模式")
+        print()
+        print("🔍 更多帮助:")
+        print("   autocom --help                      # 查看完整帮助")
+        print("   autocom -v                          # 查看版本信息")
+        print()
+        print("📚 文档: https://github.com/iFishin/AutoCom")
+        print()
+        print()
+        sys.exit(0)
+
     # 获取路径管理对象（此时不创建目录）
     dirs = get_dirs()
 
@@ -109,37 +136,6 @@ def run_main():
         action="store_true",
         help="Initialize current directory with AutoCom project structure (creates dicts, configs, temps folders with examples)",
     )
-
-    # 检查是否没有提供任何参数
-    if len(sys.argv) == 1:
-        # 显示欢迎信息
-        print()
-        print(f"🚀 AutoCom v{__version__}")
-        print("   串口自动化指令执行工具 - 支持多设备、多指令的串行和并行执行")
-        print()
-        print(f"📂 工作目录: {dirs.root}")
-        print(f"💾 数据存储目录: {dirs.data_store_dir}")
-        print(f"📋 设备日志目录: {dirs.device_logs_dir}")
-        print()
-        print("🎯 初始化执行目录:")
-        print(
-            "   autocom --init                      # 在当前目录创建执行结构和示例文件"
-        )
-        print()
-        print("📖 快速开始:")
-        print("   autocom -d dict.json -l 3           # 执行字典文件，循环3次")
-        print("   autocom -d dict.json -i             # 无限循环模式")
-        print("   autocom -f dicts/                   # 执行文件夹内所有字典")
-        print("   autocom -m temps/                   # 监控模式")
-        print()
-        print("🔍 更多帮助:")
-        print("   autocom --help                      # 查看完整帮助")
-        print("   autocom -v                          # 查看版本信息")
-        print()
-        print("📚 文档: https://github.com/iFishin/AutoCom")
-        print()
-        print()
-        sys.exit(0)
 
     args = parser.parse_args()
 
