@@ -40,7 +40,7 @@ def list_sessions(data_dir="temps/data_store", days=7):
     print(f"{'='*80}\n")
     
     for i, (session_id, filepath, file_time) in enumerate(sessions, 1):
-        time_str = datetime.fromtimestamp(file_time).strftime("%y%m%d %H:%M:%S")
+        time_str = datetime.fromtimestamp(file_time).strftime("%Y-%m-%d %H:%M:%S")
         file_size = os.path.getsize(filepath)
         print(f"{i}. Session: {session_id}")
         print(f"   File: {filepath}")
@@ -83,7 +83,7 @@ def query_variable(device, variable, data_dir="temps/data_store", days=7):
     print(f"{'='*80}\n")
     
     for i, (session_id, value, timestamp) in enumerate(results, 1):
-        time_str = datetime.fromtimestamp(timestamp).strftime("%y%m%d %H:%M:%S")
+        time_str = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
         print(f"{i}. [{time_str}] Session: {session_id}")
         print(f"   Value: {value}")
         print()
@@ -124,7 +124,7 @@ def cleanup_old_files(data_dir="temps/data_store", days=7, dry_run=False):
     print(f"{'='*80}\n")
     
     for filepath, file_time in to_delete:
-        time_str = datetime.fromtimestamp(file_time).strftime("%y%m%d %H:%M:%S")
+        time_str = datetime.fromtimestamp(file_time).strftime("%Y-%m-%d %H:%M:%S")
         file_size = os.path.getsize(filepath)
         print(f"- {os.path.basename(filepath)}")
         print(f"  Time: {time_str}, Size: {file_size} bytes")
@@ -160,7 +160,7 @@ def export_data(output_file, data_dir="temps/data_store", days=7):
     export_data = {}
     for session_id, filepath, file_time in sessions:
         data = DataStore.load_session_data(filepath=filepath)
-        time_str = datetime.fromtimestamp(file_time).strftime("%y%m%d %H:%M:%S")
+        time_str = datetime.fromtimestamp(file_time).strftime("%Y-%m-%d %H:%M:%S")
         export_data[session_id] = {
             "timestamp": time_str,
             "data": data

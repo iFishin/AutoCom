@@ -3,6 +3,7 @@ import threading
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
+from components.Logger import get_logger
 try:
     from utils.common import CommonUtils
     from components.DataStore import DataStore
@@ -16,6 +17,9 @@ except ModuleNotFoundError:
 
 class CommandExecutor:
     def __init__(self, command_device_dict_or_dict, session_id=None):
+        # 获取 Logger 实例
+        self.logger = get_logger()
+        
         # 创建 DataStore 实例
         self.data_store = DataStore(session_id=session_id)
         self.lock = threading.Lock()
@@ -49,7 +53,7 @@ class CommandExecutor:
 
             # 处理需要用户输入的常量
             if need_input_constants:
-                CommonUtils.print_log_line(
+                self.logger.print_log_line(
                     "The following constants need your input:",
                     top_border=True,
                 )
@@ -63,29 +67,29 @@ class CommandExecutor:
                             
                             if not value:  # 如果输入为空
                                 if attempt < max_retries - 1:
-                                    CommonUtils.print_log_line(f"Value cannot be empty. Please try again ({attempt + 1}/{max_retries})")
+                                    self.logger.print_log_line(f"Value cannot be empty. Please try again ({attempt + 1}/{max_retries})")
                                     continue
                                 else:
-                                    CommonUtils.print_log_line(f"❌ No valid value provided for {key} after {max_retries} attempts")
+                                    self.logger.print_log_line(f"❌ No valid value provided for {key} after {max_retries} attempts")
                                     sys.exit(1)
                             
                             # 存储用户输入的值
                             self.data_store.store_data("Constants", key, value)
-                            CommonUtils.print_log_line(f"✓ Stored {key} = {value}")
+                            self.logger.print_log_line(f"✓ Stored {key} = {value}")
                             break
                             
                         except KeyboardInterrupt:
-                            CommonUtils.print_log_line("\n❌ Input cancelled by user")
+                            self.logger.print_log_line("\n❌ Input cancelled by user")
                             sys.exit(1)
                         except Exception as e:
                             if attempt < max_retries - 1:
-                                CommonUtils.print_log_line(f"Error: {e}. Please try again ({attempt + 1}/{max_retries})")
+                                self.logger.print_log_line(f"Error: {e}. Please try again ({attempt + 1}/{max_retries})")
                                 continue
                             else:
-                                CommonUtils.print_log_line(f"❌ Failed to get value for {key} after {max_retries} attempts: {e}")
+                                self.logger.print_log_line(f"❌ Failed to get value for {key} after {max_retries} attempts: {e}")
                                 sys.exit(1)
                 
-                CommonUtils.print_log_line(
+                self.logger.print_log_line(
                     f"✓ Successfully collected values for all {len(need_input_constants)} constants",
                     bottom_border=True,
                 )
@@ -111,9 +115,9 @@ class CommandExecutor:
                     module = __import__(module_path, fromlist=[class_name])
                     custom_handler_class = getattr(module, class_name)
                     action_handler_class = custom_handler_class
-                    CommonUtils.print_log_line(f"Custom ActionHandler loaded: {handler_class_path}")
+                    self.logger.print_log_line(f"Custom ActionHandler loaded: {handler_class_path}")
                 except (ImportError, AttributeError) as e:
-                    CommonUtils.print_log_line(f"Failed to load custom ActionHandler: {e}")
+                    self.logger.print_log_line(f"Failed to load custom ActionHandler: {e}")
             
         # Create an instance of ActionHandler
         self.action_handler = action_handler_class(self)
@@ -142,7 +146,7 @@ class CommandExecutor:
                 try:
                     self.execute_command(cmd)
                 except Exception as e:
-                    CommonUtils.print_log_line(f"❌ Error executing deferred command: {e}")
+                    self.logger.print_log_line(f"❌ Error executing deferred command: {e}")
                 finally:
                     self.deferred_command_queue.task_done()
                     
@@ -217,7 +221,7 @@ class CommandExecutor:
         matched = result["matched"]
         
         now = (
-            time.strftime("%y%m%d_%H:%M:%S", time.localtime())
+            time.strftime("%Y-%m-%d_%H:%M:%S", time.localtime())
             + f":{int((time.time() % 1) * 1000):03d}"
         )
 
@@ -247,42 +251,13 @@ class CommandExecutor:
         if success and updated_expected_responses:
             # 有期望响应且全部匹配成功
             status_msg = f"Passed ({elapsed_time*1000:.2f}ms, matched {len(matched)}/{len(updated_expected_responses)})"
-            CommonUtils.print_formatted_log(
-                now,
-                "✅ PASS",
-                device_name,
-                cmd_str,
-                status_msg,
-                False,
-            )
-            self.isAllPassed = True
-            
-            # 使用新的 ActionHandler 处理 actions
-            with self.lock:  # 使用锁确保原子性
-                isActionPassed = all([
-                    handle_actions(command, response, "success_actions"),
-                    self._handle_response_actions_with_defer(command, response, "success_response_actions", context),
-                    handle_response_actions(command, response, "error_response_actions")
-                ])
-                if not isActionPassed:
-                    CommonUtils.print_log_line("❌ Action handling failed, check logs for details.")
-                    CommonUtils.print_log_line("")
-                
-                self.isAllPassed &= isActionPassed
-        elif not updated_expected_responses:
-            # 没有设置期望响应,无论有无响应都算成功(超时即可)
-            if response:
-                status_msg = f"Got response ({elapsed_time:.2f}s)"
-            else:
-                status_msg = f"Completed ({elapsed_time:.2f}s)"
-            
-            CommonUtils.print_formatted_log(
-                now,
-                "✅ PASS",
-                device_name,
-                cmd_str,
-                status_msg,
-                False,
+            self.logger.log_execution(
+                time_str=now,
+                result="✅PASS",
+                device=device_name,
+                command=cmd_str,
+                response=response_preview,
+                elapsed_ms=elapsed_time*1000,
             )
             self.isAllPassed = True
             
@@ -294,21 +269,50 @@ class CommandExecutor:
                     handle_response_actions(command, response, "error_response_actions")
                 ])
                 if not isActionPassed:
-                    CommonUtils.print_log_line("❌ Action handling failed, check logs for details.")
-                    CommonUtils.print_log_line("")
+                    self.logger.print_log_line("❌ Action handling failed, check logs for details.")
+                    self.logger.print_log_line("")
+                
+                self.isAllPassed &= isActionPassed
+        elif not updated_expected_responses:
+            # 没有设置期望响应,无论有无响应都算成功(超时即可)
+            if response:
+                status_msg = f"Got response ({elapsed_time:.2f}s)"
+            else:
+                status_msg = f"Completed ({elapsed_time:.2f}s)"
+            
+            self.logger.log_execution(
+                time_str=now,
+                result="✅PASS",
+                device=device_name,
+                command=cmd_str,
+                response=response_preview,
+                elapsed_ms=elapsed_time*1000,
+            )
+            self.isAllPassed = True
+            
+            # 使用新的 ActionHandler 处理 actions
+            with self.lock:
+                isActionPassed = all([
+                    handle_actions(command, response, "success_actions"),
+                    self._handle_response_actions_with_defer(command, response, "success_response_actions", context),
+                    handle_response_actions(command, response, "error_response_actions")
+                ])
+                if not isActionPassed:
+                    self.logger.print_log_line("❌ Action handling failed, check logs for details.")
+                    self.logger.print_log_line("")
                 
                 self.isAllPassed &= isActionPassed
         else:
             # 有期望响应但未完全匹配
             status_msg = f"Failed ({elapsed_time:.2f}s, matched {len(matched)}/{len(updated_expected_responses)})"
             
-            CommonUtils.print_formatted_log(
-                now,
-                "❌ FAIL",
-                device_name,
-                cmd_str,
-                status_msg,
-                False,
+            self.logger.log_execution(
+                time_str=now,
+                result="❌FAIL",
+                device=device_name,
+                command=cmd_str,
+                response=response_preview,
+                elapsed_ms=elapsed_time*1000,
             )
             self.isAllPassed = False
             
@@ -333,25 +337,13 @@ class CommandExecutor:
     def execute(self) -> bool:
         commands = self.command_device_dict.dict["Commands"]
         if not commands:
-            CommonUtils.print_log_line("No commands to execute.")
+            self.logger.print_log_line("No commands to execute.")
             return False
 
         # Mark iteration in all device logs if iteration info is set
         if self.current_iteration is not None:
             for device_name, device in self.command_device_dict.devices.items():
                 device.mark_iteration(self.current_iteration, self.total_iterations)
-
-        # Print table header
-        CommonUtils.print_formatted_log(
-            time_str="Time",
-            result="Result",
-            device="Device",
-            command_str="Command",
-            response_str="Response",
-            first_line=True,
-            top_border=True,
-            bottom_border=True
-        )
         
         i = 0
         self.isSinglePassed = True
@@ -408,22 +400,22 @@ class CommandExecutor:
             # 首先等待队列中所有任务完成（最多等待 10 秒）
             self.deferred_command_queue.join()
         except Exception as e:
-            CommonUtils.print_log_line(f"Warning: Error while waiting for deferred commands: {e}")
+            self.logger.print_log_line(f"Warning: Error while waiting for deferred commands: {e}")
         
         # 发送停止信号
         try:
             self.deferred_command_queue.put(None)  # Sentinel value
         except Exception as e:
-            CommonUtils.print_log_line(f"Warning: Error while sending stop signal to deferred execution thread: {e}")
+            self.logger.print_log_line(f"Warning: Error while sending stop signal to deferred execution thread: {e}")
         
         # 等待线程退出（最多等待 5 秒）
         if self.deferred_execution_thread and self.deferred_execution_thread.is_alive():
             try:
                 self.deferred_execution_thread.join(timeout=5)
                 if self.deferred_execution_thread.is_alive():
-                    CommonUtils.print_log_line("Warning: Deferred execution thread did not terminate within 5 seconds")
+                    self.logger.print_log_line("Warning: Deferred execution thread did not terminate within 5 seconds")
             except Exception as e:
-                CommonUtils.print_log_line(f"Warning: Error while joining deferred execution thread: {e}")
+                self.logger.print_log_line(f"Warning: Error while joining deferred execution thread: {e}")
 
     def _execute_parallel_commands(self, commands) -> bool:
         # Group commands by device to avoid contention on same serial port
@@ -457,7 +449,7 @@ class CommandExecutor:
                         if not result:
                             self.isParallelPassed = False
                     except Exception as e:
-                        CommonUtils.print_log_line(
+                        self.logger.print_log_line(
                             f"Error executing parallel commands: {e}"
                         )
                         self.isParallelPassed = False
@@ -499,4 +491,4 @@ class CommandExecutor:
                     command, response, action_type, context = item
                     self.action_handler.handle_response_actions(command, response, action_type, context)
             except Exception as e:
-                CommonUtils.print_log_line(f"❌ Error processing deferred action: {e}")
+                self.logger.print_log_line(f"❌ Error processing deferred action: {e}")

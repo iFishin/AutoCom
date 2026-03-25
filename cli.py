@@ -5,10 +5,7 @@ import os
 import json
 import time
 import argparse
-import serial
-import queue
-import threading
-from datetime import datetime
+from components.Logger import AutoComLogger
 
 # 根据运行方式选择导入路径
 try:
@@ -42,6 +39,7 @@ def main():
 
 def run_main():
     """主程序入口函数,用于被 CLI 调用"""
+
     # 在初始化目录之前检查参数，避免不传参数时创建目录
     if len(sys.argv) == 1:
         # 显示欢迎信息
@@ -141,31 +139,20 @@ def run_main():
 
     # 处理 --init 参数
     if args.init:
-        CommonUtils.print_log_line(
-            "🚀 Initializing AutoCom project structure...", top_border=True
-        )
+        logger.log_info("🚀 Initializing AutoCom project structure...")
 
         try:
             # 初始化项目结构
             dirs.init_project_structure()
 
-            CommonUtils.print_log_line(
-                "✨ Initialization complete! You can now use AutoCom in this directory.",
-                bottom_border=True,
-                side_border=True,
-                border_side_char="=",
+            logger.log_info(
+                "✨ Initialization complete! You can now use AutoCom in this directory."
             )
-            CommonUtils.print_log_line(
-                "💡 Tip: Edit files in dicts/ to customize your commands"
-            )
-            CommonUtils.print_log_line(
-                "💡 Tip: Run 'autocom -d dicts/dict.json -l 3' to test"
-            )
+            logger.log_info("💡 Tip: Edit files in dicts/ to customize your commands")
+            logger.log_info("💡 Tip: Run 'autocom -d dicts/dict.json -l 3' to test")
 
         except Exception as e:
-            CommonUtils.print_log_line(
-                f"❌ Error during initialization: {e}", bottom_border=True
-            )
+            logger.log_info(f"❌ Error during initialization: {e}")
             sys.exit(1)
 
         sys.exit(0)
@@ -182,34 +169,39 @@ def run_main():
             with open(config_file_path, "r") as file:
                 config = json.load(file)
         except FileNotFoundError:
-            CommonUtils.print_log_line(f"Error: Config file '{config_file_path}' not found")
+            logger.log_info(f"Error: Config file '{config_file_path}' not found")
             sys.exit(1)
         except json.JSONDecodeError:
-            CommonUtils.print_log_line(f"Error: Invalid JSON format in '{config_file_path}'")
+            logger.log_info(f"Error: Invalid JSON format in '{config_file_path}'")
             sys.exit(1)
+
+    # 【提前初始化 Logger】在所有分支之前，确保所有路径都能使用
+    # 显式创建工作目录
+    device_logs_dir = str(dirs.device_logs_dir)
+    temps_dir = str(dirs.temp_dir)
+    data_store_dir = str(dirs.data_store_dir)
+
+    # 初始化 CommonUtils 日志路径（在创建了 device_logs 目录后）
+    CommonUtils.init_log_file_path(str(dirs.session_dir))
+
+    # 初始化 Logger（这是 cli.py 的唯一初始化点）
+    log_file = str(dirs.session_dir / "EXECUTION.log")
+    logger = AutoComLogger.get_instance(name="AutoCom", log_file=log_file)
 
     if args.dict:
         # 使用 dirs 辅助方法获取字典文件路径（优先从工作目录，再从包目录）
         dict_path = dirs.get_dict_path(args.dict)
 
-        # 显式创建工作目录
-        device_logs_dir = str(dirs.device_logs_dir)
-        temps_dir = str(dirs.temp_dir)
-        data_store_dir = str(dirs.data_store_dir)
-        
-        # 初始化 CommonUtils 日志路径（在创建了 device_logs 目录后）
-        CommonUtils.init_log_file_path(str(dirs.session_dir))
-
         start_time = time.time()
         try:
             execute_with_loop(dict_path, args.loop, args.infinite, config)
         except KeyboardInterrupt:
-            CommonUtils.print_log_line("Execution interrupted by user")
+            logger.log_info("Execution interrupted by user")
         except FileNotFoundError as e:
-            CommonUtils.print_log_line(f"Error: Dictionary file not found: {e}")
+            logger.log_info(f"Error: Dictionary file not found: {e}")
             sys.exit(1)
         except json.JSONDecodeError as e:
-            CommonUtils.print_log_line(f"Error: Invalid JSON format: {e}")
+            logger.log_info(f"Error: Invalid JSON format: {e}")
             sys.exit(1)
         finally:
             end_time = time.time()
@@ -217,22 +209,12 @@ def run_main():
             hours = int(execution_time // 3600)
             minutes = int((execution_time % 3600) // 60)
             seconds = execution_time % 60
-            CommonUtils.print_log_line(
-                f"Total execution time: {hours:02d}:{minutes:02d}:{seconds:06.3f}",
-                top_border=True,
-                bottom_border=True,
+            logger.log_info(
+                f"Total execution time: {hours:02d}:{minutes:02d}:{seconds:06.3f}"
             )
     elif args.folder:
         # 使用 dirs 辅助方法获取文件夹路径（优先从工作目录，再从包目录）
         folder_path = str(dirs.get_folder_path(args.folder))
-
-        # 显式创建工作目录
-        device_logs_dir = str(dirs.device_logs_dir)
-        temps_dir = str(dirs.temp_dir)
-        data_store_dir = str(dirs.data_store_dir)
-        
-        # 初始化 CommonUtils 日志路径（在创建了 device_logs 目录后）
-        CommonUtils.init_log_file_path(str(dirs.session_dir))
 
         import re
 
@@ -250,12 +232,12 @@ def run_main():
             start_time = time.time()
             execute_with_folder(folder_path, sorted_files, config)
         except KeyboardInterrupt:
-            CommonUtils.print_log_line("Execution interrupted by user")
+            logger.log_info("Execution interrupted by user")
         except FileNotFoundError as e:
-            CommonUtils.print_log_line(f"Error: Folder or file not found: {e}")
+            logger.log_info(f"Error: Folder or file not found: {e}")
             sys.exit(1)
         except json.JSONDecodeError as e:
-            CommonUtils.print_log_line(f"Error: Invalid JSON format: {e}")
+            logger.log_info(f"Error: Invalid JSON format: {e}")
             sys.exit(1)
         finally:
             end_time = time.time()
@@ -263,10 +245,8 @@ def run_main():
             hours = int(execution_time // 3600)
             minutes = int((execution_time % 3600) // 60)
             seconds = execution_time % 60
-            CommonUtils.print_log_line(
-                f"Total execution time: {hours:02d}:{minutes:02d}:{seconds:06.3f}",
-                top_border=True,
-                bottom_border=True,
+            logger.log_info(
+                f"Total execution time: {hours:02d}:{minutes:02d}:{seconds:06.3f}"
             )
 
 

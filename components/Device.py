@@ -422,7 +422,7 @@ class Device:
     def _get_timestamp(self):
         """Generate formatted timestamp string"""
         return (
-            time.strftime("%y%m%d_%H:%M:%S", time.localtime())
+            time.strftime("%Y-%m-%d_%H:%M:%S", time.localtime())
             + f":{int((time.time() % 1) * 1000):03d}"
         )
 

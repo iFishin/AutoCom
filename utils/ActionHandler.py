@@ -2,98 +2,119 @@ import re
 import time
 import random
 import string
+from components.Logger import AutoComLogger
+
 try:
     from utils.common import CommonUtils
 except ModuleNotFoundError:
     from .common import CommonUtils
+
 
 class ActionHandler:
     """
     处理命令执行过程中的各种 actions
     用户可以通过继承此类添加自定义 action 处理方法
     """
-    
+
     def __init__(self, executor):
         """
         初始化 ActionHandler
-        
+
         Args:
             executor: CommandExecutor 实例的引用，用于访问数据存储和其他资源
         """
         self.executor = executor
+
+        # Logger 实例
+        self.logger = AutoComLogger.get_instance(name="AutoCom")
+
         # 自动发现所有以 handle_ 开头的处理方法
         self.handlers = self._discover_handlers()
-        CommonUtils.print_log_line(f"Registered {len(self.handlers)} action handlers")
-        
+        self.logger.log_info(f"Registered {len(self.handlers)} action handlers")
+
     def _discover_handlers(self):
         """自动发现所有处理方法并映射到对应的 action 类型"""
         handlers = {}
         for attr_name in dir(self):
-            if attr_name.startswith('handle_') and callable(getattr(self, attr_name)) and attr_name != 'handle_actions' and attr_name != 'handle_response_actions':
+            if (
+                attr_name.startswith("handle_")
+                and callable(getattr(self, attr_name))
+                and attr_name != "handle_actions"
+                and attr_name != "handle_response_actions"
+            ):
                 # 从方法名提取 action 类型，例如 handle_save -> save
-                action_type = attr_name[len('handle_'):]
+                action_type = attr_name[len("handle_") :]
                 handlers[action_type] = getattr(self, attr_name)
         return handlers
-    
+
     def handle_variables_from_str(self, param):
         """处理字符串中的变量引用"""
-        if hasattr(self.executor, 'handle_variables_from_str'):
-            return self.executor.handle_variables_from_str(param, self.last_device_name if hasattr(self, 'last_device_name') else None)
+        if hasattr(self.executor, "handle_variables_from_str"):
+            return self.executor.handle_variables_from_str(
+                param,
+                self.last_device_name if hasattr(self, "last_device_name") else None,
+            )
         return param
-    
+
     def safe_store_data(self, device_name, variable, value):
         """
         安全地存储数据，带有错误处理和验证
-        
+
         Args:
             device_name: 设备名称
             variable: 变量名
             value: 要存储的值
-            
+
         Returns:
             bool: True 如果存储成功，False 如果失败
         """
         try:
             if not device_name or not variable:
-                CommonUtils.print_log_line(f"❌ Invalid storage parameters: device='{device_name}', variable='{variable}'")
+                self.logger.log_error(
+                    f"❌ Invalid storage parameters: device='{device_name}', variable='{variable}'"
+                )
                 return False
-            
+
             self.executor.data_store.store_data(device_name, variable, value)
-            
+
             # 验证数据是否成功存储
             stored_value = self.executor.data_store.get_data(device_name, variable)
             if stored_value != value:
-                CommonUtils.print_log_line(f"⚠️ Warning: Stored value verification failed for {device_name}.{variable}")
+                self.logger.log_warning(
+                    f"⚠️ Warning: Stored value verification failed for {device_name}.{variable}"
+                )
                 return False
-                
+
             return True
         except Exception as e:
-            CommonUtils.print_log_line(f"❌ Error storing data to {device_name}.{variable}: {e}")
+            self.logger.log_error(
+                f"❌ Error storing data to {device_name}.{variable}: {e}"
+            )
             return False
-        
+
     def handle_actions(self, command, response, action_type, context):
         """
         处理一组 actions
-        
+
         Args:
             command: 当前命令对象
             response: 命令执行的响应
             action_type: 要处理的 action 类型 (success_actions, error_actions 等)
             context: 执行上下文，包含设备、命令字符串等
-            
+
         Returns:
             bool: True 如果所有操作成功，否则 False
         """
         if action_type not in command:
             return True  # 没有要处理的 action，视为成功
-        
+
         actions = command[action_type]
         result = True
-        
+
         # 保存当前设备名
-        if 'device_name' in context:
-            self.last_device_name = context['device_name']
-        
+        if "device_name" in context:
+            self.last_device_name = context["device_name"]
+
         for action in actions:
             try:
                 # 查找动作类型及其处理器
@@ -101,41 +122,48 @@ class ActionHandler:
                 for key, value in action.items():
                     if key in self.handlers:
                         # 找到了处理器，调用对应方法
-                        # CommonUtils.print_log_line(f"Processing action: {key}")
-                        handler_result = self.handlers[key](value, command, response, context)
+                        # self.logger.print_log_line(f"Processing action: {key}")
+                        handler_result = self.handlers[key](
+                            value, command, response, context
+                        )
                         if handler_result is False:  # 明确返回 False 表示失败
                             result = False
                         found = True
                         break
-                        
+
                 if not found:
                     # 找不到处理方法
-                    CommonUtils.print_log_line(f"Unknown action type: {action}")
+                    self.logger.log_error(f"Unknown action type: {action}")
                     result = False
-                    
+
             except Exception as e:
-                device_name = context.get('device_name', 'Unknown')
-                device = context.get('device')
-                port_info = f" (port: {device.port})" if device and hasattr(device, 'port') else ""
-                CommonUtils.print_log_line(f"Error occurred while processing action on device '{device_name}'{port_info}: {e}")
+                device_name = context.get("device_name", "Unknown")
+                device = context.get("device")
+                port_info = (
+                    f" (port: {device.port})"
+                    if device and hasattr(device, "port")
+                    else ""
+                )
+                self.logger.log_error(
+                    f"Error occurred while processing action on device '{device_name}'{port_info}: {e}"
+                )
                 result = False
-                
+
         return result
-    
+
     def handle_response_actions(self, command, response, action_type, context):
         """处理响应触发的 actions"""
         if action_type not in command:
             return True
-        
+
         actions = command[action_type]
         result = True
-        
+
         if isinstance(actions, dict):
             # success_response_actions 或 error_response_actions 格式（键为匹配条件，值为 actions 列表）
             for key, action_list in actions.items():
                 if key in response:
-                    CommonUtils.print_log_line(f"ℹ Response contains `{key}`")
-                    CommonUtils.print_log_line("")
+                    self.logger.log_info(f"ℹ Response contains `{key}`")
                     # 对每个 action 进行处理
                     for action in action_list:
                         try:
@@ -143,32 +171,41 @@ class ActionHandler:
                             for action_key, value in action.items():
                                 if action_key in self.handlers:
                                     # 直接调用处理器
-                                    handler_result = self.handlers[action_key](value, command, response, context)
+                                    handler_result = self.handlers[action_key](
+                                        value, command, response, context
+                                    )
                                     if handler_result is False:
                                         result = False
                                     found = True
                                     break
-                            
+
                             if not found:
-                                CommonUtils.print_log_line(f"Unknown action type: {action}")
+                                self.logger.log_error(f"Unknown action type: {action}")
                                 result = False
                         except Exception as e:
-                            device_name = context.get('device_name', 'Unknown')
-                            device = context.get('device')
-                            port_info = f" (port: {device.port})" if device and hasattr(device, 'port') else ""
-                            CommonUtils.print_log_line(f"Error processing response action on device '{device_name}'{port_info}: {e}")
+                            device_name = context.get("device_name", "Unknown")
+                            device = context.get("device")
+                            port_info = (
+                                f" (port: {device.port})"
+                                if device and hasattr(device, "port")
+                                else ""
+                            )
+                            self.logger.log_error(
+                                f"Error processing response action on device '{device_name}'{port_info}: {e}"
+                            )
                             result = False
         elif isinstance(actions, list):
             # 简单的 actions 列表格式
-            return self.handle_actions({"temp_actions": actions}, response, "temp_actions", context)
-        
+            return self.handle_actions(
+                {"temp_actions": actions}, response, "temp_actions", context
+            )
+
         return result
-    
-    
+
     # ---------------------------------------------------------
     # 以下是各种 action 的具体处理方法
     # ---------------------------------------------------------
-    
+
     def handle_test(self, text, command, response, context):
         """
         测试功能
@@ -179,8 +216,7 @@ class ActionHandler:
         }
         """
         test_message = self.handle_variables_from_str(text)
-        CommonUtils.print_log_line(f"ℹ Test action executed with message: {test_message}")
-        CommonUtils.print_log_line("")
+        self.logger.log_info(f"ℹ Test action executed with message: {test_message}")
         return True
 
     def handle_save(self, config, command, response, context):
@@ -199,12 +235,8 @@ class ActionHandler:
         device_name = self.handle_variables_from_str(config["device"])
         variable = self.handle_variables_from_str(config["variable"])
         value = self.handle_variables_from_str(config["value"])
-        
-        CommonUtils.print_log_line(
-            f"ℹ Saving data from response to {device_name}.{variable}"
-        )
-        CommonUtils.print_log_line("")
-        
+
+        self.logger.log_info(f"ℹ Saving data from response to {device_name}.{variable}")
         return self.safe_store_data(device_name, variable, value)
 
     def handle_save_conditional(self, config, command, response, context):
@@ -222,22 +254,20 @@ class ActionHandler:
         """
         device_name = self.handle_variables_from_str(config["device"])
         variable = self.handle_variables_from_str(config["variable"])
-        
-        CommonUtils.print_log_line(
+
+        self.logger.log_info(
             f"ℹ Saving data from response to {device_name}.{variable} if condition is met"
         )
-        CommonUtils.print_log_line("")
-        
+
         if "pattern" in config:
             match = re.search(config["pattern"], response)
             if match:
                 value = match.group(1)
                 return self.safe_store_data(device_name, variable, value)
             else:
-                CommonUtils.print_log_line(
+                self.logger.log_warning(
                     f"Warning: Pattern '{config['pattern']}' not found in response"
                 )
-                CommonUtils.print_log_line("")
                 return False
         else:
             return self.safe_store_data(device_name, variable, response)
@@ -258,59 +288,54 @@ class ActionHandler:
 
         # 只有在命令字符串不为空时才重试
         if not cmd_str or cmd_str.strip() == "ℹ INFO":
-            CommonUtils.print_log_line(
+            self.logger.log_info(
                 f"⚠️ Skip retry: No valid command to retry on device '{device_name}'"
             )
-            CommonUtils.print_log_line("")
             return False
 
-        CommonUtils.print_log_line(
+        self.logger.log_info(
             f"Starting retry operation, will retry '{cmd_str}' {retry_times} times on device '{device_name}'..."
         )
-        CommonUtils.print_log_line("")
 
         for attempt in range(retry_times):
-            CommonUtils.print_log_line(
-                f"Retry attempt {attempt + 1}/{retry_times}"
-            )
-            CommonUtils.print_log_line("")
+            self.logger.log_info(f"Retry attempt {attempt + 1}/{retry_times}")
 
             # Get hex_mode from command if available
             hex_mode = command.get("hex_mode", False)
-            
+
             # Call send_command with new signature
             result = device.send_command(
-                cmd_str, 
+                cmd_str,
                 timeout=command["timeout"] / 1000,
                 hex_mode=hex_mode,
-                expected_responses=updated_expected_responses
+                expected_responses=updated_expected_responses,
             )
-            
+
             # Extract response text from result dictionary
             response_text = result["response"]
             success = result["success"]
 
             if success:
-                CommonUtils.print_log_line(
-                    f"✅ Retry successful on device '{device_name}'!"
-                )
-                CommonUtils.print_log_line("")
+                self.logger.log_pass(f"✅ Retry successful on device '{device_name}'!")
 
                 # 处理成功时的 actions
                 new_context = context.copy()
                 new_context["response"] = response_text
-                self.handle_actions(command, response_text, "success_actions", new_context)
+                self.handle_actions(
+                    command, response_text, "success_actions", new_context
+                )
 
                 self.executor.isAllPassed = True
                 return True
             else:
-                CommonUtils.print_log_line(
+                self.logger.log_fail(
                     f"❌ Retry attempt {attempt + 1} failed on device '{device_name}', "
-                    + ("trying again..."
-                    if attempt < retry_times - 1
-                    else "all retries exhausted!")
+                    + (
+                        "trying again..."
+                        if attempt < retry_times - 1
+                        else "all retries exhausted!"
+                    )
                 )
-                CommonUtils.print_log_line("")
                 self.executor.isAllPassed = False
 
         return False
@@ -324,10 +349,9 @@ class ActionHandler:
             "set_status": "status_value"
         }
         """
-        CommonUtils.print_log_line(
+        self.logger.log_info(
             f"ℹ Setting status of command with order {command['order']} to {status}"
         )
-        CommonUtils.print_log_line("")
         command["status"] = status
         return True
 
@@ -347,9 +371,8 @@ class ActionHandler:
         else:
             duration = float(wait_action)
 
-        CommonUtils.print_log_line(f"ℹ Waiting for {duration} milliseconds")
-        CommonUtils.print_log_line("")
-        time.sleep(duration/1000)
+        self.logger.log_info(f"ℹ Waiting for {duration} milliseconds")
+        time.sleep(duration / 1000)
         return True
 
     def handle_print(self, message, command, response, context):
@@ -362,10 +385,7 @@ class ActionHandler:
         }
         """
         print_action = "ℹ  " + message
-        CommonUtils.print_log_line(
-            self.handle_variables_from_str(print_action)
-        )
-        CommonUtils.print_log_line("")
+        self.logger.log_info(self.handle_variables_from_str(print_action))
         return True
 
     def handle_set_status_by_order(self, config, command, response, context):
@@ -382,10 +402,9 @@ class ActionHandler:
         """
         order = config.get("order")
         status = config.get("status")
-        CommonUtils.print_log_line(
+        self.logger.log_info(
             f"ℹ Setting status of command with order {order} to {status}"
         )
-        CommonUtils.print_log_line("")
 
         for cmd in self.executor.command_device_dict.dict["Commands"]:
             if cmd["order"] == order:
@@ -407,19 +426,16 @@ class ActionHandler:
         """
         device = context["device"]
 
-        CommonUtils.print_log_line(
-            f"ℹ Executing command: {config['command']}"
-        )
-        CommonUtils.print_log_line("")
+        self.logger.log_info(f"ℹ Executing command: {config['command']}")
 
         # Get hex_mode from config if available
         hex_mode = config.get("hex_mode", False)
-        
+
         # Call send_command with new signature (no expected_responses for execute_command)
         result = device.send_command(
             self.handle_variables_from_str(config["command"]),
             timeout=config["timeout"] / 1000,
-            hex_mode=hex_mode
+            hex_mode=hex_mode,
         )
         return True
 
@@ -431,14 +447,11 @@ class ActionHandler:
         {
             "execute_command_by_order": command_order
         }
-        
+
         注意: 此命令会被延迟到当前并行执行块完毕后执行，
         以避免在多设备并行通信时干扰响应匹配。
         """
-        CommonUtils.print_log_line(
-            f"ℹ Executing command with order {order}"
-        )
-        CommonUtils.print_log_line("")
+        self.logger.log_info(f"ℹ Executing command with order {order}")
 
         for cmd in self.executor.command_device_dict.dict["Commands"]:
             if cmd["order"] == order:
@@ -447,10 +460,9 @@ class ActionHandler:
                 # 否则加入后台命令队列
                 if self.executor.defer_response_actions:
                     # 在并行执行期间，收集此命令以供并行完成后执行
-                    self.executor.deferred_response_actions.append({
-                        "command": cmd,
-                        "action_type": "deferred_execute"
-                    })
+                    self.executor.deferred_response_actions.append(
+                        {"command": cmd, "action_type": "deferred_execute"}
+                    )
                 else:
                     # 不在并行执行期间，但仍然延迟执行以避免嵌套问题
                     self.executor.enqueue_deferred_command(cmd)
@@ -476,14 +488,12 @@ class ActionHandler:
             length = random.randint(10, 120)
 
         random_str = "".join(
-            random.choices(
-                string.ascii_letters + string.digits, k=length
-            )
+            random.choices(string.ascii_letters + string.digits, k=length)
         )
 
         device_name = self.handle_variables_from_str(config["device"])
         variable = self.handle_variables_from_str(config["variable"])
-        
+
         return self.safe_store_data(device_name, variable, random_str)
 
     def handle_calculate_length(self, config, command, response, context):
@@ -504,7 +514,7 @@ class ActionHandler:
 
         device_name = self.handle_variables_from_str(config["device"])
         variable = self.handle_variables_from_str(config["variable"])
-        
+
         return self.safe_store_data(device_name, variable, length)
 
     def handle_calculate_crc(self, config, command, response, context):
@@ -528,7 +538,7 @@ class ActionHandler:
 
         device_name = self.handle_variables_from_str(config["device"])
         variable = self.handle_variables_from_str(config["variable"])
-        
+
         return self.safe_store_data(device_name, variable, crc)
 
     def handle_replace_str(self, config, command, response, context):
@@ -554,9 +564,9 @@ class ActionHandler:
 
         device_name = self.handle_variables_from_str(config["device"])
         variable = self.handle_variables_from_str(config["variable"])
-        
+
         return self.safe_store_data(device_name, variable, replaced_data)
-    
+
     def handle_wifi_connect(self, config, command, response, context):
         """
         连接 WiFi 功能
@@ -578,19 +588,19 @@ class ActionHandler:
         password = self.handle_variables_from_str(config["password"])
         timeout = int(config.get("timeout", 10))  # 默认10秒超时
 
-        CommonUtils.print_log_line(f"ℹ Connecting to WiFi network: {ssid}")
+        self.logger.log_info(f"ℹ Connecting to WiFi network: {ssid}")
 
         try:
             # Initialize WiFi
             wifi = pywifi.PyWiFi()
-            
+
             # Get the first wireless interface
             iface = wifi.interfaces()[0]
-            
+
             # Disconnect current connection
             iface.disconnect()
             time.sleep(1)
-            
+
             # Create WiFi connection profile
             profile = pywifi.Profile()
             profile.ssid = ssid
@@ -598,35 +608,38 @@ class ActionHandler:
             profile.akm.append(const.AKM_TYPE_WPA2PSK)
             profile.cipher = const.CIPHER_TYPE_CCMP
             profile.key = password
-            
+
             # Remove all WiFi profiles
             iface.remove_all_network_profiles()
-            
+
             # Add new profile
             profile_added = iface.add_network_profile(profile)
-            
+
             # Connect to WiFi
-            CommonUtils.print_log_line("Attempting to connect...")
+            self.logger.log_info("Attempting to connect...")
             iface.connect(profile_added)
-            
+
             # Wait for connection success or timeout
             start_time = time.time()
             while time.time() - start_time < timeout:
                 status = iface.status()
                 if status == const.IFACE_CONNECTED:
-                    CommonUtils.print_log_line(f"✅ Successfully connected to WiFi network: {ssid}")
-                    CommonUtils.print_log_line("")
+                    self.logger.log_info(
+                        f"✅ Successfully connected to WiFi network: {ssid}"
+                    )
                     return True
                 time.sleep(0.5)
-            
+
             # Timeout without connection
-            CommonUtils.print_log_line(f"❌ Connection to WiFi timed out, please check if the SSID and password are correct")
+            self.logger.log_error(
+                f"❌ Connection to WiFi timed out, please check if the SSID and password are correct"
+            )
             return False
-            
+
         except Exception as e:
-            CommonUtils.print_log_line(f"❌ Error occurred while connecting to WiFi: {e}")
+            self.logger.log_error(f"❌ Error occurred while connecting to WiFi: {e}")
             return False
-        
+
     def handle_get_wifi_config(self, config, command, response, context):
         """
         发送WiFi配置到指定设备IP (通过GET请求)
@@ -649,41 +662,49 @@ class ActionHandler:
         password = self.handle_variables_from_str(config["password"])
 
         # 构建目标URL
-        config_url = f"http://{device_ip}/connect?ssid={ssid}&pass={password}&submit=Submit"
+        config_url = (
+            f"http://{device_ip}/connect?ssid={ssid}&pass={password}&submit=Submit"
+        )
 
-        CommonUtils.print_log_line(f"ℹ Sending WiFi configuration to device {device_ip}")
-        CommonUtils.print_log_line(f"  Target URL: {config_url}")
+        self.logger.log_info(f"ℹ Sending WiFi configuration to device {device_ip}")
+        self.logger.log_info(f"  Target URL: {config_url}")
 
         try:
             # 第一次发送WiFi配置
             try:
                 requests.get(config_url, timeout=5)
-                CommonUtils.print_log_line(f"ℹ First WiFi configuration request sent successfully!")
+                self.logger.log_info(
+                    f"ℹ First WiFi configuration request sent successfully!"
+                )
             except Exception as e:
-                CommonUtils.print_log_line(f"ℹ First request encountered an error.")
-                CommonUtils.print_log_line(f"ℹ Proceeding to wait and retry...")
+                self.logger.log_info(f"ℹ First request encountered an error.")
+                self.logger.log_info(f"ℹ Proceeding to wait and retry...")
 
             # 等待10秒
-            CommonUtils.print_log_line(f"ℹ Waiting for 15 seconds before sending the second request...")
+            self.logger.log_info(
+                f"ℹ Waiting for 15 seconds before sending the second request..."
+            )
             time.sleep(15)
 
             # 第二次发送WiFi配置
             response = requests.get(config_url, timeout=5)
             if response.status_code == 200:
-                CommonUtils.print_log_line(f"✅ Second WiFi configuration request successful!")
-                CommonUtils.print_log_line("")
+                self.logger.log_info(
+                    f"✅ Second WiFi configuration request successful!"
+                )
                 return True
             else:
-                CommonUtils.print_log_line(f"❌ Second WiFi configuration request failed with status code: {response.status_code}")
-                CommonUtils.print_log_line("")
+                self.logger.log_error(
+                    f"❌ Second WiFi configuration request failed with status code: {response.status_code}"
+                )
                 return False
-            
+
         except Exception as e:
-            CommonUtils.print_log_line(f"❌ Error occurred while sending WiFi configuration: {str(e)}")
-            CommonUtils.print_log_line("")
+            self.logger.log_error(
+                f"❌ Error occurred while sending WiFi configuration: {str(e)}"
+            )
             return False
 
-        
     def handle_post_wifi_config(self, config, command, response, context):
         """
         发送WiFi配置到指定设备IP (通过GET请求)
@@ -708,31 +729,29 @@ class ActionHandler:
         config_url = f"http://{device_ip}/index.html"
 
         # 构建请求头
-        config_headers = {
-            "Content-Type": "application/x-www-form-urlencoded"
-        }
+        config_headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
         # 构建请求载荷
-        config_data = {
-            "ssid": ssid,
-            "pwd": password
-        }
+        config_data = {"ssid": ssid, "pwd": password}
 
-        CommonUtils.print_log_line(f"ℹ Sending WiFi configuration to device {device_ip}")
-        CommonUtils.print_log_line(f"  Target URL: {config_url}")
+        self.logger.log_info(f"ℹ Sending WiFi configuration to device {device_ip}")
+        self.logger.log_info(f"  Target URL: {config_url}")
 
         try:
             # 发送WiFi配置
             try:
-                requests.post(url=config_url, headers=config_headers, data=config_data, timeout=5)
-                CommonUtils.print_log_line(f"ℹ WiFi configuration request sent successfully!")
+                requests.post(
+                    url=config_url, headers=config_headers, data=config_data, timeout=5
+                )
+                self.logger.log_info(f"ℹ WiFi configuration request sent successfully!")
             except Exception as e:
-                CommonUtils.print_log_line(f"ℹ Request encountered an error.")
-                CommonUtils.print_log_line(f"ℹ Proceeding to wait and retry...")
-            
+                self.logger.log_info(f"ℹ Request encountered an error.")
+                self.logger.log_info(f"ℹ Proceeding to wait and retry...")
+
         except Exception as e:
-            CommonUtils.print_log_line(f"❌ Error occurred while sending WiFi configuration: {str(e)}")
-            CommonUtils.print_log_line("")
+            self.logger.log_error(
+                f"❌ Error occurred while sending WiFi configuration: {str(e)}"
+            )
             return False
 
     def handle_get_network_page(self, config, command, response, context):
@@ -756,24 +775,25 @@ class ActionHandler:
         # 构建目标URL
         target_url = f"http://{device_ip}{url}"
 
-        CommonUtils.print_log_line(f"ℹ Fetching network page content from {target_url}")
+        self.logger.log_info(f"ℹ Fetching network page content from {target_url}")
 
         try:
             response = requests.get(target_url, timeout=5)
             if response.status_code == 200:
-                CommonUtils.print_log_line(f"✅ Successfully fetched network page content!")
-                CommonUtils.print_log_line("")
+                self.logger.log_info(f"✅ Successfully fetched network page content!")
                 return True
             else:
-                CommonUtils.print_log_line(f"❌ Failed to fetch network page content, status code: {response.status_code}")
-                CommonUtils.print_log_line("")
+                self.logger.log_error(
+                    f"❌ Failed to fetch network page content, status code: {response.status_code}"
+                )
                 return False
-            
+
         except Exception as e:
-            CommonUtils.print_log_line(f"❌ Error occurred while fetching network page: {str(e)}")
-            CommonUtils.print_log_line("")
+            self.logger.log_error(
+                f"❌ Error occurred while fetching network page: {str(e)}"
+            )
             return False
-    
+
     def handle_send_file(self, config, command, response, context):
         """
         向设备串口发送文本文件功能（支持证书、配置文件等）
@@ -801,13 +821,6 @@ class ActionHandler:
           * 'cr': 使用 CR（\\r，0x0d），旧 Mac 风格
           * 'none': 保持原样，不做转换
 
-        行为:
-        - 以文本模式读取文件，使用指定编码转换为字符串
-        - 标准化行结束符（CRLF/LF/CR 都转为 LF）
-        - 根据 line_ending 参数转换为目标格式
-        - 将转换后的内容通过设备串口发送，记录原始大小和实际写入大小
-        - 在设备日志中记录文件名、原始大小、写入大小和转换格式
-
         返回:
         - True: 发送成功
         - False: 文件不存在、串口未打开或发送失败
@@ -833,7 +846,7 @@ class ActionHandler:
             encoding = config.get("encoding", "utf-8")
             line_ending = config.get("line_ending", "lf")
         else:
-            CommonUtils.print_log_line("Error: invalid send_file config")
+            self.logger.log_error("Error: invalid send_file config")
             return False
 
         file_path = self.handle_variables_from_str(file_path)
@@ -848,7 +861,9 @@ class ActionHandler:
         device_name = context.get("device_name") if context else None
 
         if not device:
-            CommonUtils.print_log_line(f"Error: device not provided in action context for send_file ({file_path})")
+            self.logger.log_error(
+                f"Error: device not provided in action context for send_file ({file_path})"
+            )
             return False
 
         # Read text file
@@ -856,13 +871,15 @@ class ActionHandler:
             with open(file_path, "r", encoding=encoding) as f:
                 text_content = f.read()
         except FileNotFoundError:
-            CommonUtils.print_log_line(f"Error: file not found: {file_path}")
+            self.logger.log_error(f"Error: file not found: {file_path}")
             return False
         except UnicodeDecodeError as e:
-            CommonUtils.print_log_line(f"Error: encoding error when reading '{file_path}' with {encoding}: {e}")
+            self.logger.log_error(
+                f"Error: encoding error when reading '{file_path}' with {encoding}: {e}"
+            )
             return False
         except Exception as e:
-            CommonUtils.print_log_line(f"Error reading file '{file_path}': {e}")
+            self.logger.log_error(f"Error reading file '{file_path}': {e}")
             return False
 
         original_size = len(text_content.encode(encoding))
@@ -884,15 +901,19 @@ class ActionHandler:
         try:
             data = final_content.encode(encoding)
         except Exception as e:
-            CommonUtils.print_log_line(f"Error encoding content for '{file_path}': {e}")
+            self.logger.log_error(f"Error encoding content for '{file_path}': {e}")
             return False
 
         # Write to serial port
         try:
             written = 0
             with device.lock:
-                if not (hasattr(device, 'ser') and getattr(device.ser, 'is_open', False)):
-                    CommonUtils.print_log_line(f"Serial port not open for device '{device_name or device.name}', cannot send file: {file_path}")
+                if not (
+                    hasattr(device, "ser") and getattr(device.ser, "is_open", False)
+                ):
+                    self.logger.log_error(
+                        f"Serial port not open for device '{device_name or device.name}', cannot send file: {file_path}"
+                    )
                     return False
 
                 # PySerial's write returns number of bytes written
@@ -903,16 +924,24 @@ class ActionHandler:
                     # flush may not be supported on some transports
                     pass
 
-            CommonUtils.print_log_line(f"Sent file '{os.path.basename(file_path)}' to device '{device_name or device.name}': original_size={original_size} bytes, written={written} bytes, encoding={encoding}, line_ending={line_ending}")
+            self.logger.log_info(
+                f"Sent file '{os.path.basename(file_path)}' to device '{device_name or device.name}': original_size={original_size} bytes, written={written} bytes, encoding={encoding}, line_ending={line_ending}"
+            )
 
             # Also write to device log if available
             try:
-                timestamp = device._get_timestamp() if hasattr(device, '_get_timestamp') else time.strftime("%y%m%d_%H:%M:%S")
+                timestamp = (
+                    device._get_timestamp()
+                    if hasattr(device, "_get_timestamp")
+                    else time.strftime("%Y-%m-%d_%H:%M:%S")
+                )
             except Exception:
                 # Best-effort logging to device file
                 pass
 
             return True
         except Exception as e:
-            CommonUtils.print_log_line(f"Error sending file to device '{device_name or getattr(device, 'name', 'Unknown')}': {e}")
+            self.logger.log_error(
+                f"Error sending file to device '{device_name or getattr(device, 'name', 'Unknown')}': {e}"
+            )
             return False
