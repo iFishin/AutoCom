@@ -167,8 +167,5 @@ device_logs/
 TEMP_DATA.json
 processed_files.json
 
-# 测试相关
-tests/*
-
 # WebDAV 相关临时文件
 utils/webdav_*.py
