@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from contextvars import ContextVar
 from collections import defaultdict
+from .TablePrinter import TablePrinter
 
 
 # ============================================================================
@@ -51,18 +52,21 @@ class ColorCode(Enum):
 
 class LogLevel(Enum):
     """日志级别枚举"""
+    TRACE = 5
     DEBUG = logging.DEBUG
     INFO = logging.INFO
     PASS = 25
     WARNING = logging.WARNING
     FAIL = 35
     ERROR = logging.ERROR
+    FATAL = logging.FATAL
     CRITICAL = logging.CRITICAL
 
 
 # 注册自定义级别
-logging.addLevelName(LogLevel.PASS.value, "PASS")
-logging.addLevelName(LogLevel.FAIL.value, "FAIL")
+for level in LogLevel:
+    if level.value not in logging._nameToLevel:
+        logging.addLevelName(level.value, level.name)
 
 
 # ============================================================================
@@ -398,6 +402,11 @@ class AutoComLogger:
         # 注册默认着色器
         self._setup_default_colorizers()
 
+        # TablePrinter实例
+        self.tp = TablePrinter(
+            headers=["Executed Time", "Result", "Device", "Command", "Response", "Elapsed(ms)"],
+        )
+
     def _setup_default_colorizers(self) -> None:
         """设置默认着色规则 - 可扩展"""
         # 设备名着色 [DeviceName]
@@ -424,7 +433,7 @@ class AutoComLogger:
         # 状态关键词着色
         self._registry.register(
             KeywordColorizer(
-                keywords=["success", "成功", "connected", "online"],
+                keywords=["success", "成功"],
                 color=ColorCode.BRIGHT_GREEN
             ),
             priority=30,
@@ -514,40 +523,38 @@ class AutoComLogger:
         
     def log_iteration_start(self, iteration: int, total: int) -> None:
         """Log iteration start"""
-        self._log(logging.INFO, f"Starting iteration {iteration}/{total}")
+        # self._log(logging.INFO, f"Starting iteration {iteration}/{total}")
+        self.tp.print_realtime_banner(f"Starting iteration {iteration}/{total}")
 
     def log_iteration_end(self, iteration: int, total: int) -> None:
         """Log iteration end summary"""
-        self._log(logging.INFO, f"Finished iteration {iteration}/{total}")
-        
-    def log_execution(
-        self,
-        time_str: str,
-        result: str,
-        device: str,
-        command: str,
-        response: str,
-        elapsed_ms: Optional[float] = None,
-    ) -> None:
+        # self._log(logging.INFO, f"Finished iteration {iteration}/{total}")
+        self.tp.print_realtime_banner(f"Finished iteration {iteration}/{total}")
+    
+    def log_execution(self, result: bool, exec_type: str = "command", **kwargs: Any) -> None:
         """
-        Log command execution with elapsed time in milliseconds
+        Log command execution result with structured context
 
         Args:
-            time_str: Timestamp
-            result: Result status (✅ PASS / ❌ FAIL)
-            device: Device name
-            command: Command executed
-            response: Response message
-            elapsed_ms: Elapsed time in milliseconds
+            result: Execution result (True for PASS, False for FAIL)
+            exec_type: Type of execution (e.g., "command", "api_call")
+            kwargs: Additional context (e.g., device, command, response, elapsed_ms)
+            Expected kwargs:
+                - time_str: Timestamp
+                - device: Device name
+                - command: Command executed
+                - response: Response message
+                - elapsed_ms: Elapsed time in milliseconds
+
         """
-        # Log to logger with proper formatting
-        log_message = f"[{device}] {command}"
-        if "PASS" in result:
-            self.log_pass(log_message)
-        elif "FAIL" in result:
-            self.log_fail(log_message)
-        else:
-            self.log_info(log_message)
+        device = kwargs.get("device", "UnknownDevice")
+        command = kwargs.get("command", "UnknownCommand")
+        response = kwargs.get("response", "")
+        elapsed_ms = kwargs.get("elapsed_ms", 0.0)
+        self.tp.print_realtime_row(
+            [kwargs.get("time_str", ""), "PASS" if result else "FAIL", device, command, repr(response), f"{elapsed_ms:.2f}"],
+            is_print=True
+        )
 
     # ========================================================================
     # 扩展功能
@@ -603,24 +610,23 @@ class BoundLogger:
         kwargs['extra'] = extra
         return kwargs
 
-    def debug(self, msg: str, **kwargs) -> None:
-        self._parent.debug(msg, **self._merge_kwargs(kwargs))
+    def log_debug(self, msg: str, **kwargs) -> None:
+        self._parent.log_debug(msg, **self._merge_kwargs(kwargs))
 
-    def info(self, msg: str, **kwargs) -> None:
-        self._parent.info(msg, **self._merge_kwargs(kwargs))
+    def log_info(self, msg: str, **kwargs) -> None:
+        self._parent.log_info(msg, **self._merge_kwargs(kwargs))
 
-    def warning(self, msg: str, **kwargs) -> None:
-        self._parent.warning(msg, **self._merge_kwargs(kwargs))
+    def log_warning(self, msg: str, **kwargs) -> None:
+        self._parent.log_warning(msg, **self._merge_kwargs(kwargs))
 
-    def error(self, msg: str, **kwargs) -> None:
-        self._parent.error(msg, **self._merge_kwargs(kwargs))
+    def log_error(self, msg: str, **kwargs) -> None:
+        self._parent.log_error(msg, **self._merge_kwargs(kwargs))
 
-    def pass_(self, msg: str, **kwargs) -> None:
-        self._parent.pass_(msg, **self._merge_kwargs(kwargs))
+    def log_pass(self, msg: str, **kwargs) -> None:
+        self._parent.log_pass(msg, **self._merge_kwargs(kwargs))
 
-    def fail(self, msg: str, **kwargs) -> None:
-        self._parent.fail(msg, **self._merge_kwargs(kwargs))
-
+    def log_fail(self, msg: str, **kwargs) -> None:
+        self._parent.log_fail(msg, **self._merge_kwargs(kwargs))
 
 # ============================================================================
 # 便捷函数
@@ -653,10 +659,10 @@ if __name__ == "__main__":
     # 基础用法
     logger = get_logger()
     
-    logger.info("系统启动完成")
-    logger.pass_("[Device-A] 连接成功")
-    logger.fail("[Device-B] 连接超时")
-    logger.error("192.168.1.1 无法访问")
+    logger.log_info("系统启动完成")
+    logger.log_pass("[Device-A] 连接成功")
+    logger.log_fail("[Device-B] 连接超时")
+    logger.log_error("192.168.1.1 无法访问")
     
     # 添自定义着色规则
     logger.add_colorizer(
@@ -666,19 +672,19 @@ if __name__ == "__main__":
         name="todo_highlight"
     )
     
-    logger.info("TODO: 实现断点续传功能")
+    logger.log_info("TODO: 实现断点续传功能")
     
     # 使用上下文
     with LogContext(request_id="req-123", user="admin"):
-        logger.info("处理请求中...")
+        logger.log_info("处理请求中...")
         
         # 绑定上下文创建子日志器
         child = logger.bind(module="network")
-        child.info("网络模块初始化")
+        child.log_info("网络模块初始化")
     
     # 装饰器用法
     @with_context(task="data_sync")
     def sync_data():
-        logger.info("开始数据同步")
+        logger.log_info("开始数据同步")
     
     sync_data()
