@@ -117,7 +117,7 @@ class TestTablePrinter(unittest.TestCase):
         rt.print_realtime_banner("This is a banner")
         rt.print_realtime_row(["t3","r3"], is_print=True)
         rt.print_realtime_row(["t4","r4"], is_print=True)
-        rt.print_realtime_bottom()
+        rt.print_realtime_footer()
 
 if __name__ == '__main__':
     unittest.main()

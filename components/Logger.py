@@ -22,13 +22,14 @@ from contextvars import ContextVar
 from collections import defaultdict
 from .TablePrinter import TablePrinter
 
-
 # ============================================================================
 # 类型定义
 # ============================================================================
 
+
 class ColorCode(Enum):
     """标准颜色代码"""
+
     BLACK = "\033[30m"
     RED = "\033[31m"
     GREEN = "\033[32m"
@@ -52,6 +53,7 @@ class ColorCode(Enum):
 
 class LogLevel(Enum):
     """日志级别枚举"""
+
     TRACE = 5
     DEBUG = logging.DEBUG
     INFO = logging.INFO
@@ -73,6 +75,7 @@ for level in LogLevel:
 # 着色器协议与注册表
 # ============================================================================
 
+
 class ColorizerProtocol(Protocol):
     """着色器协议 - 任何实现此协议的对象都可以作为着色器"""
 
@@ -88,6 +91,7 @@ class ColorizerProtocol(Protocol):
 @dataclass
 class RegexColorizer:
     """基于正则的着色器"""
+
     pattern: Union[str, Pattern]
     color: ColorCode
     group: int = 0  # 着色的捕获组
@@ -122,9 +126,10 @@ class RegexColorizer:
         return pattern.sub(replacer, text)
 
 
-@dataclass 
+@dataclass
 class KeywordColorizer:
     """基于关键词的着色器"""
+
     keywords: List[str]
     color: ColorCode
     case_sensitive: bool = False
@@ -143,8 +148,7 @@ class KeywordColorizer:
             flags = 0 if self.case_sensitive else re.IGNORECASE
             pattern = re.compile(re.escape(kw), flags)
             result = pattern.sub(
-                f"{self.color.value}\\g<0>{ColorCode.RESET.value}", 
-                result
+                f"{self.color.value}\\g<0>{ColorCode.RESET.value}", result
             )
         return result
 
@@ -161,10 +165,10 @@ class ColorizerRegistry:
         self._lock = threading.RLock()
 
     def register(
-        self, 
-        colorizer: ColorizerProtocol, 
+        self,
+        colorizer: ColorizerProtocol,
         priority: int = 50,
-        name: Optional[str] = None
+        name: Optional[str] = None,
     ) -> str:
         """
         注册着色器
@@ -226,6 +230,7 @@ class ColorizerRegistry:
 # 高性能 Formatter
 # ============================================================================
 
+
 class ExtensibleFormatter(logging.Formatter):
     """
     可扩展的高性能 Formatter
@@ -243,7 +248,7 @@ class ExtensibleFormatter(logging.Formatter):
         fmt: Optional[str] = None,
         datefmt: Optional[str] = None,
         color_registry: Optional[ColorizerRegistry] = None,
-        force_color: Optional[bool] = None
+        force_color: Optional[bool] = None,
     ):
         super().__init__(fmt or "%(asctime)s - %(levelname)s - %(message)s", datefmt)
 
@@ -269,10 +274,9 @@ class ExtensibleFormatter(logging.Formatter):
 
         with self._cache_lock:
             if self._color_support_cache is None:
-                self._color_support_cache = (
-                    sys.stdout.isatty() or 
-                    os.getenv("FORCE_COLOR", "").lower() in ("1", "true", "yes")
-                )
+                self._color_support_cache = sys.stdout.isatty() or os.getenv(
+                    "FORCE_COLOR", ""
+                ).lower() in ("1", "true", "yes")
             return self._color_support_cache
 
     def format(self, record: logging.LogRecord) -> str:
@@ -284,7 +288,9 @@ class ExtensibleFormatter(logging.Formatter):
             # 级别着色(快速路径)
             if self._use_color and record.levelname in self._level_colors:
                 color = self._level_colors[record.levelname]
-                record.levelname = f"{color.value}{record.levelname}{ColorCode.RESET.value}"
+                record.levelname = (
+                    f"{color.value}{record.levelname}{ColorCode.RESET.value}"
+                )
 
             # 消息着色(扩展路径)
             if self._use_color:
@@ -298,10 +304,10 @@ class ExtensibleFormatter(logging.Formatter):
             record.msg = original_msg
 
     def add_colorizer(
-        self, 
-        colorizer: ColorizerProtocol, 
+        self,
+        colorizer: ColorizerProtocol,
         priority: int = 50,
-        name: Optional[str] = None
+        name: Optional[str] = None,
     ) -> str:
         """便捷方法: 添加着色器"""
         return self.registry.register(colorizer, priority, name)
@@ -312,7 +318,7 @@ class ExtensibleFormatter(logging.Formatter):
 # ============================================================================
 
 # 上下文变量(线程/协程安全)
-_log_context: ContextVar[Dict[str, Any]] = ContextVar('log_context', default={})
+_log_context: ContextVar[Dict[str, Any]] = ContextVar("log_context", default={})
 
 
 class LogContext:
@@ -348,18 +354,22 @@ class LogContext:
 
 def with_context(**ctx):
     """装饰器: 为函数添加日志上下文"""
+
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             with LogContext(**ctx):
                 return func(*args, **kwargs)
+
         return wrapper
+
     return decorator
 
 
 # ============================================================================
 # 主 Logger 类
 # ============================================================================
+
 
 class AutoComLogger:
     """
@@ -382,7 +392,7 @@ class AutoComLogger:
         level: int = logging.DEBUG,
         log_file: Optional[str] = None,
         enable_color: bool = True,
-        propagate: bool = False
+        propagate: bool = False,
     ):
         self.name = name
         self._logger = logging.getLogger(name)
@@ -396,7 +406,7 @@ class AutoComLogger:
         self._registry = ColorizerRegistry()
         self._formatter = ExtensibleFormatter(
             color_registry=self._registry,
-            force_color=enable_color if enable_color else None
+            force_color=enable_color if enable_color else None,
         )
 
         # 添加控制台handler
@@ -414,7 +424,14 @@ class AutoComLogger:
 
         # TablePrinter实例
         self.tp = TablePrinter(
-            headers=["Executed Time", "Result", "Device", "Command", "Response", "Elapsed(ms)"],
+            headers=[
+                "Executed Time",
+                "Result",
+                "Device",
+                "Command",
+                "Response",
+                "Elapsed(ms)",
+            ],
         )
 
     def _setup_default_colorizers(self) -> None:
@@ -422,63 +439,55 @@ class AutoComLogger:
         # 设备名着色 [DeviceName]
         self._registry.register(
             RegexColorizer(
-                pattern=r'\[([^\]]+)\]',
-                color=ColorCode.BRIGHT_BLUE,
-                group=1
+                pattern=r"\[([^\]]+)\]", color=ColorCode.BRIGHT_BLUE, group=1
             ),
             priority=10,
-            name="device_names"
+            name="device_names",
         )
 
         # IP地址着色
         self._registry.register(
             RegexColorizer(
-                pattern=r'\b(?:\d{1,3}\.){3}\d{1,3}\b',
-                color=ColorCode.BRIGHT_CYAN
+                pattern=r"\b(?:\d{1,3}\.){3}\d{1,3}\b", color=ColorCode.BRIGHT_CYAN
             ),
             priority=20,
-            name="ip_addresses"
+            name="ip_addresses",
         )
 
         # 状态关键词着色
         self._registry.register(
             KeywordColorizer(
-                keywords=["success", "成功"],
-                color=ColorCode.BRIGHT_GREEN
+                keywords=["success", "成功"], color=ColorCode.BRIGHT_GREEN
             ),
             priority=30,
-            name="success_keywords"
+            name="success_keywords",
         )
 
         self._registry.register(
             KeywordColorizer(
                 keywords=["failed", "失败", "error", "offline", "timeout"],
-                color=ColorCode.BRIGHT_RED
+                color=ColorCode.BRIGHT_RED,
             ),
             priority=30,
-            name="error_keywords"
+            name="error_keywords",
         )
 
     @classmethod
-    def get_instance(
-        cls,
-        name: str = "AutoCom",
-        **kwargs
-    ) -> "AutoComLogger":
+    def get_instance(cls, name: str = "AutoCom", **kwargs) -> "AutoComLogger":
         """获取或创建命名实例(线程安全)"""
         with cls._lock:
             if name not in cls._instances:
                 cls._instances[name] = cls(name=name, **kwargs)
             return cls._instances[name]
 
-    def set_log_file(self, path: str, mode: str = 'a') -> None:
+    def set_log_file(self, path: str, mode: str = "a") -> None:
         """设置日志文件"""
         if self._file_handler:
             self._logger.removeHandler(self._file_handler)
 
         Path(path).parent.mkdir(parents=True, exist_ok=True)
 
-        self._file_handler = logging.FileHandler(path, mode=mode, encoding='utf-8')
+        self._file_handler = logging.FileHandler(path, mode=mode, encoding="utf-8")
         # 文件不使用颜色
         self._file_handler.setFormatter(
             logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -497,9 +506,9 @@ class AutoComLogger:
         # 合并上下文
         ctx = LogContext.get_all()
         if ctx:
-            extra = kwargs.get('extra', {})
-            extra['_context'] = ctx
-            kwargs['extra'] = extra
+            extra = kwargs.get("extra", {})
+            extra["_context"] = ctx
+            kwargs["extra"] = extra
 
         self._logger.log(level, msg, **kwargs)
 
@@ -530,18 +539,61 @@ class AutoComLogger:
     def log_fail(self, msg: str, **kwargs) -> None:
         """失败日志(自定义级别)"""
         self._log(LogLevel.FAIL.value, msg, **kwargs)
-        
+
+    ## 实时表格相关日志方法
+    def log_realtime_table_header(self, headers: List[str]) -> None:
+        """日志表格头部"""
+        self.tp.headers = headers
+        self.tp.print_realtime_header()
+
+    def log_realtime_table_row(self, row: List[Any]) -> None:
+        """日志表格行"""
+        self.tp.print_realtime_row(row, is_print=True)
+
+    def log_realtime_table_banner(self, text: str) -> None:
+        """日志表格横幅"""
+        self.tp.print_realtime_banner(text)
+
+    def log_realtime_table_footer(self) -> None:
+        """日志表格底部(结束)"""
+        self.tp.print_realtime_footer()
+
+    ## CLI 迭代日志方法
+    def log_step_info(self, step_text: str) -> None:
+        """Log step information"""
+        self.log_realtime_table_banner(step_text)
+
+    def log_step_success(self, step_text: str) -> None:
+        """Log step success"""
+        self.log_realtime_table_banner(f"✅ {step_text}")
+
+    def log_step_error(self, step_text: str) -> None:
+        """Log step error"""
+        self.log_realtime_table_banner(f"❌ {step_text}")
+
+    def log_step_warning(self, step_text: str) -> None:
+        """Log step warning"""
+        self.log_realtime_table_banner(f"⚠️ {step_text}")
+
     def log_iteration_start(self, iteration: int, total: int) -> None:
         """Log iteration start"""
-        # self._log(logging.INFO, f"Starting iteration {iteration}/{total}")
-        self.tp.print_realtime_banner(f"Starting iteration {iteration}/{total}")
+        self.log_realtime_table_banner(f"ℹ Starting iteration {iteration}/{total}")
 
     def log_iteration_end(self, iteration: int, total: int) -> None:
         """Log iteration end summary"""
-        # self._log(logging.INFO, f"Finished iteration {iteration}/{total}")
-        self.tp.print_realtime_banner(f"Finished iteration {iteration}/{total}")
-    
-    def log_execution(self, result: bool, exec_type: str = "command", **kwargs: Any) -> None:
+        self.log_realtime_table_banner(f"ℹ Finished iteration {iteration}/{total}")
+
+    def log_session_start(self, session_text: str) -> None:
+        """Log session header"""
+        self.log_realtime_table_banner(f"{session_text}")
+
+    def log_session_end(self, session_text: str) -> None:
+        """Log session footer"""
+        self.log_realtime_table_banner(f"{session_text}")
+
+    def log_execution(
+        self, result: bool, exec_type: str = "command", **kwargs: Any
+    ) -> None:
         """
         Log command execution result with structured context
 
@@ -561,9 +613,15 @@ class AutoComLogger:
         command = kwargs.get("command", "UnknownCommand")
         response = kwargs.get("response", "")
         elapsed_ms = kwargs.get("elapsed_ms", 0.0)
-        self.tp.print_realtime_row(
-            [kwargs.get("time_str", ""), "PASS" if result else "FAIL", device, command, repr(response), f"{elapsed_ms:.2f}"],
-            is_print=True
+        self.log_realtime_table_row(
+            [
+                kwargs.get("time_str", ""),
+                "✅PASS" if result else "❌FAIL",
+                device,
+                command,
+                repr(response),
+                f"{elapsed_ms:.2f}",
+            ],
         )
 
     # ========================================================================
@@ -576,7 +634,7 @@ class AutoComLogger:
         color: ColorCode,
         priority: int = 50,
         name: Optional[str] = None,
-        colorizer_class: type = RegexColorizer
+        colorizer_class: type = RegexColorizer,
     ) -> str:
         """
         便捷方法: 添加正则着色规则
@@ -615,9 +673,9 @@ class BoundLogger:
 
     def _merge_kwargs(self, kwargs: Dict) -> Dict:
         """合并上下文到kwargs"""
-        extra = kwargs.get('extra', {})
+        extra = kwargs.get("extra", {})
         extra.update(self._context)
-        kwargs['extra'] = extra
+        kwargs["extra"] = extra
         return kwargs
 
     def log_debug(self, msg: str, **kwargs) -> None:
@@ -638,9 +696,11 @@ class BoundLogger:
     def log_fail(self, msg: str, **kwargs) -> None:
         self._parent.log_fail(msg, **self._merge_kwargs(kwargs))
 
+
 # ============================================================================
 # 便捷函数
 # ============================================================================
+
 
 def get_logger(name: str = "AutoCom") -> AutoComLogger:
     """获取默认日志器实例"""
@@ -648,16 +708,11 @@ def get_logger(name: str = "AutoCom") -> AutoComLogger:
 
 
 def setup_root_logger(
-    level: int = logging.INFO,
-    log_file: Optional[str] = None,
-    enable_color: bool = True
+    level: int = logging.INFO, log_file: Optional[str] = None, enable_color: bool = True
 ) -> AutoComLogger:
     """配置根日志器"""
     return AutoComLogger.get_instance(
-        "AutoCom",
-        level=level,
-        log_file=log_file,
-        enable_color=enable_color
+        "AutoCom", level=level, log_file=log_file, enable_color=enable_color
     )
 
 
@@ -668,33 +723,33 @@ def setup_root_logger(
 if __name__ == "__main__":
     # 基础用法
     logger = get_logger()
-    
+
     logger.log_info("系统启动完成")
     logger.log_pass("[Device-A] 连接成功")
     logger.log_fail("[Device-B] 连接超时")
     logger.log_error("192.168.1.1 无法访问")
-    
+
     # 添自定义着色规则
     logger.add_colorizer(
-        pattern=r'\bTODO\b',
+        pattern=r"\bTODO\b",
         color=ColorCode.BRIGHT_YELLOW,
         priority=5,
-        name="todo_highlight"
+        name="todo_highlight",
     )
-    
+
     logger.log_info("TODO: 实现断点续传功能")
-    
+
     # 使用上下文
     with LogContext(request_id="req-123", user="admin"):
         logger.log_info("处理请求中...")
-        
+
         # 绑定上下文创建子日志器
         child = logger.bind(module="network")
         child.log_info("网络模块初始化")
-    
+
     # 装饰器用法
     @with_context(task="data_sync")
     def sync_data():
         logger.log_info("开始数据同步")
-    
+
     sync_data()
