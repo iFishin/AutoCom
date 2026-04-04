@@ -1,13 +1,9 @@
 import serial
 import sys
 
-try:
-    from utils.common import CommonUtils
-    from utils.dirs import get_dirs
-    from components.Device import Device
-except ModuleNotFoundError:
-    from ..utils.common import CommonUtils
-    from .Device import Device
+from utils.common import CommonUtils
+from utils.dirs import get_dirs
+from components.Device import Device
 import os
 import re
 import time
@@ -102,7 +98,7 @@ class MonitorManager:
                     while b"\n" in self.buffer:
                         line, self.buffer = self.buffer.split(b"\n", 1)
                         if line.strip():
-                            decoded_line = self.logger.force_decode(line.strip())
+                            decoded_line = CommonUtils.force_decode(line.strip())
                             self._process_line(decoded_line)
                 else:
                     # Sleep briefly when no data

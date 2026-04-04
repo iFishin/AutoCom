@@ -61,7 +61,7 @@ def load_commands_from_file(file_path):
         raise
 
 
-def merge_config(config: json, dict_data: json):
+def merge_config(config: dict, dict_data: dict):
     for key, value in config.items():
         if key not in dict_data:
             dict_data[key] = value
@@ -84,7 +84,7 @@ def ensure_working_directories(temps_dir, data_store_dir, device_logs_dir):
     Path(device_logs_dir).mkdir(parents=True, exist_ok=True)
 
 
-def apply_configs_for_device(configForDevice: json, dictForDevices: json):
+def apply_configs_for_device(configForDevice: dict, dictForDevices: dict):
     # Use Global Configurations for all devices
     for device in dictForDevices:
         if "status" not in device:
@@ -107,7 +107,7 @@ def apply_configs_for_device(configForDevice: json, dictForDevices: json):
             device["monitor"] = configForDevice.get("monitor", False)
 
 
-def apply_configs_for_commands(configForCommands: json, dict: json):
+def apply_configs_for_commands(configForCommands: dict, dict: dict):
     # Use Global Configurations cover all commands if not defined
     device_disabled = False
     for command in dict["Commands"]:
@@ -165,6 +165,8 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
     # Initialize counters before try block to avoid UnboundLocalError in finally
     executed_count = 0
     failure_count = 0
+    command_device_dict = None
+    executor = None
 
     try:
         if "ConfigForDevices" in dict_data:
@@ -185,7 +187,7 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
         try:
             with open(output_file_path, "w") as output_file:
                 json.dump(dict_data, output_file, indent=2)
-            logger.log_info(f"Dictionary saved to {output_file_path}")
+            logger.log_session_start(f"Dictionary saved to {output_file_path}")
         except Exception as e:
             logger.log_error(f"Error saving dictionary to file: {e}")
 
@@ -211,12 +213,15 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
 
         # Use while True for infinite loop mode, otherwise use for loop
         if infinite_loop:
-            logger.log_info("🔄 Infinite loop mode enabled - Press Ctrl+C to stop")
+            logger.log_session_start(
+                "🔄 Infinite loop mode enabled - Press Ctrl+C to stop"
+            )
             iteration = 0
             while True:
                 iteration += 1
                 current_iteration = executed_count + 1  # 显示当前正在执行的迭代编号
                 logger.log_iteration_start(iteration=current_iteration, total=iteration)
+                result = False  # Initialize result before try block
                 try:
                     # Set iteration info in executor for logging
                     executor.set_iteration_info(current_iteration)
@@ -232,16 +237,12 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
                             device_info.append(dev_name)
                     devices_str = ", ".join(device_info) if device_info else "Unknown"
 
-                    logger.log_error(
+                    logger.log_step_error(
                         f"❌ Error during iteration {current_iteration}: {e}"
                     )
-                    logger.log_error(f"Devices involved: {devices_str}")
+                    logger.log_step_error(f"Devices involved: {devices_str}")
                     executed_count += 1  # 即使失败也算完成了一次
                     result = False
-                finally:
-                    logger.log_iteration_end(passed=executed_count, total=iteration)
-                    if not result:
-                        sys.exit(1)
         else:
             # Normal loop with specified count
             iteration = 0
@@ -249,6 +250,7 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
                 iteration += 1
                 logger.log_iteration_start(iteration=iteration, total=loop_count)
                 current_iteration = executed_count + 1  # 显示当前正在执行的迭代编号
+                result = False  # Initialize result before try block
                 try:
                     # Set iteration info in executor for logging
                     executor.set_iteration_info(current_iteration, loop_count)
@@ -264,17 +266,10 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
                             device_info.append(dev_name)
                     devices_str = ", ".join(device_info) if device_info else "Unknown"
 
-                    logger.log_error(
-                        f"❌ Error during iteration {current_iteration}: {e}"
-                    )
+                    logger.log_error(f"Error during iteration {current_iteration}: {e}")
                     logger.log_error(f"Devices involved: {devices_str}")
                     executed_count += 1  # 即使失败也算完成了一次
                     result = False
-                finally:
-                    # Always end iteration to write CSV data
-                    logger.log_iteration_end(iteration=iteration, total=loop_count)
-                    if not result:
-                        sys.exit(1)
                 if not result:
                     failure_count += 1
     except KeyboardInterrupt:
@@ -292,7 +287,7 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
     finally:
         # close all devices and save data
         if "command_device_dict" in locals():
-            command_device_dict.close_all_devices()  # Use the new method to properly cleanup
+            command_device_dict.close_all_devices()
         if "executor" in locals():
             try:
                 # 关闭后台执行线程
@@ -535,7 +530,7 @@ def process_file_queue(file_queue, stop_event):
                 try:
                     with open(output_file_path, "w") as output_file:
                         json.dump(dict_data, output_file, indent=2)
-                    logger.log_info(f"Dictionary saved to {output_file_path}")
+                    logger.log_session_start(f"Dictionary saved to {output_file_path}")
                 except Exception as e:
                     logger.log_error(f"Error saving dictionary to file: {e}")
 

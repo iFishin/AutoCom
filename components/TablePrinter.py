@@ -242,6 +242,9 @@ class TablePrinter:
             else:
                 data_line = self._build_data_line(row, widths)
                 lines.append(data_line)
+                # 每个数据行下方追加中间分隔线，保证每行上下都有边框
+                row_sep = self._build_border_line(widths, 'middle')
+                lines.append(row_sep)
         
         # 下边框
         if bottom_border:
@@ -259,6 +262,14 @@ class TablePrinter:
         
         return output
     
+    def print_realtime_header(self, log_file: Optional[str] = None, is_print: bool = True):
+        """实时打印表头（适用于循环执行时第一次打印）"""
+        if hasattr(self, '_header_printed'):
+            return  # 已经打印过表头了
+        
+        self._print_header(log_file, is_print)
+    
+        self._header_printed = True
     def print_realtime_row(self, 
                            row: List[Any],
                            log_file: Optional[str] = None,
@@ -281,13 +292,16 @@ class TablePrinter:
         
         # 打印数据行
         line = self._build_data_line(row, self.widths)
-        
+        sep_line = self._build_border_line(self.widths, 'middle')
+
         if is_print:
             print(line)
-        
+            print(sep_line)
+
         if log_file:
             self._write_to_file(log_file, line)
-        
+            self._write_to_file(log_file, sep_line)
+
         return line
 
     def print_realtime_banner(self, banner: str, log_file: Optional[str] = None, is_print: bool = True):
@@ -311,16 +325,14 @@ class TablePrinter:
         content_line = '│' + ' ' * left_pad + content_text + ' ' * right_pad + '│'
 
         if is_print:
-            print(sep_line)
             print(content_line)
             print(sep_line)
 
         if log_file:
-            self._write_to_file(log_file, sep_line)
             self._write_to_file(log_file, content_line)
             self._write_to_file(log_file, sep_line)
     
-    def print_realtime_bottom(self, log_file: Optional[str] = None, is_print: bool = True):
+    def print_realtime_footer(self, log_file: Optional[str] = None, is_print: bool = True):
         """打印表格底部边框（适用于实时打印结束时）"""
         if not hasattr(self, '_header_printed'):
             return  # 如果表头都没打印过，就不打印底部
