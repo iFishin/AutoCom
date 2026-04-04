@@ -1,5 +1,3 @@
-# new_table_printer.py - 新的表格打印库
-
 import shutil
 import re
 from typing import List, Optional, Any, Dict, Union
@@ -28,14 +26,12 @@ class TablePrinter:
         self.max_width = max_width
         self.min_width = min_width
         self.auto_terminal = auto_terminal
-        self.widths = None
+        self.widths = self.calculate_column_widths()
         self.data = []
         self.terminal_width = None
         
         if auto_terminal:
             self.terminal_width = self._terminal_width()
-    
-    # 旧的 _update_terminal_width 已移除，使用 _terminal_width 作为统一实现
 
     def _terminal_width(self) -> int:
         """统一获取终端宽度（实例方法，考虑 min/max）"""
@@ -280,7 +276,6 @@ class TablePrinter:
         """
         # 第一次调用时初始化宽度并打印表头
         if not hasattr(self, '_header_printed'):
-            self.widths = self.calculate_column_widths()
             self._print_header(log_file, is_print)
             self._header_printed = True
         
@@ -297,10 +292,7 @@ class TablePrinter:
 
     def print_realtime_banner(self, banner: str, log_file: Optional[str] = None, is_print: bool = True):
         """在表格宽度内打印合并单元格风格的横幅（中间分割风格）"""
-        # 确保列宽已计算
-        if not self.widths:
-            self.widths = self.calculate_column_widths()
-
+        
         # 计算合并单元格的内部宽度（不包含左右竖线）
         merged_inner = sum(self.widths) + max(0, len(self.widths) - 1)
 
@@ -332,9 +324,6 @@ class TablePrinter:
         """打印表格底部边框（适用于实时打印结束时）"""
         if not hasattr(self, '_header_printed'):
             return  # 如果表头都没打印过，就不打印底部
-        
-        if not self.widths:
-            self.widths = self.calculate_column_widths()
         
         bottom_line = self._build_border_line(self.widths, 'bottom')
         
@@ -425,102 +414,3 @@ class TablePrinter:
         Path(filepath).parent.mkdir(parents=True, exist_ok=True)
         with open(filepath, 'a', encoding='utf-8') as f:
             f.write(content + '\n')
-
-
-# 适配器类 - 保持原有接口兼容
-class LegacyTableAdapter:
-    """适配器，保持与原有 print_formatted_log 接口兼容"""
-    
-    def __init__(self):
-        self.printers = {}  # 缓存不同配置的打印机
-        self.realtime_printers = {}  # 实时打印机缓存
-    
-    def print_formatted_log(
-        self,
-        time_str: str,
-        result: str,
-        device: str,
-        command_str: str,
-        response_str: str,
-        first_line: bool = False,
-        top_border: bool = False,
-        bottom_border: bool = False
-    ) -> str:
-        """
-        完全兼容原有的 print_formatted_log 接口
-        """
-        # 创建一个唯一标识
-        printer_key = (top_border, bottom_border)
-        
-        # 获取或创建打印机
-        if printer_key not in self.printers:
-            headers = ["时间", "结果", "设备", "命令", "响应"]
-            # 使用原有逻辑计算列宽
-            width = TablePrinter._terminal_width()
-            content_width = width - 13
-            
-            col_widths = {
-                'time': max(13, int(content_width * 0.18)),
-                'result': max(9, int(content_width * 0.08)),
-                'device': max(10, int(content_width * 0.08)),
-                'command': max(25, int(content_width * 0.32)),
-                'response': max(25, int(content_width * 0.33))
-            }
-            
-            # 创建自定义打印机
-            printer = TablePrinter(
-                headers,
-                max_width=width,
-                auto_terminal=False
-            )
-            printer.widths = list(col_widths.values())
-            self.printers[printer_key] = printer
-        
-        printer = self.printers[printer_key]
-        
-        # 构建行数据
-        row = [time_str, result, device, command_str, response_str]
-        
-        # 打印
-        if first_line:
-            # 清空之前的打印机状态
-            printer.data = []
-            printer._header_printed = False
-        
-        # 如果是第一行，打印整个表格
-        if first_line or not hasattr(printer, '_header_printed'):
-            printer.data.append(row)
-            output = printer.print_table(
-                log_file=TablePrinter.log_file_path,
-                top_border=top_border,
-                bottom_border=bottom_border
-            )
-            return output
-        else:
-            # 实时追加
-            line = printer.print_realtime_row(
-                row,
-                log_file=TablePrinter.log_file_path
-            )
-            return line
-
-
-# 全局适配器实例
-_table_adapter = LegacyTableAdapter()
-
-# 为了保持原有调用方式，提供一个全局函数
-def print_formatted_log(
-    time_str: str,
-    result: str,
-    device: str,
-    command_str: str,
-    response_str: str,
-    first_line: bool = False,
-    top_border: bool = False,
-    bottom_border: bool = False
-) -> str:
-    """全局函数，保持与原接口完全一致"""
-    return _table_adapter.print_formatted_log(
-        time_str, result, device, command_str, response_str,
-        first_line, top_border, bottom_border
-    )

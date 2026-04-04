@@ -95,11 +95,20 @@ class RegexColorizer:
     def __post_init__(self):
         if isinstance(self.pattern, str):
             self.pattern = re.compile(self.pattern)
+        elif not isinstance(self.pattern, re.Pattern):
+            raise TypeError("pattern must be str or compiled regex Pattern")
 
     def can_handle(self, text: str) -> bool:
+        if isinstance(self.pattern, str):
+            return bool(re.search(self.pattern, text))
         return bool(self.pattern.search(text))
 
     def colorize(self, text: str) -> str:
+        pattern = self.pattern
+        if isinstance(pattern, str):
+            pattern = re.compile(pattern)
+            self.pattern = pattern
+
         def replacer(match):
             full_match = match.group(0)
             if self.group == 0:
@@ -110,7 +119,7 @@ class RegexColorizer:
             colored = f"{self.color.value}{target}{ColorCode.RESET.value}"
             return full_match.replace(target, colored) if self.group > 0 else colored
 
-        return self.pattern.sub(replacer, text)
+        return pattern.sub(replacer, text)
 
 
 @dataclass 
@@ -226,7 +235,7 @@ class ExtensibleFormatter(logging.Formatter):
     """
 
     # 类级缓存
-    _color_support_cache: Optional[bool] = None
+    _color_support_cache: bool = False
     _cache_lock = threading.Lock()
 
     def __init__(
@@ -323,7 +332,8 @@ class LogContext:
         return self
 
     def __exit__(self, *args):
-        _log_context.reset(self._token)
+        if self._token:
+            _log_context.reset(self._token)
 
     @classmethod
     def get(cls, key: str, default: Any = None) -> Any:

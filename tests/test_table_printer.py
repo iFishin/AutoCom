@@ -97,7 +97,7 @@ class TestTablePrinter(unittest.TestCase):
 
     def test_print_full_table(self):
         headers = ["时间","结果","设备","命令","响应"]
-        tp = TablePrinter(headers, max_width=160, min_width=100, auto_terminal=False)
+        tp = TablePrinter(headers, auto_terminal=True)
         tp.add_row(["2026-04-03_11:00:00","OK","dev1","reboot","done"])
         tp.add_row(["2026-04-03_11:00:01","FAIL","device_long_name","long_command_with_emoji✅","this is a very long response that should be truncated or wrapped"])
         tp.add_banner("This is a banner that should span the entire width of the table")
@@ -109,9 +109,9 @@ class TestTablePrinter(unittest.TestCase):
         self.assertIn("device_long_name", out)
         self.assertIn("long_command", out)
 
-    def test_print_realtime_banner(self):
+    def test_print_realtime_table(self):
         print("\n=== Realtime demo ===")
-        rt = TablePrinter(["T","R"], max_width=60, min_width=30, auto_terminal=False)
+        rt = TablePrinter(["T","R"], auto_terminal=True)
         rt.print_realtime_row(["t1","r1"], is_print=True)
         rt.print_realtime_row(["t2","r2"], is_print=True)
         rt.print_realtime_banner("This is a banner")
