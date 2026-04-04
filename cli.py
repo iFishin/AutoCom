@@ -31,6 +31,11 @@ except ModuleNotFoundError:
     )
     from .version import __version__
 
+# 获取路径管理对象（此时不创建目录）
+dirs = get_dirs()
+# 初始化 Logger（这是 cli.py 的唯一初始化点）
+log_file = str(dirs.session_dir / "EXECUTION.log")
+logger = AutoComLogger.get_instance(name="AutoCom", log_file=log_file)
 
 def main():
     """CLI 入口函数"""
@@ -66,9 +71,6 @@ def run_main():
         print()
         print()
         sys.exit(0)
-
-    # 获取路径管理对象（此时不创建目录）
-    dirs = get_dirs()
 
     parser = argparse.ArgumentParser(
         description="AutoCom command execution tool",
@@ -184,9 +186,7 @@ def run_main():
     # 初始化 CommonUtils 日志路径（在创建了 device_logs 目录后）
     CommonUtils.init_log_file_path(str(dirs.session_dir))
 
-    # 初始化 Logger（这是 cli.py 的唯一初始化点）
-    log_file = str(dirs.session_dir / "EXECUTION.log")
-    logger = AutoComLogger.get_instance(name="AutoCom", log_file=log_file)
+
 
     if args.dict:
         # 使用 dirs 辅助方法获取字典文件路径（优先从工作目录，再从包目录）
@@ -194,7 +194,7 @@ def run_main():
 
         start_time = time.time()
         try:
-            execute_with_loop(dict_path, args.loop, args.infinite, config)
+            execute_with_loop(str(dict_path), args.loop, args.infinite, config)
         except KeyboardInterrupt:
             logger.log_info("Execution interrupted by user")
         except FileNotFoundError as e:
@@ -228,8 +228,8 @@ def run_main():
             ),
         )
 
+        start_time = time.time()
         try:
-            start_time = time.time()
             execute_with_folder(folder_path, sorted_files, config)
         except KeyboardInterrupt:
             logger.log_info("Execution interrupted by user")
