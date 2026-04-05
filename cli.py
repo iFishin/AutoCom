@@ -5,37 +5,24 @@ import os
 import json
 import time
 import argparse
+from utils.dirs import get_dirs
+from utils.common import CommonUtils
+from AutoCom import (
+    execute_with_loop,
+    execute_with_folder,
+    ensure_working_directories,
+    monitor_folder,
+    process_file_queue,
+)
+from version import __version__
 from components.Logger import AutoComLogger
 
-# 根据运行方式选择导入路径
-try:
-    from utils.dirs import get_dirs
-    from utils.common import CommonUtils
-    from AutoCom import (
-        execute_with_loop,
-        execute_with_folder,
-        ensure_working_directories,
-        monitor_folder,
-        process_file_queue,
-    )
-    from version import __version__
-except ModuleNotFoundError:
-    from .utils.dirs import get_dirs
-    from .utils.common import CommonUtils
-    from .AutoCom import (
-        execute_with_loop,
-        execute_with_folder,
-        ensure_working_directories,
-        monitor_folder,
-        process_file_queue,
-    )
-    from .version import __version__
-
-# 获取路径管理对象（此时不创建目录）
+# 获取路径管理对象
 dirs = get_dirs()
-# 初始化 Logger（这是 cli.py 的唯一初始化点）
+# 初始化 Logger
 log_file = str(dirs.session_dir / "EXECUTION.log")
 logger = AutoComLogger.get_instance(name="AutoCom", log_file=log_file)
+
 
 def main():
     """CLI 入口函数"""
@@ -160,7 +147,7 @@ def run_main():
         sys.exit(0)
 
     # 初始化 config 变量（防止未定义错误）
-    config = None
+    config: dict = {}
     config_path = None
 
     if args.config:
@@ -169,12 +156,18 @@ def run_main():
 
         try:
             with open(config_file_path, "r") as file:
-                config = json.load(file)
+                loaded_config = json.load(file)
+            if not isinstance(loaded_config, dict):
+                raise ValueError("Config file must contain a JSON object")
+            config = loaded_config
         except FileNotFoundError:
             logger.log_info(f"Error: Config file '{config_file_path}' not found")
             sys.exit(1)
         except json.JSONDecodeError:
             logger.log_info(f"Error: Invalid JSON format in '{config_file_path}'")
+            sys.exit(1)
+        except ValueError as e:
+            logger.log_info(f"Error: {e}")
             sys.exit(1)
 
     # 【提前初始化 Logger】在所有分支之前，确保所有路径都能使用
@@ -185,8 +178,6 @@ def run_main():
 
     # 初始化 CommonUtils 日志路径（在创建了 device_logs 目录后）
     CommonUtils.init_log_file_path(str(dirs.session_dir))
-
-
 
     if args.dict:
         # 使用 dirs 辅助方法获取字典文件路径（优先从工作目录，再从包目录）
@@ -213,20 +204,18 @@ def run_main():
                 f"Total execution time: {hours:02d}:{minutes:02d}:{seconds:06.3f}"
             )
     elif args.folder:
-        # 使用 dirs 辅助方法获取文件夹路径（优先从工作目录，再从包目录）
-        folder_path = str(dirs.get_folder_path(args.folder))
+        # 使用传入的文件夹路径，支持相对路径和绝对路径
+        folder_path = os.path.abspath(args.folder)
 
         import re
 
         json_files = [f for f in os.listdir(folder_path) if f.endswith(".json")]
-        sorted_files = sorted(
-            json_files,
-            key=lambda x: (
-                int(re.match(r"(\d+)", x).group(1))
-                if re.match(r"(\d+)", x)
-                else float("inf")
-            ),
-        )
+
+        def _sort_key(x):
+            match = re.match(r"(\d+)", x)
+            return int(match.group(1)) if match else float("inf")
+
+        sorted_files = sorted(json_files, key=_sort_key)
 
         start_time = time.time()
         try:

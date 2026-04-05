@@ -6,12 +6,10 @@ import time
 import shutil
 import glob
 from threading import RLock
-from components.Logger import AutoComLogger
+from utils.common import CommonUtils
+from components.Logger import AutoComLogger, get_logger
 
-try:
-    from utils.common import CommonUtils
-except ModuleNotFoundError:
-    from ..utils.common import CommonUtils
+logger: AutoComLogger = get_logger(name="AutoCom")
 
 
 class DataStore:
@@ -33,7 +31,6 @@ class DataStore:
             auto_cleanup: Whether to automatically clean up old data files
             cleanup_days: Number of days to keep old data files (default: 7)
         """
-        self.logger = AutoComLogger.get_instance()
         self.data = {}
         self.lock = RLock()
         self.save_interval = save_interval
@@ -78,8 +75,10 @@ class DataStore:
 
         self.save_thread.start()
 
-        self.logger.log_info(f"DataStore initialized for session: {self.session_id}")
-        self.logger.log_info(f"Data file: {self.filename}")
+        logger.log_session_start(
+            f"DataStore initialized for session: {self.session_id}"
+        )
+        logger.log_session_start(f"Data file: {self.filename}")
 
     def _load_from_file(self):
         """Load data with error recovery mechanism"""
@@ -88,13 +87,15 @@ class DataStore:
                 try:
                     with open(filepath, "r") as f:
                         self.data = json.load(f)
-                    self.logger.log_info(f"Successfully loaded data file: {filepath}")
+                    logger.log_session_start(
+                        f"Successfully loaded data file: {filepath}"
+                    )
                     return
                 except (json.JSONDecodeError, IOError) as e:
-                    self.logger.log_error(f"File {filepath} corrupted: {e}")
+                    logger.log_session_error(f"File {filepath} corrupted: {e}")
                     continue
 
-        self.logger.log_info("No valid data file found, using empty dataset")
+        logger.log_session_start("No valid data file found, using empty dataset")
         self.data = {}
 
     def get_constant(self, key, default=None):
@@ -128,14 +129,14 @@ class DataStore:
                             os.remove(backup_file)
                         cleaned_count += 1
                 except Exception as e:
-                    self.logger.log_error(f"Error cleaning up file {filepath}: {e}")
+                    logger.log_session_error(f"Error cleaning up file {filepath}: {e}")
 
             if cleaned_count > 0:
-                self.logger.log_info(
+                logger.log_session_start(
                     f"Cleaned up {cleaned_count} old data files (older than {self.cleanup_days} days)"
                 )
         except Exception as e:
-            self.logger.log_error(f"Error during cleanup: {e}")
+            logger.log_session_error(f"Error during cleanup: {e}")
 
     def store_data(self, device_name, variable, value):
         """Store data - optimized version"""
@@ -212,7 +213,7 @@ class DataStore:
                 #     self.dirty_devices.clear()
                 self.last_save_time = time.time()
         except queue.Full:
-            self.logger.log_error("Save queue is full, skipping this save")
+            logger.log_session_error("Save queue is full, skipping this save")
 
     def _get_dirty_snapshot(self):
         """Get snapshot of changed data"""
@@ -225,7 +226,7 @@ class DataStore:
 
     def _save_worker(self):
         """Background save worker thread - optimized version"""
-        self.logger.log_info("DataStore save worker thread started")
+        logger.log_session_start("DataStore save worker thread started")
 
         while True:
             try:
@@ -248,7 +249,7 @@ class DataStore:
                                 for device in save_task["devices_to_clear"]:
                                     self.dirty_devices.discard(device)
                         except Exception as e:
-                            self.logger.log_error(
+                            logger.log_session_error(
                                 f"Error processing remaining save task: {e}"
                             )
                         finally:
@@ -268,7 +269,7 @@ class DataStore:
                             self.dirty_devices.discard(device)
 
                 except Exception as e:
-                    self.logger.log_error(f"Error in incremental save: {e}")
+                    logger.log_session_error(f"Error in incremental save: {e}")
                 finally:
                     # Always call task_done to prevent deadlock
                     self.save_queue.task_done()
@@ -277,11 +278,11 @@ class DataStore:
                 # No tasks to process, continue loop
                 continue
             except Exception as e:
-                self.logger.log_error(f"Save worker thread error: {e}")
+                logger.log_session_error(f"Save worker thread error: {e}")
                 # Continue loop to prevent thread death
                 continue
 
-        self.logger.log_info("DataStore save worker thread stopped")
+        logger.log_session_start("DataStore save worker thread stopped")
 
     def _incremental_save(self, dirty_data):
         """Incremental save to file"""
@@ -318,7 +319,7 @@ class DataStore:
             os.replace(temp_file, self.filename)
 
         except Exception as e:
-            self.logger.log_error(f"Error saving data: {e}")
+            logger.log_session_error(f"Error saving data: {e}")
             if os.path.exists(temp_file):
                 os.remove(temp_file)
 
@@ -356,32 +357,32 @@ class DataStore:
                         time.sleep(0.1)
 
                     if not self.save_queue.empty():
-                        self.logger.log_warning(
+                        logger.log_session_warning(
                             "Warning: force_save timeout, some data may not be saved immediately"
                         )
 
             except queue.Full:
-                self.logger.log_error("Save queue is full during force_save")
+                logger.log_session_error("Save queue is full during force_save")
 
-    def get_stats(self):
+    def get_stats(self) -> dict:
         """Get storage status statistics"""
         with self.lock:
             return {
                 "total_devices": len(self.data),
                 "dirty_devices": len(self.dirty_devices),
                 "dirty_device_names": list(self.dirty_devices),
-                "queue_size": self.save_queue.qsize(),
-                "last_save_time": self.last_save_time,
-                "worker_thread_alive": self.save_thread.is_alive(),
-                "stop_event_set": self._stop_event.is_set(),
+                "queue_size": int(self.save_queue.qsize()),
+                "last_save_time": float(self.last_save_time),
+                "worker_thread_alive": bool(self.save_thread.is_alive()),
+                "stop_event_set": bool(self._stop_event.is_set()),
             }
 
-    def diagnose_blocking(self):
+    def diagnose_blocking(self) -> list:
         """Diagnose potential blocking issues"""
         stats = self.get_stats()
         issues = []
 
-        if stats["queue_size"] > 40:
+        if int(stats["queue_size"]) > 40:
             issues.append(f"Queue nearly full: {stats['queue_size']}/50")
 
         if not stats["worker_thread_alive"]:
@@ -400,8 +401,8 @@ class DataStore:
             )
 
         if issues:
-            self.logger.log_info(f"DataStore issues detected: {', '.join(issues)}")
-            self.logger.log_info(f"Stats: {stats}")
+            logger.log_session_info(f"DataStore issues detected: {', '.join(issues)}")
+            logger.log_session_info(f"Stats: {stats}")
 
         return issues
 
@@ -413,7 +414,8 @@ class DataStore:
         """Get current data filename"""
         return self.filename
 
-    def list_sessions(self, data_dir="temps/data_store", days=7):
+    @staticmethod
+    def list_sessions(data_dir="temps/data_store", days=7):
         """
         List all available sessions within specified days
 
@@ -445,15 +447,14 @@ class DataStore:
                     session_id = filename.replace("session_", "").replace(".json", "")
                     sessions.append((session_id, filepath, file_time))
             except Exception as e:
-                self.logger.log_error(f"Error reading session file {filepath}: {e}")
+                logger.log_session_error(f"Error reading session file {filepath}: {e}")
 
         # Sort by modified time (newest first)
         sessions.sort(key=lambda x: x[2], reverse=True)
         return sessions
 
-    def load_session_data(
-        self, session_id=None, filepath=None, data_dir="temps/data_store"
-    ):
+    @staticmethod
+    def load_session_data(session_id=None, filepath=None, data_dir="temps/data_store"):
         """
         Load data from a specific session
 
@@ -478,7 +479,7 @@ class DataStore:
             if target_file.exists():
                 return json.loads(target_file.read_text())
         except Exception as e:
-            self.logger.log_error(f"Error loading session data: {e}")
+            logger.log_session_error(f"Error loading session data: {e}")
 
         return {}
 
@@ -511,13 +512,13 @@ class DataStore:
 
     def stop(self):
         """Stop storage service"""
-        self.logger.log_info("Stopping DataStore service...")
+        logger.log_session_end("Stopping DataStore service...")
 
         # Force save any pending data with timeout
         try:
             self.force_save()
         except Exception as e:
-            self.logger.log_error(f"Error during final save: {e}")
+            logger.log_session_error(f"Error during final save: {e}")
 
         # Stop worker thread
         self._stop_event.set()
@@ -526,8 +527,8 @@ class DataStore:
         if self.save_thread.is_alive():
             self.save_thread.join(timeout=5.0)
             if self.save_thread.is_alive():
-                self.logger.log_warning(
+                logger.log_session_warning(
                     "Warning: Save worker thread did not stop gracefully"
                 )
             else:
-                self.logger.log_info("Save worker thread stopped successfully")
+                logger.log_session_info("Save worker thread stopped successfully")

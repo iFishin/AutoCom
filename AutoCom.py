@@ -6,21 +6,13 @@ import os
 import re
 import queue
 import sys
-from components.Logger import get_logger
+from utils.common import CommonUtils
+from components.CommandDeviceDict import CommandDeviceDict
+from components.CommandExecutor import CommandExecutor
+from version import __version__
+from components.Logger import AutoComLogger, get_logger
 
-logger = get_logger()
-
-# 根据运行方式选择导入路径
-try:
-    from utils.common import CommonUtils
-    from components.CommandDeviceDict import CommandDeviceDict
-    from components.CommandExecutor import CommandExecutor
-    from version import __version__
-except ModuleNotFoundError:
-    from .utils.common import CommonUtils
-    from .components.CommandDeviceDict import CommandDeviceDict
-    from .components.CommandExecutor import CommandExecutor
-    from .version import __version__
+logger: AutoComLogger = get_logger(name="AutoCom")
 
 
 def load_commands_from_file(file_path):
@@ -33,7 +25,7 @@ def load_commands_from_file(file_path):
     for enc in encodings_to_try:
         try:
             with open(file_path, "r", encoding=enc) as file:
-                logger.log_info(
+                logger.log_session_start(
                     f"Loading JSON file '{file_path}' using encoding: {enc}"
                 )
                 return json.load(file)
@@ -52,12 +44,12 @@ def load_commands_from_file(file_path):
         with open(file_path, "rb") as f:
             raw = f.read()
         text = raw.decode("utf-8", errors="replace")
-        logger.log_info(
+        logger.log_session_start(
             f"Loaded JSON file '{file_path}' using fallback decoding (utf-8 with replace)."
         )
         return json.loads(text)
     except Exception as e:
-        logger.log_error(f"❌ Failed to load JSON file '{file_path}': {e}")
+        logger.log_session_error(f"❌ Failed to load JSON file '{file_path}': {e}")
         raise
 
 
@@ -189,7 +181,7 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
                 json.dump(dict_data, output_file, indent=2)
             logger.log_session_start(f"Dictionary saved to {output_file_path}")
         except Exception as e:
-            logger.log_error(f"Error saving dictionary to file: {e}")
+            logger.log_session_error(f"Error saving dictionary to file: {e}")
 
         # Sort commands by ORDER but preserve original sequence for same order values
         commands = sorted(
@@ -220,7 +212,7 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
             while True:
                 iteration += 1
                 current_iteration = executed_count + 1  # 显示当前正在执行的迭代编号
-                logger.log_iteration_start(iteration=current_iteration, total=iteration)
+                # logger.log_iteration_start(iteration=current_iteration, total=iteration)
                 result = False  # Initialize result before try block
                 try:
                     # Set iteration info in executor for logging
@@ -237,10 +229,10 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
                             device_info.append(dev_name)
                     devices_str = ", ".join(device_info) if device_info else "Unknown"
 
-                    logger.log_step_error(
+                    logger.log_iteration_error(
                         f"❌ Error during iteration {current_iteration}: {e}"
                     )
-                    logger.log_step_error(f"Devices involved: {devices_str}")
+                    logger.log_iteration_error(f"Devices involved: {devices_str}")
                     executed_count += 1  # 即使失败也算完成了一次
                     result = False
         else:
@@ -248,7 +240,7 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
             iteration = 0
             for i in range(loop_count):
                 iteration += 1
-                logger.log_iteration_start(iteration=iteration, total=loop_count)
+                # logger.log_iteration_start(iteration=iteration, total=loop_count)
                 current_iteration = executed_count + 1  # 显示当前正在执行的迭代编号
                 result = False  # Initialize result before try block
                 try:
@@ -266,39 +258,42 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
                             device_info.append(dev_name)
                     devices_str = ", ".join(device_info) if device_info else "Unknown"
 
-                    logger.log_error(f"Error during iteration {current_iteration}: {e}")
-                    logger.log_error(f"Devices involved: {devices_str}")
+                    logger.log_iteration_error(
+                        f"Error during iteration {current_iteration}: {e}"
+                    )
+                    logger.log_iteration_error(f"Devices involved: {devices_str}")
                     executed_count += 1  # 即使失败也算完成了一次
                     result = False
                 if not result:
                     failure_count += 1
+                logger.log_iteration_end(iteration=current_iteration, total=loop_count)
     except KeyboardInterrupt:
-        logger.log_info("Execution interrupted by user")
+        logger.log_iteration_error("Execution interrupted by user")
         sys.exit(1)
     except FileNotFoundError:
-        logger.log_error(f"Error: Dictionary file '{dict_path}' not found")
+        logger.log_iteration_error(f"Error: Dictionary file '{dict_path}' not found")
         sys.exit(1)
     except json.JSONDecodeError:
-        logger.log_error(f"Error: Invalid JSON format in '{dict_path}'")
+        logger.log_iteration_error(f"Error: Invalid JSON format in '{dict_path}'")
         sys.exit(1)
     except (RuntimeError, Exception) as e:
-        logger.log_error(f"Fatal: {e}")
+        logger.log_iteration_error(f"Fatal: {e}")
         sys.exit(1)
     finally:
         # close all devices and save data
-        if "command_device_dict" in locals():
+        if "command_device_dict" in locals() and command_device_dict is not None:
             command_device_dict.close_all_devices()
-        if "executor" in locals():
+        if "executor" in locals() and executor is not None:
             try:
                 # 关闭后台执行线程
                 executor.shutdown()
             except Exception as e:
-                logger.log_error(f"Warning: Error shutting down executor: {e}")
+                logger.log_session_error(f"Warning: Error shutting down executor: {e}")
 
             try:
                 executor.data_store.stop()
             except Exception as e:
-                logger.log_error(f"Warning: Error stopping data store: {e}")
+                logger.log_session_error(f"Warning: Error stopping data store: {e}")
 
         # Use executed_count (actual iterations) instead of loop_count in summary
         if executed_count == 0:
@@ -309,10 +304,10 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
             summary_line = (
                 f"🧾 Summary:{failure_count}/{executed_count} iterations failed."
             )
-        logger.log_info(summary_line)
+        logger.log_session_end(summary_line)
 
 
-def execute_with_folder(path: str, files: list, config: json = None):
+def execute_with_folder(path: str, files: list, config: dict = {}):
     template_dict = {}
     if config:
         merge_config(config, template_dict)
@@ -322,11 +317,12 @@ def execute_with_folder(path: str, files: list, config: json = None):
             template_dict.get("ConfigForDevices", {}), template_dict.get("Devices", {})
         )
 
-    # 创建 CommandExecutor，让它来创建 CommandDeviceDict
-    executor = CommandExecutor(template_dict)
-    command_device_dict = executor.command_device_dict
+    # 创建 CommandDeviceDict 对象
+    command_device_dict = CommandDeviceDict(template_dict)
+    executor = CommandExecutor(command_device_dict)
 
     failure_count = 0
+    dict_path = ""  # Initialize dict_path before try block
     try:
         from pathlib import Path
 
@@ -356,36 +352,24 @@ def execute_with_folder(path: str, files: list, config: json = None):
                 )
             executor = CommandExecutor(command_device_dict)
 
-            logger.log_info(
-                line=f"{'💬 Executing dictionary file ' + file}",
-                top_border=True,
-                bottom_border=True,
-                side_border=True,
-                border_side_char="+",
-                border_vertical_char="+",
-            )
+            logger.log_session_start(f"{'💬 Executing dictionary file ' + file}")
 
             result = executor.execute()
             info = f"{'✅ ' + file} passed." if result else "❌ " + file + " failed."
             if not result:
                 failure_count += 1
                 info += f" ({failure_count}) {'file' if failure_count == 1 else 'files'} failed"
-            logger.log_info(
-                line=info,
-                top_border=True,
-                bottom_border=True,
-                side_border=True,
-                border_side_char="|",
-                border_vertical_char="-",
+            logger.log_session_start(
+                info,
             )
             # Wait 1 second between files
             # time.sleep(1)
 
     except FileNotFoundError:
-        logger.log_error(f"Error: Dictionary file '{dict_path}' not found")
+        logger.log_session_error(f"Error: Dictionary file '{dict_path}' not found")
         sys.exit(1)
     except json.JSONDecodeError:
-        logger.log_error(f"Error: Invalid JSON format in '{dict_path}'")
+        logger.log_session_error(f"Error: Invalid JSON format in '{dict_path}'")
         sys.exit(1)
     finally:
         # close all devices and save data
@@ -393,25 +377,20 @@ def execute_with_folder(path: str, files: list, config: json = None):
         try:
             executor.shutdown()
         except Exception as e:
-            logger.log_error(f"Warning: Error shutting down executor: {e}")
+            logger.log_session_error(f"Warning: Error shutting down executor: {e}")
 
         try:
             executor.data_store.force_save()  # Use force_save instead of non-existent save_to_file
             executor.data_store.stop()
         except Exception as e:
-            logger.log_error(f"Warning: Error stopping data store: {e}")
+            logger.log_session_error(f"Warning: Error stopping data store: {e}")
 
-        logger.log_info(
+        logger.log_session_end(
             (
                 f"{'✅ ' + str(len(files) - failure_count) + '/' + str(len(files))} files passed."
                 if failure_count == 0
                 else f"❌ {failure_count}/{len(files)} files failed."
-            ),
-            top_border=True,
-            bottom_border=True,
-            side_border=True,
-            border_side_char="|",
-            border_vertical_char="-",
+            )
         )
 
 
@@ -419,14 +398,14 @@ def monitor_folder(folder_path, file_queue, stop_event):
     """
     Monitor a folder for new JSON files and add them to the execution queue.
     """
-    logger.log_info(f"Starting to monitor folder: {folder_path}")
+    logger.log_session_info(f"Starting to monitor folder: {folder_path}")
 
     # 用于跟踪已处理文件的字典，键为文件路径，值为(修改时间, 内容哈希)元组
     processed_files = {}
 
     # 确保文件夹存在
     if not os.path.exists(folder_path):
-        logger.log_info(f"Folder '{folder_path}' does not exist. Creating it.")
+        logger.log_session_info(f"Folder '{folder_path}' does not exist. Creating it.")
         os.makedirs(folder_path)
 
     while not stop_event.is_set():
@@ -461,14 +440,16 @@ def monitor_folder(folder_path, file_queue, stop_event):
                     file_path not in processed_files
                     or processed_files[file_path] != current_info
                 ):
-                    logger.log_info(
+                    logger.log_session_info(
                         f"{'New' if file_path not in processed_files else 'Modified'} file detected: {file_name}"
                     )
                     try:
                         file_queue.put_nowait(file_path)  # 非阻塞添加
                         processed_files[file_path] = current_info  # 更新记录
                     except queue.Full:
-                        logger.log_error(f"Queue is full, skipping file: {file_name}")
+                        logger.log_session_error(
+                            f"Queue is full, skipping file: {file_name}"
+                        )
 
             # 每秒检查一次，但使用可中断的等待
             if not stop_event.wait(1.0):
@@ -477,13 +458,13 @@ def monitor_folder(folder_path, file_queue, stop_event):
                 break
 
         except Exception as e:
-            logger.log_error(f"Error in folder monitoring: {e}")
+            logger.log_session_error(f"Error in folder monitoring: {e}")
             if not stop_event.wait(1.0):
                 continue
             else:
                 break
 
-    logger.log_info("Folder monitoring stopped")
+    logger.log_session_end("Folder monitoring stopped")
 
 
 def process_file_queue(file_queue, stop_event):
@@ -532,7 +513,7 @@ def process_file_queue(file_queue, stop_event):
                         json.dump(dict_data, output_file, indent=2)
                     logger.log_session_start(f"Dictionary saved to {output_file_path}")
                 except Exception as e:
-                    logger.log_error(f"Error saving dictionary to file: {e}")
+                    logger.log_session_error(f"Error saving dictionary to file: {e}")
 
                 # Sort commands by order but preserve original sequence for same order values
                 commands = sorted(
@@ -552,13 +533,8 @@ def process_file_queue(file_queue, stop_event):
 
                 executor = CommandExecutor(command_device_dict)
 
-                logger.log_info(
-                    line=f"{'💬 Executing dictionary file ' + file_name}",
-                    top_border=True,
-                    bottom_border=True,
-                    side_border=True,
-                    border_side_char="+",
-                    border_vertical_char="+",
+                logger.log_session_start(
+                    f"{'💬 Executing dictionary file ' + file_name}"
                 )
 
                 result = executor.execute()
@@ -570,22 +546,15 @@ def process_file_queue(file_queue, stop_event):
                 if not result:
                     failure_count += 1
                     info += f" ({failure_count}) {'file' if failure_count == 1 else 'files'} failed"
-                logger.log_info(
-                    line=info,
-                    top_border=True,
-                    bottom_border=True,
-                    side_border=True,
-                    border_side_char="|",
-                    border_vertical_char="-",
-                )
+                logger.log_session_info(info)
 
                 # 删除文件
                 os.remove(file_path)
-                logger.log_info(f"File '{file_name}' executed and deleted.")
+                logger.log_session_info(f"File '{file_name}' executed and deleted.")
 
             except Exception as e:
                 failure_count += 1
-                logger.log_error(f"Error processing file '{file_name}': {e}")
+                logger.log_session_error(f"Error processing file '{file_name}': {e}")
 
             finally:
                 # 确保正确清理资源
@@ -593,41 +562,36 @@ def process_file_queue(file_queue, stop_event):
                     try:
                         command_device_dict.close_all_devices()
                     except Exception as e:
-                        logger.log_error(f"Error closing devices: {e}")
+                        logger.log_session_error(f"Error closing devices: {e}")
 
                 if executor:
                     try:
                         # 关闭后台执行线程
                         executor.shutdown()
                     except Exception as e:
-                        logger.log_error(f"Error shutting down executor: {e}")
+                        logger.log_session_error(f"Error shutting down executor: {e}")
 
                     try:
                         executor.data_store.force_save()  # Use force_save instead of non-existent save_to_file
                         executor.data_store.stop()
                     except Exception as e:
-                        logger.log_error(f"Error stopping executor: {e}")
+                        logger.log_session_error(f"Error stopping executor: {e}")
 
             # 标记任务完成
             file_queue.task_done()
 
         except Exception as e:
-            logger.log_error(f"Unexpected error in file processing: {e}")
+            logger.log_session_error(f"Unexpected error in file processing: {e}")
             continue
 
-    logger.log_info("File processing stopped")
+    logger.log_session_end("File processing stopped")
 
     # 打印最终统计信息
     if total_files > 0:
-        logger.log_info(
+        logger.log_session_end(
             (
                 f"{'✅ ' + str(total_files - failure_count) + '/' + str(total_files)} files processed."
                 if failure_count == 0
                 else f"❌ {failure_count}/{total_files} files failed."
-            ),
-            top_border=True,
-            bottom_border=True,
-            side_border=True,
-            border_side_char="|",
-            border_vertical_char="-",
+            )
         )

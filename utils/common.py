@@ -1,30 +1,35 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-from typing import List
+from typing import List, TYPE_CHECKING
 import os
 import re
 import sys
 import shutil
 from pathlib import Path
 
+if TYPE_CHECKING:
+    from components.DataStore import DataStore
+
+
 class CommonUtils:
     """Common utility functions class"""
-    
+
     # Define global variables
     log_file_path = None
     terminal_width = None  # Auto-detect terminal width
-    
+
     @classmethod
     def init_log_file_path(cls, log_dir: str):
         """Initialize log file path from a directory path
-        
+
         Args:
             log_dir: Directory path for logs (should be a fully resolved path from dirs)
         """
         from pathlib import Path
+
         log_path = Path(log_dir) / "EXECUTION_LOG.log"
         cls.log_file_path = str(log_path)
-    
+
     @classmethod
     def get_terminal_width(cls) -> int:
         """Get terminal width, with fallback to 120 if unable to detect"""
@@ -36,12 +41,12 @@ class CommonUtils:
             except Exception:
                 cls.terminal_width = 120
         return cls.terminal_width
-    
+
     @classmethod
     def reset_terminal_width(cls):
         """Reset terminal width cache to force re-detection"""
         cls.terminal_width = None
-    
+
     @staticmethod
     def escape_control_characters(s: str, ignore_crlf: bool = True) -> str:
         r"""
@@ -52,13 +57,19 @@ class CommonUtils:
         Returns:
             str: The escaped string (e.g., \\x00, \\xFF).
         """
-        return ''.join(
-            f'\\x{ord(c):02X}' 
-            if (ord(c) <= 0xFF and (ord(c) < 32 or ord(c) >= 127) and not (ignore_crlf and c in '\r\n')) 
-            else c 
+        return "".join(
+            (
+                f"\\x{ord(c):02X}"
+                if (
+                    ord(c) <= 0xFF
+                    and (ord(c) < 32 or ord(c) >= 127)
+                    and not (ignore_crlf and c in "\r\n")
+                )
+                else c
+            )
             for c in s
         )
-        
+
     @staticmethod
     def remove_control_characters(s: str, ignore_crlf: bool = True) -> str:
         r"""
@@ -71,19 +82,24 @@ class CommonUtils:
         Returns:
             str: The string with control characters removed.
         """
-        return ''.join(
-            c for c in s 
-            if not (ord(c) <= 0xFF and (ord(c) < 32 or ord(c) >= 127) and not (ignore_crlf and c in '\r\n'))
+        return "".join(
+            c
+            for c in s
+            if not (
+                ord(c) <= 0xFF
+                and (ord(c) < 32 or ord(c) >= 127)
+                and not (ignore_crlf and c in "\r\n")
+            )
         )
-    
+
     @staticmethod
-    def force_decode(bytes_data: bytes, replace_null: str = 'escape') -> str:
+    def force_decode(bytes_data: bytes, replace_null: str = "escape") -> str:
         r"""
         Force decode byte data into a string and handle null characters (\x00).
 
         Args:
         bytes_data (bytes): Byte data to decode.
-        replace_null (str): Method to handle null characters, options are 'escape' (escape as \x00), 
+        replace_null (str): Method to handle null characters, options are 'escape' (escape as \x00),
                     'remove' (remove null characters), or 'ignore' (ignore null characters).
 
         Returns:
@@ -95,19 +111,19 @@ class CommonUtils:
                 decoded_str = bytes_data.decode(encoding)
             except UnicodeDecodeError:
                 continue
-            if replace_null == 'escape':
+            if replace_null == "escape":
                 decoded_str = CommonUtils.escape_control_characters(decoded_str)
-            elif replace_null == 'remove':
+            elif replace_null == "remove":
                 decoded_str = CommonUtils.remove_control_characters(decoded_str)
-            elif replace_null == 'ignore':
+            elif replace_null == "ignore":
                 pass
             return decoded_str
         decoded_str = bytes_data.decode("latin1")
-        if replace_null == 'escape':
+        if replace_null == "escape":
             decoded_str = CommonUtils.escape_control_characters(decoded_str)
-        elif replace_null == 'remove':
+        elif replace_null == "remove":
             decoded_str = CommonUtils.remove_control_characters(decoded_str)
-        elif replace_null == 'ignore':
+        elif replace_null == "ignore":
             pass
         return decoded_str
 
@@ -140,11 +156,11 @@ class CommonUtils:
         """
         # More comprehensive emoji pattern to catch most emoji
         emoji_pattern = re.compile(
-            r'[\U0001F300-\U0001F9FF]'  # Emoji range
-            r'|[\U0001F600-\U0001F64F]'  # Emoticons
-            r'|[\U0001F900-\U0001F9FF]'  # Supplemental symbols
-            r'|[\U0001FA00-\U0001FA6F]'  # Chess symbols
-            r'|[✅❌📱💬🔄🧾💾]'  # Common single characters
+            r"[\U0001F300-\U0001F9FF]"  # Emoji range
+            r"|[\U0001F600-\U0001F64F]"  # Emoticons
+            r"|[\U0001F900-\U0001F9FF]"  # Supplemental symbols
+            r"|[\U0001FA00-\U0001FA6F]"  # Chess symbols
+            r"|[✅❌📱💬🔄🧾💾]"  # Common single characters
         )
         width = 0
         if not isinstance(s, str):
@@ -155,34 +171,34 @@ class CommonUtils:
             else:
                 width += 1
         return width
-    
+
     @staticmethod
     def _truncate_string(s: str, max_display_width: int) -> str:
         """Truncate a string to a maximum display width, accounting for emoji
-        
+
         Args:
             s: String to truncate
             max_display_width: Maximum display width
-            
+
         Returns:
             Truncated string
         """
         # Same comprehensive emoji pattern as get_string_display_width
         emoji_pattern = re.compile(
-            r'[\U0001F300-\U0001F9FF]'
-            r'|[\U0001F600-\U0001F64F]'
-            r'|[\U0001F900-\U0001F9FF]'
-            r'|[\U0001FA00-\U0001FA6F]'
-            r'|[✅❌📱💬🔄🧾💾]'
+            r"[\U0001F300-\U0001F9FF]"
+            r"|[\U0001F600-\U0001F64F]"
+            r"|[\U0001F900-\U0001F9FF]"
+            r"|[\U0001FA00-\U0001FA6F]"
+            r"|[✅❌📱💬🔄🧾💾]"
         )
         current_width = 0
-        
+
         for i, char in enumerate(s):
             char_width = 2 if emoji_pattern.match(char) else 1
             if current_width + char_width > max_display_width:
                 return s[:i]
             current_width += char_width
-        
+
         return s
 
     @classmethod
@@ -196,11 +212,11 @@ class CommonUtils:
         border_side_char: str = "|",
         length: int = 0,
         align: str = "^",
-        log_file: str = None,
+        log_file: str = "",
         is_print: bool = True,
     ) -> str:
         """Print and save formatted log line with borders
-        
+
         Automatically adapts to terminal width if length is not specified.
 
         Args:
@@ -218,13 +234,13 @@ class CommonUtils:
         Returns:
             Formatted log line string
         """
-        if not log_file:
+        if not log_file and cls.log_file_path:
             log_file = cls.log_file_path
-        
+
         # Auto-detect terminal width if length not specified
         if length == 0:
             length = cls.get_terminal_width()
-        
+
         if top_border:
             border = border_vertical_char * length
             if is_print:
@@ -235,27 +251,27 @@ class CommonUtils:
             content_length = length - len(border_side_char) * 2 - 2
             # Adjust line length for emoji characters
             display_width = cls.get_string_display_width(line)
-            
+
             # If line is too long, truncate with ellipsis
             if display_width > content_length:
                 # Truncate and add ellipsis
                 truncated_line = cls._truncate_string(line, content_length - 3)
                 display_width = cls.get_string_display_width(truncated_line) + 3
-                formatted_line = truncated_line + "..."                
+                formatted_line = truncated_line + "..."
             else:
                 padding = content_length - display_width
                 if padding > 0:
-                    if align == '^':
+                    if align == "^":
                         left_pad = padding // 2
                         right_pad = padding - left_pad
-                        formatted_line = ' ' * left_pad + line + ' ' * right_pad
-                    elif align == '<':
-                        formatted_line = line + ' ' * padding
+                        formatted_line = " " * left_pad + line + " " * right_pad
+                    elif align == "<":
+                        formatted_line = line + " " * padding
                     else:  # align == '>'
-                        formatted_line = ' ' * padding + line
+                        formatted_line = " " * padding + line
                 else:
                     formatted_line = line
-            
+
             line = f"{border_side_char} {formatted_line} {border_side_char}"
         else:
             # Non-bordered line with width adaptation
@@ -266,27 +282,27 @@ class CommonUtils:
             else:
                 padding = length - display_width
                 if padding > 0:
-                    if align == '^':
+                    if align == "^":
                         left_pad = padding // 2
                         right_pad = padding - left_pad
-                        line = ' ' * left_pad + line + ' ' * right_pad
-                    elif align == '<':
-                        line = line + ' ' * padding
+                        line = " " * left_pad + line + " " * right_pad
+                    elif align == "<":
+                        line = line + " " * padding
                     else:  # align == '>'
-                        line = ' ' * padding + line
+                        line = " " * padding + line
         if is_print:
             try:
                 print(line)
             except UnicodeEncodeError:
                 # Handle unicode encoding errors for terminals with limited encoding support
                 try:
-                    print(line.encode('utf-8', 'replace').decode('utf-8', 'replace'))
+                    print(line.encode("utf-8", "replace").decode("utf-8", "replace"))
                 except UnicodeEncodeError:
                     # Last resort: remove problematic characters
-                    print(line.encode('ascii', 'replace').decode('ascii'))
+                    print(line.encode("ascii", "replace").decode("ascii"))
         if log_file:
             FileHandler.write_file(log_file, line + "\n", "a")
-        
+
         if bottom_border:
             border = border_vertical_char * length
             if is_print:
@@ -294,7 +310,6 @@ class CommonUtils:
             if log_file:
                 FileHandler.write_file(log_file, border + "\n", "a")
         return line
-
 
     @staticmethod
     def print_formatted_log(
@@ -305,7 +320,7 @@ class CommonUtils:
         response_str: str,
         first_line: bool = False,
         top_border: bool = False,
-        bottom_border: bool = False
+        bottom_border: bool = False,
     ) -> str:
         """Print and save formatted log line with adaptive column widths
 
@@ -323,93 +338,95 @@ class CommonUtils:
             Formatted log line string
         """
         log_file = CommonUtils.log_file_path
-        
+
         # Get terminal width
         width = CommonUtils.get_terminal_width()
-        
+
         # Define column widths as percentages of available space
         # Reserve 13 chars for separators and borders: "| " + " | " (4x) + " |"
         content_width = width - 13
-        
+
         # Proportional column width allocation
         # Time: 18%, Result: 8%, Device: 8%, Command: 32%, Response: 33%
         col_widths = {
-            'time': max(13, int(content_width * 0.18)),
-            'result': max(9, int(content_width * 0.08)),
-            'device': max(10, int(content_width * 0.08)),
-            'command': max(25, int(content_width * 0.32)),
-            'response': max(25, int(content_width * 0.33))
+            "time": max(13, int(content_width * 0.18)),
+            "result": max(9, int(content_width * 0.08)),
+            "device": max(10, int(content_width * 0.08)),
+            "command": max(25, int(content_width * 0.32)),
+            "response": max(25, int(content_width * 0.33)),
         }
-        
+
         # Handle empty line
         if not any([time_str, result, device, command_str, response_str]):
-            sep = '-' * width
+            sep = "-" * width
             try:
                 print(sep)
             except UnicodeEncodeError:
                 try:
-                    print(sep.encode('utf-8', 'replace').decode('utf-8', 'replace'))
+                    print(sep.encode("utf-8", "replace").decode("utf-8", "replace"))
                 except UnicodeEncodeError:
-                    print(sep.encode('ascii', 'replace').decode('ascii'))
-            FileHandler.write_file(log_file, sep + "\n", "a")
+                    print(sep.encode("ascii", "replace").decode("ascii"))
+            if log_file:
+                FileHandler.write_file(log_file, sep + "\n", "a")
             return sep
-        
+
         # Format each column
-        def pad_col(text, col_width, align='left', col_name=''):
+        def pad_col(text, col_width, align="left", col_name=""):
             text = str(text) if text else ""
             # Normalize time format - ensure it's exactly 19 characters (YYYY-MM-DD_HH:MM:SS:mmm)
-            if align == 'left' and col_width == col_widths.get('time', 0):
+            if align == "left" and col_width == col_widths.get("time", 0):
                 # This is the time column
                 if len(text) > 19:
                     text = text[:19]  # Truncate to standard time format length
                 elif len(text) > 0 and len(text) < 19:
                     text = text.ljust(19)  # Pad if shorter
-            
+
             # Get the display width accounting for emoji being 2 chars wide
             display_width = CommonUtils.get_string_display_width(text)
-            
+
             # If text is too long for the column, truncate it
             if display_width > col_width:
                 # For command and response columns, add '*' at the end to indicate truncation
-                if col_name in ['command', 'response']:
-                    text = CommonUtils._truncate_string(text, col_width - 2) + '*'
+                if col_name in ["command", "response"]:
+                    text = CommonUtils._truncate_string(text, col_width - 2) + "*"
                 else:
                     text = CommonUtils._truncate_string(text, col_width - 1)
                 display_width = CommonUtils.get_string_display_width(text)
-            
+
             # Calculate padding needed based on display width, not character count
             pad_needed = max(0, col_width - display_width)
-            
-            if align == 'center':
+
+            if align == "center":
                 left_pad = pad_needed // 2
                 right_pad = pad_needed - left_pad
-                return ' ' * left_pad + text + ' ' * right_pad
-            elif align == 'right':
-                return ' ' * pad_needed + text
+                return " " * left_pad + text + " " * right_pad
+            elif align == "right":
+                return " " * pad_needed + text
             else:  # left
-                return text + ' ' * pad_needed
-        
+                return text + " " * pad_needed
+
         # Build row
-        row = '| {} | {} | {} | {} | {} |'.format(
-            pad_col(time_str or "", col_widths['time'], 'left', 'time'),
-            pad_col(result or "", col_widths['result'], 'center', 'result'),
-            pad_col(device or "", col_widths['device'], 'center', 'device'),
-            pad_col(command_str or "", col_widths['command'], 'left', 'command'),
-            pad_col(response_str or "", col_widths['response'], 'left', 'response')
+        row = "| {} | {} | {} | {} | {} |".format(
+            pad_col(time_str or "", col_widths["time"], "left", "time"),
+            pad_col(result or "", col_widths["result"], "center", "result"),
+            pad_col(device or "", col_widths["device"], "center", "device"),
+            pad_col(command_str or "", col_widths["command"], "left", "command"),
+            pad_col(response_str or "", col_widths["response"], "left", "response"),
         )
-            
+
         try:
             if top_border:
-                print('-' * len(row))
+                print("-" * len(row))
             print(row)
             if bottom_border:
-                print('-' * len(row))
+                print("-" * len(row))
         except UnicodeEncodeError:
             try:
-                print(row.encode('utf-8', 'replace').decode('utf-8', 'replace'))
+                print(row.encode("utf-8", "replace").decode("utf-8", "replace"))
             except UnicodeEncodeError:
-                print(row.encode('ascii', 'replace').decode('ascii'))
-        FileHandler.write_file(log_file, row + "\n", "a")
+                print(row.encode("ascii", "replace").decode("ascii"))
+        if log_file:
+            FileHandler.write_file(log_file, row + "\n", "a")
         return row
 
     @staticmethod
@@ -443,29 +460,31 @@ class CommonUtils:
         Returns:
             List of variable names found in the string
         """
-        pattern = re.compile(r'\{([A-Za-z0-9_]+)\}')
+        pattern = re.compile(r"\{([A-Za-z0-9_]+)\}")
         found_variables = re.findall(pattern, s)
         return found_variables
-    
+
     @staticmethod
-    def process_variables(param_value: str, data_store: "DataStore | None" = None, device_name: str = "") -> str:
+    def process_variables(
+        param_value: str, data_store: "DataStore", device_name: str = ""
+    ) -> str:
         """Process variables in a string and handle interactive input for empty values
-        
+
         Args:
             param_value: String that may contain variables like ${VAR}
             data_store: DataStore instance to get/store variable values
             device_name: Optional device name for retrieving device-specific variables
-            
+
         Returns:
             String with all variables replaced with their values
         """
         if not isinstance(param_value, str):
             return param_value
-            
+
         vars = CommonUtils.parse_variables_from_str(param_value)
         if not vars:
             return param_value
-            
+
         var_values = {}
         for var in vars:
             # 优先从 Constants 获取值
@@ -480,42 +499,52 @@ class CommonUtils:
                         for attempt in range(max_retries):
                             try:
                                 value = input(f"Please enter value for {var}: ").strip()
-                                
+
                                 if not value:  # 如果输入为空
                                     if attempt < max_retries - 1:
-                                        CommonUtils.print_log_line(f"Value cannot be empty. Please try again ({attempt + 1}/{max_retries})")
+                                        CommonUtils.print_log_line(
+                                            f"Value cannot be empty. Please try again ({attempt + 1}/{max_retries})"
+                                        )
                                         continue
                                     else:
-                                        CommonUtils.print_log_line(f"❌ No valid value provided for {var} after {max_retries} attempts")
+                                        CommonUtils.print_log_line(
+                                            f"❌ No valid value provided for {var} after {max_retries} attempts"
+                                        )
                                         sys.exit(1)
-                                
+
                                 # 保存输入的值到 Constants
                                 data_store.store_data("Constants", var, value)
                                 var_values[var] = value
                                 CommonUtils.print_log_line(f"✓ Stored {var} = {value}")
                                 break
-                                
+
                             except KeyboardInterrupt:
-                                CommonUtils.print_log_line("\n❌ Input cancelled by user")
+                                CommonUtils.print_log_line(
+                                    "\n❌ Input cancelled by user"
+                                )
                                 sys.exit(1)
                             except Exception as e:
                                 if attempt < max_retries - 1:
-                                    CommonUtils.print_log_line(f"Error: {e}. Please try again ({attempt + 1}/{max_retries})")
+                                    CommonUtils.print_log_line(
+                                        f"Error: {e}. Please try again ({attempt + 1}/{max_retries})"
+                                    )
                                     continue
                                 else:
-                                    CommonUtils.print_log_line(f"❌ Failed to get value for {var} after {max_retries} attempts: {e}")
+                                    CommonUtils.print_log_line(
+                                        f"❌ Failed to get value for {var} after {max_retries} attempts: {e}"
+                                    )
                                     sys.exit(1)
                         continue
-                        
+
                 # 尝试从设备变量获取值
                 if device_name:
                     var_value = data_store.get_data(device_name, var)
                     if var_value is not None:
                         var_values[var] = var_value
                         continue
-            
+
         return CommonUtils.replace_variables_from_str(param_value, vars, **var_values)
-        
+
     @staticmethod
     def replace_variables_from_str(s: str, found_variables: List[str], **kwargs) -> str:
         """Replace variables in a string with provided values
@@ -529,11 +558,12 @@ class CommonUtils:
             String with variables replaced by their values, or original {variable_name} if value is None
         """
         for variable_name in found_variables:
-            placeholder = f'{{{variable_name}}}'
+            placeholder = f"{{{variable_name}}}"
             if variable_name in kwargs and kwargs[variable_name] is not None:
                 replacement = str(kwargs[variable_name])
                 s = s.replace(placeholder, replacement)
         return s
+
 
 class FileHandler:
     """File operation utility class"""
@@ -551,6 +581,7 @@ class FileHandler:
         """
         try:
             from pathlib import Path
+
             file_path_obj = Path(file_path)
 
             if not file_path_obj.exists():
