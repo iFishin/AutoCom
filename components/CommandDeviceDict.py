@@ -8,7 +8,9 @@ import os
 import re
 import time
 import threading
-from components.Logger import AutoComLogger
+from components.Logger import get_logger, AutoComLogger
+
+logger: AutoComLogger = get_logger(name="AutoCom")
 
 
 class MonitorManager:
@@ -31,9 +33,6 @@ class MonitorManager:
         self.command_response_data = []
         self.command_complete_event = threading.Event()
 
-        # Logger instance
-        self.logger = AutoComLogger.get_instance(name="AutoCom")
-
     def start_monitoring(self):
         """Start monitoring"""
         if self.running:
@@ -44,14 +43,14 @@ class MonitorManager:
             target=self._monitor_loop, daemon=True, name=f"Monitor-{self.device_name}"
         )
         self.monitor_thread.start()
-        self.logger.log_info(f"Monitoring started: {self.device_name}")
+        logger.log_session_start(f"Monitoring started: {self.device_name}")
 
     def stop_monitoring(self):
         """Stop monitoring"""
         self.running = False
         if self.monitor_thread and self.monitor_thread.is_alive():
             self.monitor_thread.join(timeout=2)
-        self.logger.log_info(f"Monitoring stopped: {self.device_name}")
+        logger.log_session_end(f"Monitoring stopped: {self.device_name}")
 
     def begin_command_capture(self):
         """Begin command data capture"""
@@ -81,7 +80,7 @@ class MonitorManager:
 
     def _monitor_loop(self):
         """Monitor loop - simplified logic"""
-        self.logger.log_info(f"Started monitoring device: {self.device_name}")
+        logger.log_session_start(f"Started monitoring device: {self.device_name}")
 
         while self.running:
             try:
@@ -105,7 +104,7 @@ class MonitorManager:
                     time.sleep(0.01)
 
             except serial.SerialException as e:
-                self.logger.log_error(
+                logger.log_session_error(
                     f"Serial error on device '{self.device_name}' (port: {self.device.port}): {e}"
                 )
                 # Attempt to reopen the port 3 times
@@ -115,18 +114,18 @@ class MonitorManager:
                             self.device.ser.open()
                         break  # Successfully reopened
                     except Exception as reopen_exception:
-                        self.logger.log_error(
+                        logger.log_session_error(
                             f"Failed to reopen serial port '{self.device.port}' on attempt {attempt + 1}: {reopen_exception}"
                         )
                         time.sleep(5)  # Wait before retrying
                 sys.exit(1)
             except Exception as e:
-                self.logger.log_error(
+                logger.log_session_error(
                     f"Monitor error on device '{self.device_name}' (port: {self.device.port}): {e}"
                 )
                 time.sleep(0.1)
 
-        self.logger.log_info(f"Monitor ended: {self.device_name}")
+        logger.log_session_end(f"Monitor ended: {self.device_name}")
 
     def _process_line(self, line):
         """Process single line of data"""
@@ -143,7 +142,7 @@ class MonitorManager:
                 self.device.log_file.write(log_line + "\n")
                 self.device.log_file.flush()
             except Exception as e:
-                self.logger.log_error(f"Failed to write log {self.device_name}: {e}")
+                logger.log_session_error(f"Failed to write log {self.device_name}: {e}")
 
         # Update data cache
         with self.lock:
@@ -160,8 +159,8 @@ class MonitorManager:
 
 
 class CommandDeviceDict:
-    def __init__(self, dict, data_store=None):
-        self.dict = dict
+    def __init__(self, config_dict: dict, data_store=None):
+        self.dict = config_dict
         self.devices = {}
         self.log_date_dir = str(get_dirs()._session_dir)
         self._data_store = data_store
@@ -173,15 +172,12 @@ class CommandDeviceDict:
         # Optimized data sharing mechanism
         self.device_monitors = {}  # device_name -> MonitorManager instance
 
-        # Logger instance
-        self.logger = AutoComLogger.get_instance(name="AutoCom")
-
         # 首先处理所有常量，确保所有变量都可用
-        if "Constants" in dict:
+        if "Constants" in config_dict:
             need_input_constants = []
             loaded_constants = []
 
-            for key, value in dict["Constants"].items():
+            for key, value in config_dict["Constants"].items():
                 # 首先检查是否已经在 data_store 中有值
                 if self._data_store and self._data_store.get_data("Constants", key):
                     loaded_constants.append(key)
@@ -195,13 +191,13 @@ class CommandDeviceDict:
                         loaded_constants.append(key)
 
             if loaded_constants:
-                self.logger.log_info(
+                logger.log_session_start(
                     f"[OK] Loaded {len(loaded_constants)} constants: {', '.join(loaded_constants)}"
                 )
 
             # 处理需要用户输入的常量
             if need_input_constants:
-                self.logger.log_info("The following constants need your input:")
+                logger.log_session_start("The following constants need your input:")
 
                 for key in need_input_constants:
                     max_retries = 3
@@ -212,12 +208,12 @@ class CommandDeviceDict:
 
                             if not value:  # 如果输入为空
                                 if attempt < max_retries - 1:
-                                    self.logger.log_info(
+                                    logger.log_session_start(
                                         f"Value cannot be empty. Please try again ({attempt + 1}/{max_retries})"
                                     )
                                     continue
                                 else:
-                                    self.logger.log_error(
+                                    logger.log_session_error(
                                         f"❌ No valid value provided for {key} after {max_retries} attempts"
                                     )
                                     sys.exit(1)
@@ -226,30 +222,30 @@ class CommandDeviceDict:
                             if self._data_store:
                                 self._data_store.store_data("Constants", key, value)
                             loaded_constants.append(key)
-                            self.logger.log_info(f"✓ Stored {key} = {value}")
+                            logger.log_session_start(f"✓ Stored {key} = {value}")
                             break
 
                         except KeyboardInterrupt:
-                            self.logger.log_error("\n❌ Input cancelled by user")
+                            logger.log_session_error("\n❌ Input cancelled by user")
                             sys.exit(1)
                         except Exception as e:
                             if attempt < max_retries - 1:
-                                self.logger.log_info(
+                                logger.log_session_start(
                                     f"Error: {e}. Please try again ({attempt + 1}/{max_retries})"
                                 )
                                 continue
                             else:
-                                self.logger.log_error(
+                                logger.log_session_error(
                                     f"❌ Failed to get value for {key} after {max_retries} attempts: {e}"
                                 )
                                 sys.exit(1)
 
-                self.logger.log_info(
+                logger.log_session_start(
                     f"✓ Successfully collected values for all {len(need_input_constants)} constants"
                 )
 
         # 所有常量都已处理好，现在开始初始化设备
-        for device in dict["Devices"]:
+        for device in config_dict["Devices"]:
             if device["status"] == "enabled":
                 parity_map = {
                     "None": serial.PARITY_NONE,
@@ -296,7 +292,7 @@ class CommandDeviceDict:
                 # self.log_date_dir = str(log_dir / time.strftime("%Y-%m-%d_%H-%M-%S"))
                 log_path = self.devices[device_name].setup_logging(self.log_date_dir)
 
-                self.logger.log_info(
+                logger.log_session_start(
                     f"Device {device_name} connected to port {port}, baud rate {baud_rate}"
                 )
 
@@ -345,7 +341,9 @@ class CommandDeviceDict:
                     monitor_manager.start_monitoring()
                     self.monitor_threads[device_name] = monitor_manager.monitor_thread
 
-                    self.logger.log_info(f"Device {device['name']} monitoring started")
+                    logger.log_session_start(
+                        f"Device {device['name']} monitoring started"
+                    )
 
     def _sanitize_filename(self, filename):
         """
@@ -384,10 +382,10 @@ class CommandDeviceDict:
         Stop all device monitoring - simplified version
         """
         if self.stop_monitoring.is_set():
-            self.logger.log_info("Monitoring already stopped")
+            logger.log_session_end("Monitoring already stopped")
             return
 
-        self.logger.log_info("Stopping all device monitoring...")
+        logger.log_session_end("Stopping all device monitoring...")
         self.stop_monitoring.set()
 
         # Stop all monitors
@@ -397,15 +395,15 @@ class CommandDeviceDict:
         # Wait for all monitor threads to finish
         for device_name, thread in self.monitor_threads.items():
             if thread and thread.is_alive():
-                self.logger.log_info(f"Waiting for {device_name} monitor to stop...")
+                logger.log_session_end(f"Waiting for {device_name} monitor to stop...")
                 thread.join(timeout=2)
                 if thread.is_alive():
-                    self.logger.log_info(
+                    logger.log_session_warning(
                         f"Warning: {device_name} monitor thread did not stop gracefully"
                     )
                 else:
-                    self.logger.log_info(f"✓ {device_name} monitor stopped")
-        self.logger.log_info("All device monitoring stopped")
+                    logger.log_session_end(f"✓ {device_name} monitor stopped")
+        logger.log_session_end("All device monitoring stopped")
 
     def get_monitoring_status(self):
         """Get monitoring status - simplified version"""
@@ -414,17 +412,49 @@ class CommandDeviceDict:
             "active_monitors": {},
         }
 
+        # Defensive: ensure active_monitors is a dict (avoid unexpected mutation elsewhere)
+        if not isinstance(status.get("active_monitors"), dict):
+            status["active_monitors"] = {}
+
+        # Build a fresh mapping to avoid indexing a mutated non-dict object
+        new_am = {}
         for device_name, monitor in self.device_monitors.items():
-            status["active_monitors"][device_name] = {
-                "running": monitor.running,
-                "thread_alive": (
+            try:
+                thread_alive = (
                     monitor.monitor_thread.is_alive()
-                    if monitor.monitor_thread
+                    if getattr(monitor, "monitor_thread", None)
                     else False
-                ),
-                "latest_data_count": len(monitor.get_latest_data()),
-                "command_active": monitor.command_active,
-            }
+                )
+                latest_count = 0
+                try:
+                    latest_count = len(monitor.get_latest_data())
+                except Exception:
+                    latest_count = 0
+
+                new_am[device_name] = {
+                    "running": bool(getattr(monitor, "running", False)),
+                    "thread_alive": bool(thread_alive),
+                    "latest_data_count": latest_count,
+                    "command_active": bool(getattr(monitor, "command_active", False)),
+                }
+            except Exception as e:
+                logger.log_session_error(
+                    f"Error building monitor status for {device_name}: {e}"
+                )
+                new_am[device_name] = {
+                    "running": False,
+                    "thread_alive": False,
+                    "latest_data_count": 0,
+                    "command_active": False,
+                }
+
+        # Replace active_monitors atomically
+        try:
+            status["active_monitors"] = new_am
+        except Exception as e:
+            logger.log_session_error(
+                f"Failed to assign active_monitors mapping: {e} (current value: {status.get('active_monitors')!r})"
+            )
 
         return status
 
@@ -432,7 +462,7 @@ class CommandDeviceDict:
         """
         Test command response mechanism - simplified version
         """
-        self.logger.log_info(
+        logger.log_session_info(
             f"Testing device {device_name} command response: {command}"
         )
 
@@ -443,7 +473,7 @@ class CommandDeviceDict:
         if device_name in self.device_monitors:
             monitor = self.device_monitors[device_name]
             if not monitor.running:
-                self.logger.log_info(
+                logger.log_session_warning(
                     f"Warning: Device {device_name} monitoring not running"
                 )
 
@@ -452,22 +482,22 @@ class CommandDeviceDict:
         result = self.devices[device_name].send_command(command, timeout)
         end_time = time.time()
 
-        self.logger.log_info(
+        logger.log_session_info(
             f"Command '{command}' completed in {end_time - start_time:.2f}s"
         )
         result_text = result["response"] if isinstance(result, dict) else result
-        self.logger.log_info(f"Response length: {len(result_text)} characters")
-        self.logger.log_info(
+        logger.log_session_info(f"Response length: {len(result_text)} characters")
+        logger.log_session_info(
             f"Response preview: {result_text[:100]}{'...' if len(result_text) > 100 else ''}"
         )
 
         # Check result
         if "ERROR:" in result_text:
-            self.logger.log_info("❌ Command execution error")
+            logger.log_session_error("❌ Command execution error")
         elif len(result_text.strip()) == 0:
-            self.logger.log_info("⚠️ Warning: Empty response received")
+            logger.log_session_warning("⚠️ Warning: Empty response received")
         else:
-            self.logger.log_info("✅ Command executed successfully")
+            logger.log_session_info("✅ Command executed successfully")
         return result_text
 
     def send_command_with_monitor(
@@ -500,7 +530,9 @@ class CommandDeviceDict:
                     # Clear old data in serial buffer
                     if device.ser.in_waiting > 0:
                         discarded = device.ser.read(device.ser.in_waiting)
-                        self.logger.log_info(f"Cleared buffer: {len(discarded)} bytes")
+                        logger.log_session_info(
+                            f"Cleared buffer: {len(discarded)} bytes"
+                        )
 
                     # Send command (handle hex_mode)
                     if hex_mode:
@@ -545,7 +577,7 @@ class CommandDeviceDict:
                 # Check if should stop waiting
                 time_without_data = time.time() - last_data_time
                 if response_lines and time_without_data > max_wait_without_data:
-                    self.logger.log_info(
+                    logger.log_session_info(
                         f"Response collection complete, wait time: {time_without_data:.2f}s"
                     )
                     break
@@ -558,7 +590,7 @@ class CommandDeviceDict:
                 error_msg = (
                     f"ERROR: No response for command: {command} (timeout: {timeout}s)"
                 )
-                self.logger.log_info(f"No response for command: {command}")
+                logger.log_session_error(f"No response for command: {command}")
                 timestamp = (
                     time.strftime("%Y-%m-%d_%H:%M:%S", time.localtime())
                     + f":{int((time.time() % 1) * 1000):03d}"
@@ -582,7 +614,7 @@ class CommandDeviceDict:
             return "\n".join(response_lines)
 
         except Exception as e:
-            self.logger.log_info(f"Error sending command: {e}")
+            logger.log_session_error(f"Error sending command: {e}")
             return f"ERROR: Command execution exception: {e}"
 
     def close_all_devices(self):
@@ -594,9 +626,9 @@ class CommandDeviceDict:
         for device_name, device in self.devices.items():
             try:
                 device.close()
-                self.logger.log_info(f"Device {device_name} closed")
+                logger.log_session_info(f"Device {device_name} closed")
             except Exception as e:
-                self.logger.log_info(f"Error closing device {device_name}: {e}")
+                logger.log_session_error(f"Error closing device {device_name}: {e}")
 
     def __enter__(self):
         """Context manager entry"""

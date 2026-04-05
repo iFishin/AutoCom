@@ -3,24 +3,17 @@ import threading
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
-from components.Logger import get_logger
+from utils.common import CommonUtils
+from components.DataStore import DataStore
+from components.CommandDeviceDict import CommandDeviceDict
+from utils.ActionHandler import ActionHandler
+from components.Logger import get_logger, AutoComLogger
 
-try:
-    from utils.common import CommonUtils
-    from components.DataStore import DataStore
-    from components.CommandDeviceDict import CommandDeviceDict
-    from utils.ActionHandler import ActionHandler
-except ModuleNotFoundError:
-    from ..utils.common import CommonUtils
-    from .DataStore import DataStore
-    from .CommandDeviceDict import CommandDeviceDict
-    from ..utils.ActionHandler import ActionHandler
+logger: AutoComLogger = get_logger("AutoCom")
 
 
 class CommandExecutor:
     def __init__(self, command_device_dict_or_dict, session_id=None):
-        # 获取 Logger 实例
-        self.logger = get_logger()
 
         # 创建 DataStore 实例
         self.data_store = DataStore(session_id=session_id)
@@ -63,9 +56,7 @@ class CommandExecutor:
 
             # 处理需要用户输入的常量
             if need_input_constants:
-                self.logger.log_session_start(
-                    "The following constants need your input:"
-                )
+                logger.log_session_start("The following constants need your input:")
 
                 for key in need_input_constants:
                     max_retries = 3
@@ -76,39 +67,37 @@ class CommandExecutor:
 
                             if not value:  # 如果输入为空
                                 if attempt < max_retries - 1:
-                                    self.logger.log_session_start(
+                                    logger.log_session_start(
                                         f"Value cannot be empty. Please try again ({attempt + 1}/{max_retries})"
                                     )
                                     continue
                                 else:
-                                    self.logger.log_session_start(
+                                    logger.log_session_start(
                                         f"No valid value provided for {key} after {max_retries} attempts"
                                     )
                                     sys.exit(1)
 
                             # 存储用户输入的值
                             self.data_store.store_data("Constants", key, value)
-                            self.logger.log_session_start(f"✓ Stored {key} = {value}")
+                            logger.log_session_start(f"✓ Stored {key} = {value}")
                             break
 
                         except KeyboardInterrupt:
-                            self.logger.log_session_start(
-                                "\n❌ Input cancelled by user"
-                            )
+                            logger.log_session_start("\n❌ Input cancelled by user")
                             sys.exit(1)
                         except Exception as e:
                             if attempt < max_retries - 1:
-                                self.logger.log_session_start(
+                                logger.log_session_start(
                                     f"Error: {e}. Please try again ({attempt + 1}/{max_retries})"
                                 )
                                 continue
                             else:
-                                self.logger.log_session_start(
+                                logger.log_session_start(
                                     f"❌ Failed to get value for {key} after {max_retries} attempts: {e}"
                                 )
                                 sys.exit(1)
 
-                self.logger.log_session_start(
+                logger.log_session_start(
                     f"✓ Successfully collected values for all {len(need_input_constants)} constants",
                 )
 
@@ -137,11 +126,11 @@ class CommandExecutor:
                     module = __import__(module_path, fromlist=[class_name])
                     custom_handler_class = getattr(module, class_name)
                     action_handler_class = custom_handler_class
-                    self.logger.log_session_start(
+                    logger.log_session_start(
                         f"Custom ActionHandler loaded: {handler_class_path}"
                     )
                 except (ImportError, AttributeError) as e:
-                    self.logger.log_session_start(
+                    logger.log_session_start(
                         f"Failed to load custom ActionHandler: {e}"
                     )
 
@@ -171,7 +160,7 @@ class CommandExecutor:
                 try:
                     self.execute_command(cmd)
                 except Exception as e:
-                    self.logger.log_step_error(f"Error executing deferred command: {e}")
+                    logger.log_step_error(f"Error executing deferred command: {e}")
                 finally:
                     self.deferred_command_queue.task_done()
 
@@ -289,7 +278,7 @@ class CommandExecutor:
         if success and updated_expected_responses:
             # 有期望响应且全部匹配成功
             status_msg = f"Passed ({elapsed_time*1000:.2f}ms, matched {len(matched)}/{len(updated_expected_responses)})"
-            self.logger.log_execution(
+            logger.log_execution(
                 time_str=now,
                 result=True,
                 device=device_name,
@@ -313,7 +302,7 @@ class CommandExecutor:
                     ]
                 )
                 if not isActionPassed:
-                    self.logger.log_step_error(
+                    logger.log_step_error(
                         "Action handling failed, check logs for details."
                     )
 
@@ -325,7 +314,7 @@ class CommandExecutor:
             else:
                 status_msg = f"Completed ({elapsed_time:.2f}s)"
 
-            self.logger.log_execution(
+            logger.log_execution(
                 time_str=now,
                 result=True,
                 device=device_name,
@@ -349,7 +338,7 @@ class CommandExecutor:
                     ]
                 )
                 if not isActionPassed:
-                    self.logger.log_step_error(
+                    logger.log_step_error(
                         "Action handling failed, check logs for details."
                     )
 
@@ -358,7 +347,7 @@ class CommandExecutor:
             # 有期望响应但未完全匹配
             status_msg = f"Failed ({elapsed_time:.2f}s, matched {len(matched)}/{len(updated_expected_responses)})"
 
-            self.logger.log_execution(
+            logger.log_execution(
                 time_str=now,
                 result=False,
                 device=device_name,
@@ -391,7 +380,7 @@ class CommandExecutor:
     def execute(self) -> bool:
         commands = self.command_device_dict.dict["Commands"]
         if not commands:
-            self.logger.log_session_start("No commands to execute.")
+            logger.log_session_start("No commands to execute.")
             return False
 
         # Mark iteration in all device logs if iteration info is set
@@ -457,7 +446,7 @@ class CommandExecutor:
             # 首先等待队列中所有任务完成（最多等待 10 秒）
             self.deferred_command_queue.join()
         except Exception as e:
-            self.logger.log_session_end(
+            logger.log_session_end(
                 f"Warning: Error while waiting for deferred commands: {e}"
             )
 
@@ -465,7 +454,7 @@ class CommandExecutor:
         try:
             self.deferred_command_queue.put(None)  # Sentinel value
         except Exception as e:
-            self.logger.log_session_end(
+            logger.log_session_end(
                 f"Warning: Error while sending stop signal to deferred execution thread: {e}"
             )
 
@@ -474,11 +463,11 @@ class CommandExecutor:
             try:
                 self.deferred_execution_thread.join(timeout=5)
                 if self.deferred_execution_thread.is_alive():
-                    self.logger.log_session_end(
+                    logger.log_session_end(
                         "Warning: Deferred execution thread did not terminate within 5 seconds"
                     )
             except Exception as e:
-                self.logger.log_session_end(
+                logger.log_session_end(
                     f"Warning: Error while joining deferred execution thread: {e}"
                 )
 
@@ -516,9 +505,7 @@ class CommandExecutor:
                         if not result:
                             self.isParallelPassed = False
                     except Exception as e:
-                        self.logger.log_step_error(
-                            f"Error executing parallel commands: {e}"
-                        )
+                        logger.log_step_error(f"Error executing parallel commands: {e}")
                         self.isParallelPassed = False
         finally:
             # 并行执行完毕后，恢复之前的延迟状态
@@ -563,4 +550,4 @@ class CommandExecutor:
                         command, response, action_type, context
                     )
             except Exception as e:
-                self.logger.log_step_error(f"❌ Error processing deferred action: {e}")
+                logger.log_step_error(f"❌ Error processing deferred action: {e}")

@@ -7,7 +7,9 @@ import re
 import os
 from collections import deque
 from utils.common import CommonUtils
-from components.Logger import get_logger
+from components.Logger import get_logger, AutoComLogger
+
+logger: AutoComLogger = get_logger("AutoCom")
 
 
 class Device:
@@ -63,8 +65,6 @@ class Device:
         self.shutdown_flag = False
         # Logging
         self.log_file = None
-        # Logger
-        self.logger = get_logger()
 
         self.response_buffer = deque()  # Buffer for command responses
         self.last_iteration_success = None  # Track result of last iteration
@@ -76,7 +76,7 @@ class Device:
             # Start continuous logging thread
             self._start_logging_thread()
         except serial.SerialException as e:
-            self.logger.log_session_start(
+            logger.log_session_start(
                 f"<!> Failed to open serial port for device '{self.name}' (port: {self.port})"
             )
             # Mark that opening failed so callers can handle it gracefully
@@ -85,7 +85,7 @@ class Device:
                 f"Failed to open serial port for device '{self.name}' (port: {self.port})"
             ) from e
         except Exception as e:
-            self.logger.log_session_start(
+            logger.log_session_start(
                 f"Unexpected error opening serial port for device '{self.name}' (port: {self.port}): {e}"
             )
             self.open_failed = True
@@ -137,7 +137,7 @@ class Device:
                 time.sleep(0.01)  # Small delay to prevent CPU spinning
 
             except Exception as e:
-                self.logger.log_session_start(f"Logging thread error: {e}")
+                logger.log_session_start(f"Logging thread error: {e}")
                 time.sleep(0.1)
 
         # Process any remaining data before shutdown
@@ -160,7 +160,7 @@ class Device:
                 self.write_to_log(log_line)
 
         except Exception as e:
-            self.logger.log_session_start(f"Error processing log line: {e}")
+            logger.log_session_start(f"Error processing log line: {e}")
 
     def _parse_line_ending(self, line_ending):
         """
@@ -193,7 +193,7 @@ class Device:
             return bytes(result)
         except ValueError as e:
             # Fallback to default CRLF if parsing fails
-            self.logger.log_step_error(
+            logger.log_step_error(
                 f"Warning: Failed to parse line ending '{line_ending}': {e}. Using default CRLF."
             )
             return b"\r\n"
@@ -224,7 +224,7 @@ class Device:
             return bytes(result)
         except ValueError as e:
             # If parsing fails, log error and return empty bytes
-            self.logger.log_step_error(
+            logger.log_step_error(
                 f"Error: Failed to parse hex command '{hex_command}': {e}"
             )
             return b""
@@ -258,7 +258,7 @@ class Device:
         if getattr(self, "open_failed", False) or not (
             hasattr(self, "ser") and getattr(self.ser, "is_open", False)
         ):
-            self.logger.log_session_start(
+            logger.log_session_start(
                 f"Serial port not open for device '{self.name}' (port: {self.port}), cannot send command: {command}"
             )
             return {
@@ -383,7 +383,7 @@ class Device:
                     time.sleep(check_interval)
 
                 except serial.SerialException as e:
-                    self.logger.log_step_error(
+                    logger.log_step_error(
                         f"Serial error on device '{self.name}' (port: {self.port}): {e}"
                     )
                     # Attempt to reopen the port 3 times
@@ -393,13 +393,13 @@ class Device:
                                 self.ser.open()
                             break  # Successfully reopened
                         except Exception as reopen_exception:
-                            self.logger.log_step_error(
+                            logger.log_step_error(
                                 f"Failed to reopen serial port '{self.port}' on attempt {attempt + 1}: {reopen_exception}"
                             )
                             time.sleep(5)  # Wait before retrying
                     sys.exit(1)
                 except Exception as e:
-                    self.logger.log_step_error(
+                    logger.log_step_error(
                         f"Unexpected error on device '{self.name}' (port: {self.port}): {e}"
                     )
                     sys.exit(1)

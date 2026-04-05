@@ -512,6 +512,8 @@ class AutoComLogger:
 
         self._logger.log(level, msg, **kwargs)
 
+    ## 标准日志方法
+
     def log_debug(self, msg: str, **kwargs) -> None:
         """调试日志"""
         self._log(logging.DEBUG, msg, **kwargs)
@@ -541,6 +543,7 @@ class AutoComLogger:
         self._log(LogLevel.FAIL.value, msg, **kwargs)
 
     ## 实时表格相关日志方法
+
     def log_realtime_table_header(self, headers: List[str]) -> None:
         """日志表格头部"""
         self.tp.headers = headers
@@ -559,9 +562,12 @@ class AutoComLogger:
         self.tp.print_realtime_footer()
 
     ## CLI 迭代日志方法
+
+    ### 迭代步骤日志
+
     def log_step_info(self, step_text: str) -> None:
         """Log step information"""
-        self.log_realtime_table_banner(step_text)
+        self.log_realtime_table_banner(f"ℹ {step_text}")
 
     def log_step_success(self, step_text: str) -> None:
         """Log step success"""
@@ -575,21 +581,63 @@ class AutoComLogger:
         """Log step warning"""
         self.log_realtime_table_banner(f"⚠️ {step_text}")
 
+    ### 迭代循环日志方法
+
     def log_iteration_start(self, iteration: int, total: int) -> None:
         """Log iteration start"""
         self.log_realtime_table_banner(f"ℹ Starting iteration {iteration}/{total}")
 
-    def log_iteration_end(self, iteration: int, total: int) -> None:
+    def log_iteration_success(self, iteration_text: str) -> None:
+        """Log iteration success"""
+        self.log_realtime_table_banner(f"✅ {iteration_text}")
+
+    def log_iteration_info(self, iteration_text: str) -> None:
+        """Log iteration information"""
+        self.log_realtime_table_banner(f"ℹ {iteration_text}")
+
+    def log_iteration_warning(self, iteration_text: str) -> None:
+        """Log iteration warning"""
+        self.log_realtime_table_banner(f"⚠️ {iteration_text}")
+
+    def log_iteration_error(self, iteration_text: str) -> None:
+        """Log iteration error"""
+        self.log_realtime_table_banner(f"❌ {iteration_text}")
+
+    def log_iteration_end(self, iteration: int, total: int, **kwargs) -> None:
         """Log iteration end summary"""
+        if kwargs.get("result", False):
+            self.log_realtime_table_banner(
+                f"ℹ Finished iteration {iteration}/{total} - PASS"
+            )
         self.log_realtime_table_banner(f"ℹ Finished iteration {iteration}/{total}")
+
+    ### 会话日志方法
 
     def log_session_start(self, session_text: str) -> None:
         """Log session header"""
         self.log_realtime_table_banner(f"{session_text}")
 
+    def log_session_success(self, session_text: str) -> None:
+        """Log session success"""
+        self.log_realtime_table_banner(f"✅ {session_text}")
+
+    def log_session_info(self, session_text: str) -> None:
+        """Log session information"""
+        self.log_realtime_table_banner(f"ℹ {session_text}")
+
+    def log_session_warning(self, session_text: str) -> None:
+        """Log session warning"""
+        self.log_realtime_table_banner(f"⚠️ {session_text}")
+
+    def log_session_error(self, session_text: str) -> None:
+        """Log session error"""
+        self.log_realtime_table_banner(f"❌ {session_text}")
+
     def log_session_end(self, session_text: str) -> None:
         """Log session footer"""
         self.log_realtime_table_banner(f"{session_text}")
+
+    ## 通用执行结果日志方法
 
     def log_execution(
         self, result: bool, exec_type: str = "command", **kwargs: Any
