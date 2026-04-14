@@ -6,6 +6,8 @@ import os
 import re
 import queue
 import sys
+import yaml
+from pathlib import Path
 from utils.common import CommonUtils
 from components.CommandDeviceDict import CommandDeviceDict
 from components.CommandExecutor import CommandExecutor
@@ -16,40 +18,77 @@ logger: AutoComLogger = get_logger(name="AutoCom")
 
 
 def load_commands_from_file(file_path):
-    """Safely load a JSON file, attempting multiple encodings and providing friendly error messages on failure.
+    """Safely load a configuration file (JSON or YAML), attempting multiple encodings and providing friendly error messages on failure.
+
+    The file format is automatically detected based on file extension:
+    - .json -> JSON format
+    - .yaml, .yml -> YAML format (requires PyYAML)
 
     Prioritize UTF-8/UTF-8-SIG, then fallback to system encoding (GBK) or latin-1, and finally use a replacement strategy for reading.
     This helps avoid issues where the default GBK encoding on Windows prevents parsing of UTF-8 files.
     """
+    # Determine file format based on extension
+    file_path_obj = Path(file_path)
+    file_ext = file_path_obj.suffix.lower()
+
+    if file_ext == ".json":
+        loader = json.load
+        format_name = "JSON"
+        parser_error = json.JSONDecodeError
+    elif file_ext in (".yaml", ".yml"):
+        loader = yaml.safe_load
+        format_name = "YAML"
+        parser_error = yaml.YAMLError
+    else:
+        logger.log_session_error(
+            f"❌ Unsupported file format: '{file_ext}'. Only .json, .yaml, and .yml files are supported."
+        )
+        raise ValueError(f"Unsupported file format: {file_ext}")
+
     encodings_to_try = ["utf-8", "utf-8-sig", "gbk", "latin-1"]
     for enc in encodings_to_try:
         try:
             with open(file_path, "r", encoding=enc) as file:
                 logger.log_session_start(
-                    f"Loading JSON file '{file_path}' using encoding: {enc}"
+                    f"Loading {format_name} file '{file_path}' using encoding: {enc}"
                 )
-                return json.load(file)
+                data = loader(file)
+                # Validate that the loaded data is a dictionary
+                if not isinstance(data, dict):
+                    raise ValueError(
+                        f"{format_name} file must contain a dictionary/object"
+                    )
+                return data
         except UnicodeDecodeError:
             # Try next encoding
             continue
-        except json.JSONDecodeError:
-            # File read succeeded but JSON is invalid — re-raise for upper layer to handle
+        except parser_error:
+            # File read succeeded but format is invalid — re-raise for upper layer to handle
             raise
         except Exception:
             # Other errors, try next encoding
             continue
-
     # Final attempt: read as binary and decode with replacement to avoid crashing on encoding issues
     try:
         with open(file_path, "rb") as f:
             raw = f.read()
         text = raw.decode("utf-8", errors="replace")
         logger.log_session_start(
-            f"Loaded JSON file '{file_path}' using fallback decoding (utf-8 with replace)."
+            f"Loaded {format_name} file '{file_path}' using fallback decoding (utf-8 with replace)."
         )
-        return json.loads(text)
+        # Re-load with proper method based on format
+        if format_name == "JSON":
+            data = json.loads(text)
+        else:
+            data = yaml.safe_load(text)
+
+        if not isinstance(data, dict):
+            raise ValueError(f"{format_name} file must contain a dictionary/object")
+        return data
     except Exception as e:
-        logger.log_session_error(f"❌ Failed to load JSON file '{file_path}': {e}")
+        logger.log_session_error(
+            f"❌ Failed to load {format_name} file '{file_path}': {e}"
+        )
         raise
 
 
@@ -399,7 +438,7 @@ def execute_with_folder(path: str, files: list, config: dict = {}):
 
 def monitor_folder(folder_path, file_queue, stop_event):
     """
-    Monitor a folder for new JSON files and add them to the execution queue.
+    Monitor a folder for new configuration files (JSON or YAML) and add them to the execution queue.
     """
     logger.log_session_info(f"Starting to monitor folder: {folder_path}")
 
@@ -413,13 +452,17 @@ def monitor_folder(folder_path, file_queue, stop_event):
 
     while not stop_event.is_set():
         try:
-            # 获取文件夹中的所有 JSON 文件
-            json_files = [f for f in os.listdir(folder_path) if f.endswith(".json")]
+            # 获取文件夹中的所有配置文件（JSON 和 YAML）
+            config_files = [
+                f
+                for f in os.listdir(folder_path)
+                if f.endswith((".json", ".yaml", ".yml"))
+            ]
 
             # 遍历文件，检查是否有新增或修改的文件
             from pathlib import Path
 
-            for file_name in json_files:
+            for file_name in config_files:
                 if stop_event.is_set():
                     break
 

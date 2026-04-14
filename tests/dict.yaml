@@ -1,0 +1,48 @@
+# AutoCom 配置文件示例 (YAML 格式)
+# 这个文件与 dict.json 相同的配置，但使用 YAML 格式
+
+ConfigForDevices:
+  status: enabled
+  stop_bits: 1
+  parity: null
+  data_bits: 8
+  flow_control:
+    xon_xoff: false
+    rts_cts: false
+    dsr_dtr: false
+  dtr: false
+  rts: false
+
+Devices:
+  - name: DeviceA
+    port: COM13
+    baud_rate: 115200
+
+ConfigForCommands:
+  status: enabled
+  timeout: 4000
+  concurrent_strategy: sequential
+  error_actions:
+    - retry: 1
+
+Commands:
+  - command: AT+QECHO=1
+    expected_responses:
+      - OK
+    device: DeviceA
+    order: 1
+    timeout: 1000
+  
+  - command: AT+CSUB
+    expected_responses:
+      - "SubEdition: V01"
+    device: DeviceA
+    order: 2
+    timeout: 1000
+  
+  - command: AT+QECHO=1
+    expected_responses:
+      - OK
+    device: DeviceA
+    order: 3
+    timeout: 1000
