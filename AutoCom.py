@@ -11,6 +11,7 @@ from pathlib import Path
 from utils.common import CommonUtils
 from components.CommandDeviceDict import CommandDeviceDict
 from components.CommandExecutor import CommandExecutor
+from typing import Optional, Any
 from version import __version__
 from components.Logger import AutoComLogger, get_logger
 
@@ -94,10 +95,16 @@ def load_commands_from_file(file_path):
 
 def merge_config(config: dict, dict_data: dict):
     for key, value in config.items():
+        # If key does not exist in target, copy it over
         if key not in dict_data:
             dict_data[key] = value
-        elif isinstance(value, dict):
-            merge_config(value, dict_data[key])
+        else:
+            # If both sides are dicts, merge recursively
+            if isinstance(value, dict) and isinstance(dict_data.get(key), dict):
+                merge_config(value, dict_data[key])
+            else:
+                # Otherwise prefer the value from `config` (overwrite)
+                dict_data[key] = value
 
 
 def ensure_working_directories(temps_dir, data_store_dir, device_logs_dir):
@@ -115,9 +122,20 @@ def ensure_working_directories(temps_dir, data_store_dir, device_logs_dir):
     Path(device_logs_dir).mkdir(parents=True, exist_ok=True)
 
 
-def apply_configs_for_device(configForDevice: dict, dictForDevices: dict):
-    # Use Global Configurations for all devices
-    for device in dictForDevices:
+def apply_configs_for_device(configForDevice: dict, devices: list):
+    """Apply global device-level defaults to each device dict in `devices`.
+
+    Args:
+        configForDevice: dict of default device settings
+        devices: list of device dicts (as found under "Devices")
+    """
+    if not isinstance(devices, list):
+        return
+
+    for device in devices:
+        if not isinstance(device, dict):
+            continue
+
         if "status" not in device:
             device["status"] = configForDevice.get("status", "enabled")
         if "baud_rate" not in device:
@@ -138,22 +156,36 @@ def apply_configs_for_device(configForDevice: dict, dictForDevices: dict):
             device["monitor"] = configForDevice.get("monitor", False)
 
 
-def apply_configs_for_commands(configForCommands: dict, dict: dict):
-    # Use Global Configurations cover all commands if not defined
-    device_disabled = False
-    for command in dict["Commands"]:
-        # Get the device status from ConfigForDevices if it exists
+def apply_configs_for_commands(configForCommands: dict, dict_data: dict):
+    """Apply global command defaults from `configForCommands` into `dict_data`.
+
+    Args:
+        configForCommands: dict of default command settings
+        dict_data: dictionary that should contain a "Commands" list and optionally "Devices"
+    """
+    commands = dict_data.get("Commands", [])
+    devices = dict_data.get("Devices", [])
+
+    for command in commands:
+        if not isinstance(command, dict):
+            continue
+
+        # Determine if the device for this command is disabled
+        device_disabled = False
         device_name = command.get("device")
-        if device_name:
-            for device in dict["Devices"]:
-                if device["name"] == device_name and device.get("status") == "disabled":
+        if device_name and isinstance(devices, list):
+            for device in devices:
+                if (
+                    isinstance(device, dict)
+                    and device.get("name") == device_name
+                    and device.get("status") == "disabled"
+                ):
                     device_disabled = True
                     break
 
-        # Set command status to disabled if device is disabled, otherwise use config default
+        # Apply status
         if device_disabled:
             command["status"] = "disabled"
-            device_disabled = False
         elif "status" not in command:
             command["status"] = configForCommands.get("status", "enabled")
 
@@ -177,12 +209,13 @@ def apply_configs_for_commands(configForCommands: dict, dict: dict):
         ]
         for action_type in action_types:
             # Initialize with empty list if not exists
-            if action_type not in command:
+            if action_type not in command or not isinstance(command[action_type], list):
                 command[action_type] = []
 
-            # Append from config if exists
-            if action_type in configForCommands:
-                command[action_type].extend(configForCommands[action_type])
+            # Append from config if exists and is a list
+            cfg_actions = configForCommands.get(action_type)
+            if isinstance(cfg_actions, list):
+                command[action_type].extend(cfg_actions)
 
 
 def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=None):
@@ -196,13 +229,13 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
     # Initialize counters before try block to avoid UnboundLocalError in finally
     executed_count = 0
     failure_count = 0
-    command_device_dict = None
-    executor = None
+    command_device_dict: Optional[CommandDeviceDict] = None
+    executor: Optional[CommandExecutor] = None
 
     try:
         if "ConfigForDevices" in dict_data:
             apply_configs_for_device(
-                dict_data.get("ConfigForDevices", {}), dict_data.get("Devices", {})
+                dict_data.get("ConfigForDevices", {}), dict_data.get("Devices", [])
             )
 
         # Create CommandExecutor to create CommandDeviceDict
@@ -213,18 +246,30 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
         from pathlib import Path
 
         dict_filename = Path(dict_path).name  # Extract the file name from the path
-        output_file_path = Path(command_device_dict.log_date_dir) / dict_filename
+        if command_device_dict is not None and hasattr(
+            command_device_dict, "log_date_dir"
+        ):
+            output_file_path = Path(command_device_dict.log_date_dir) / dict_filename
+        else:
+            output_file_path = None
 
-        try:
-            with open(output_file_path, "w") as output_file:
-                json.dump(dict_data, output_file, indent=2)
-            logger.log_session_start(f"Dictionary saved to {output_file_path}")
-        except Exception as e:
-            logger.log_session_error(f"Error saving dictionary to file: {e}")
+        if output_file_path is not None:
+            try:
+                with open(output_file_path, "w") as output_file:
+                    json.dump(dict_data, output_file, indent=2)
+                logger.log_session_start(f"Dictionary saved to {output_file_path}")
+            except Exception as e:
+                logger.log_session_error(f"Error saving dictionary to file: {e}")
 
         # Sort commands by ORDER but preserve original sequence for same order values
+        cdd_dict: Any = (
+            command_device_dict.dict
+            if command_device_dict is not None and hasattr(command_device_dict, "dict")
+            else command_device_dict
+        )
+
         commands = sorted(
-            enumerate(command_device_dict.dict["Commands"]),
+            enumerate(cdd_dict["Commands"]),
             key=lambda x: (
                 x[1]["order"],
                 x[0],
@@ -233,10 +278,10 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
         commands = [cmd[1] for cmd in commands]  # Extract just the commands
 
         # If ConfigForCommands exists, apply configurations to commands
-        if "ConfigForCommands" in command_device_dict.dict:
+        if "ConfigForCommands" in cdd_dict:
             apply_configs_for_commands(
-                command_device_dict.dict.get("ConfigForCommands", {}),
-                command_device_dict.dict,
+                cdd_dict.get("ConfigForCommands", {}),
+                cdd_dict,
             )
 
         failure_count = 0
@@ -261,11 +306,14 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
                 except Exception as e:
                     # 获取设备信息用于错误提示
                     device_info = []
-                    for dev_name, dev in command_device_dict.devices.items():
-                        if hasattr(dev, "port"):
-                            device_info.append(f"{dev_name}({dev.port})")
-                        else:
-                            device_info.append(dev_name)
+                    if command_device_dict is not None and hasattr(
+                        command_device_dict, "devices"
+                    ):
+                        for dev_name, dev in command_device_dict.devices.items():
+                            if hasattr(dev, "port"):
+                                device_info.append(f"{dev_name}({dev.port})")
+                            else:
+                                device_info.append(dev_name)
                     devices_str = ", ".join(device_info) if device_info else "Unknown"
 
                     logger.log_iteration_error(
@@ -293,11 +341,14 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
                 except Exception as e:
                     # 获取设备信息用于错误提示
                     device_info = []
-                    for dev_name, dev in command_device_dict.devices.items():
-                        if hasattr(dev, "port"):
-                            device_info.append(f"{dev_name}({dev.port})")
-                        else:
-                            device_info.append(dev_name)
+                    if command_device_dict is not None and hasattr(
+                        command_device_dict, "devices"
+                    ):
+                        for dev_name, dev in command_device_dict.devices.items():
+                            if hasattr(dev, "port"):
+                                device_info.append(f"{dev_name}({dev.port})")
+                            else:
+                                device_info.append(dev_name)
                     devices_str = ", ".join(device_info) if device_info else "Unknown"
 
                     logger.log_iteration_error(
@@ -356,7 +407,7 @@ def execute_with_folder(path: str, files: list, config: dict = {}):
 
     if "ConfigForDevices" in template_dict:
         apply_configs_for_device(
-            template_dict.get("ConfigForDevices", {}), template_dict.get("Devices", {})
+            template_dict.get("ConfigForDevices", {}), template_dict.get("Devices", [])
         )
 
     # 创建 CommandDeviceDict 对象
@@ -375,11 +426,22 @@ def execute_with_folder(path: str, files: list, config: dict = {}):
             # Force merge `Commands` key from dictionary file to `command_device_dict`
             for key, value in dict_data.items():
                 if key == "Commands":
-                    command_device_dict.dict[key] = value
+                    # merge into underlying mapping
+                    if hasattr(command_device_dict, "dict"):
+                        command_device_dict.dict[key] = value
+                    else:
+                        # Fallback: update the dict representation if available
+                        if isinstance(command_device_dict, dict):
+                            command_device_dict[key] = value
 
             # Sort commands by order but preserve original sequence for same order values
+            cdd_dict: Any = (
+                command_device_dict.dict
+                if hasattr(command_device_dict, "dict")
+                else command_device_dict
+            )
             commands = sorted(
-                enumerate(command_device_dict.dict["Commands"]),
+                enumerate(cdd_dict["Commands"]),
                 key=lambda x: (
                     x[1]["order"],
                     x[0],
@@ -387,10 +449,10 @@ def execute_with_folder(path: str, files: list, config: dict = {}):
             )
             commands = [cmd[1] for cmd in commands]  # Extract just the commands
 
-            if "ConfigForCommands" in command_device_dict.dict:
+            if "ConfigForCommands" in cdd_dict:
                 apply_configs_for_commands(
-                    command_device_dict.dict.get("ConfigForCommands", {}),
-                    command_device_dict.dict,
+                    cdd_dict.get("ConfigForCommands", {}),
+                    cdd_dict,
                 )
             executor = CommandExecutor(command_device_dict)
 
@@ -541,7 +603,7 @@ def process_file_queue(file_queue, stop_event):
                 if "ConfigForDevices" in dict_data:
                     apply_configs_for_device(
                         dict_data.get("ConfigForDevices", {}),
-                        dict_data.get("Devices", {}),
+                        dict_data.get("Devices", []),
                     )
 
                 command_device_dict = CommandDeviceDict(dict_data)
@@ -562,8 +624,13 @@ def process_file_queue(file_queue, stop_event):
                     logger.log_session_error(f"Error saving dictionary to file: {e}")
 
                 # Sort commands by order but preserve original sequence for same order values
+                cdd_dict: Any = (
+                    command_device_dict.dict
+                    if hasattr(command_device_dict, "dict")
+                    else command_device_dict
+                )
                 commands = sorted(
-                    enumerate(command_device_dict.dict["Commands"]),
+                    enumerate(cdd_dict["Commands"]),
                     key=lambda x: (
                         x[1]["order"],
                         x[0],
@@ -571,10 +638,10 @@ def process_file_queue(file_queue, stop_event):
                 )
                 commands = [cmd[1] for cmd in commands]
 
-                if "ConfigForCommands" in command_device_dict.dict:
+                if "ConfigForCommands" in cdd_dict:
                     apply_configs_for_commands(
-                        command_device_dict.dict.get("ConfigForCommands", {}),
-                        command_device_dict.dict,
+                        cdd_dict.get("ConfigForCommands", {}),
+                        cdd_dict,
                     )
 
                 executor = CommandExecutor(command_device_dict)
