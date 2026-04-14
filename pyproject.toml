@@ -33,6 +33,7 @@ Source = "https://github.com/iFishin/AutoCom"
 
 [project.scripts]
 autocom = "cli:main"
+autocom-dev = "scripts.dev:main"
 
 [tool.setuptools]
 packages = ["components", "utils"]
