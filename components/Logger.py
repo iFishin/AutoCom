@@ -702,47 +702,10 @@ class AutoComLogger:
         """移除着色规则"""
         return self._registry.unregister(name)
 
-    def bind(self, **ctx) -> "BoundLogger":
-        """创建绑定上下文的子日志器"""
-        return BoundLogger(self, ctx)
-
     @property
     def registry(self) -> ColorizerRegistry:
         """访问着色器注册表(高级用法)"""
         return self._registry
-
-
-class BoundLogger:
-    """绑定上下文的日志器代理"""
-
-    def __init__(self, parent: AutoComLogger, context: Dict[str, Any]):
-        self._parent = parent
-        self._context = context
-
-    def _merge_kwargs(self, kwargs: Dict) -> Dict:
-        """合并上下文到kwargs"""
-        extra = kwargs.get("extra", {})
-        extra.update(self._context)
-        kwargs["extra"] = extra
-        return kwargs
-
-    def log_debug(self, msg: str, **kwargs) -> None:
-        self._parent.log_debug(msg, **self._merge_kwargs(kwargs))
-
-    def log_info(self, msg: str, **kwargs) -> None:
-        self._parent.log_info(msg, **self._merge_kwargs(kwargs))
-
-    def log_warning(self, msg: str, **kwargs) -> None:
-        self._parent.log_warning(msg, **self._merge_kwargs(kwargs))
-
-    def log_error(self, msg: str, **kwargs) -> None:
-        self._parent.log_error(msg, **self._merge_kwargs(kwargs))
-
-    def log_pass(self, msg: str, **kwargs) -> None:
-        self._parent.log_pass(msg, **self._merge_kwargs(kwargs))
-
-    def log_fail(self, msg: str, **kwargs) -> None:
-        self._parent.log_fail(msg, **self._merge_kwargs(kwargs))
 
 
 # ============================================================================
@@ -790,10 +753,7 @@ if __name__ == "__main__":
     # 使用上下文
     with LogContext(request_id="req-123", user="admin"):
         logger.log_info("处理请求中...")
-
-        # 绑定上下文创建子日志器
-        child = logger.bind(module="network")
-        child.log_info("网络模块初始化")
+        logger.log_info("网络模块初始化")
 
     # 装饰器用法
     @with_context(task="data_sync")

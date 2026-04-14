@@ -235,6 +235,9 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
                     logger.log_iteration_error(f"Devices involved: {devices_str}")
                     executed_count += 1  # 即使失败也算完成了一次
                     result = False
+                if not result:
+                    failure_count += 1
+                logger.log_iteration_end(iteration=current_iteration, total=loop_count)
         else:
             # Normal loop with specified count
             iteration = 0

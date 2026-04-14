@@ -128,20 +128,24 @@ def run_main():
 
     # 处理 --init 参数
     if args.init:
-        logger.log_info("🚀 Initializing AutoCom project structure...")
+        logger.log_session_start("🚀 Initializing AutoCom project structure...")
 
         try:
             # 初始化项目结构
             dirs.init_project_structure()
 
-            logger.log_info(
+            logger.log_session_start(
                 "✨ Initialization complete! You can now use AutoCom in this directory."
             )
-            logger.log_info("💡 Tip: Edit files in dicts/ to customize your commands")
-            logger.log_info("💡 Tip: Run 'autocom -d dicts/dict.json -l 3' to test")
+            logger.log_session_start(
+                "💡 Tip: Edit files in dicts/ to customize your commands"
+            )
+            logger.log_session_start(
+                "💡 Tip: Run 'autocom -d dicts/dict.json -l 3' to test"
+            )
 
         except Exception as e:
-            logger.log_info(f"❌ Error during initialization: {e}")
+            logger.log_session_error(f"❌ Error during initialization: {e}")
             sys.exit(1)
 
         sys.exit(0)
@@ -161,13 +165,17 @@ def run_main():
                 raise ValueError("Config file must contain a JSON object")
             config = loaded_config
         except FileNotFoundError:
-            logger.log_info(f"Error: Config file '{config_file_path}' not found")
+            logger.log_session_error(
+                f"Error: Config file '{config_file_path}' not found"
+            )
             sys.exit(1)
         except json.JSONDecodeError:
-            logger.log_info(f"Error: Invalid JSON format in '{config_file_path}'")
+            logger.log_session_error(
+                f"Error: Invalid JSON format in '{config_file_path}'"
+            )
             sys.exit(1)
         except ValueError as e:
-            logger.log_info(f"Error: {e}")
+            logger.log_session_error(f"Error: {e}")
             sys.exit(1)
 
     # 【提前初始化 Logger】在所有分支之前，确保所有路径都能使用
@@ -187,12 +195,12 @@ def run_main():
         try:
             execute_with_loop(str(dict_path), args.loop, args.infinite, config)
         except KeyboardInterrupt:
-            logger.log_info("Execution interrupted by user")
+            logger.log_session_info("Execution interrupted by user")
         except FileNotFoundError as e:
-            logger.log_info(f"Error: Dictionary file not found: {e}")
+            logger.log_session_error(f"Error: Dictionary file not found: {e}")
             sys.exit(1)
         except json.JSONDecodeError as e:
-            logger.log_info(f"Error: Invalid JSON format: {e}")
+            logger.log_session_error(f"Error: Invalid JSON format: {e}")
             sys.exit(1)
         finally:
             end_time = time.time()
@@ -200,7 +208,7 @@ def run_main():
             hours = int(execution_time // 3600)
             minutes = int((execution_time % 3600) // 60)
             seconds = execution_time % 60
-            logger.log_info(
+            logger.log_session_info(
                 f"Total execution time: {hours:02d}:{minutes:02d}:{seconds:06.3f}"
             )
     elif args.folder:
@@ -221,12 +229,12 @@ def run_main():
         try:
             execute_with_folder(folder_path, sorted_files, config)
         except KeyboardInterrupt:
-            logger.log_info("Execution interrupted by user")
+            logger.log_session_info("Execution interrupted by user")
         except FileNotFoundError as e:
-            logger.log_info(f"Error: Folder or file not found: {e}")
+            logger.log_session_error(f"Error: Folder or file not found: {e}")
             sys.exit(1)
         except json.JSONDecodeError as e:
-            logger.log_info(f"Error: Invalid JSON format: {e}")
+            logger.log_session_error(f"Error: Invalid JSON format: {e}")
             sys.exit(1)
         finally:
             end_time = time.time()
@@ -234,7 +242,7 @@ def run_main():
             hours = int(execution_time // 3600)
             minutes = int((execution_time % 3600) // 60)
             seconds = execution_time % 60
-            logger.log_info(
+            logger.log_session_info(
                 f"Total execution time: {hours:02d}:{minutes:02d}:{seconds:06.3f}"
             )
 
