@@ -2,10 +2,29 @@ import re
 import time
 import random
 import string
+from typing import TYPE_CHECKING
 from utils.common import CommonUtils
-from components.Logger import AutoComLogger, get_logger
 
-logger: AutoComLogger = get_logger(name="AutoCom")
+if TYPE_CHECKING:
+    from components.Logger import AutoComLogger
+
+
+class _LazyLogger:
+    def __init__(self):
+        self._logger = None
+
+    def _get_logger(self):
+        if self._logger is None:
+            from components.Logger import get_logger
+
+            self._logger = get_logger(name="AutoCom")
+        return self._logger
+
+    def __getattr__(self, item):
+        return getattr(self._get_logger(), item)
+
+
+logger = _LazyLogger()
 
 
 class ActionHandler:
