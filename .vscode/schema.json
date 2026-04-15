@@ -1,0 +1,355 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "AutoCom Configuration",
+    "description": "AutoCom 设备通信配置文件",
+    "type": "object",
+    "properties": {
+        "ConfigForDevices": {
+            "type": "object",
+            "description": "设备通信配置",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "enabled",
+                        "disabled"
+                    ],
+                    "description": "设备配置状态",
+                    "default": "enabled"
+                },
+                "stop_bits": {
+                    "type": "integer",
+                    "enum": [
+                        1,
+                        2
+                    ],
+                    "description": "停止位",
+                    "default": 1
+                },
+                "parity": {
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "enum": [
+                        null,
+                        "none",
+                        "even",
+                        "odd",
+                        "mark",
+                        "space"
+                    ],
+                    "description": "奇偶校验位",
+                    "default": null
+                },
+                "data_bits": {
+                    "type": "integer",
+                    "enum": [
+                        5,
+                        6,
+                        7,
+                        8
+                    ],
+                    "description": "数据位",
+                    "default": 8
+                },
+                "flow_control": {
+                    "type": "object",
+                    "description": "流控制配置",
+                    "properties": {
+                        "xon_xoff": {
+                            "type": "boolean",
+                            "description": "软件流控",
+                            "default": false
+                        },
+                        "rts_cts": {
+                            "type": "boolean",
+                            "description": "硬件流控 RTS/CTS",
+                            "default": false
+                        },
+                        "dsr_dtr": {
+                            "type": "boolean",
+                            "description": "硬件流控 DSR/DTR",
+                            "default": false
+                        }
+                    },
+                    "additionalProperties": false
+                },
+                "dtr": {
+                    "type": "boolean",
+                    "description": "数据终端就绪",
+                    "default": false
+                },
+                "rts": {
+                    "type": "boolean",
+                    "description": "请求发送",
+                    "default": false
+                }
+            },
+            "required": [
+                "status"
+            ],
+            "additionalProperties": false
+        },
+        "Devices": {
+            "type": "array",
+            "description": "设备列表",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "pattern": "^[a-zA-Z][a-zA-Z0-9_-]*$",
+                        "description": "设备名称（唯一标识）",
+                        "examples": [
+                            "DeviceA",
+                            "DeviceB",
+                            "SIM800_Module"
+                        ]
+                    },
+                    "port": {
+                        "type": "string",
+                        "pattern": "^(COM\\d+|/dev/tty[A-Z]{3}\\d+|/dev/cu\\.[a-zA-Z0-9_-]+)$",
+                        "description": "串口号（Windows: COMx, Linux: /dev/ttyXXX, Mac: /dev/cu.XXX）",
+                        "examples": [
+                            "COM13",
+                            "COM1",
+                            "/dev/ttyUSB0",
+                            "/dev/cu.usbserial-123"
+                        ]
+                    },
+                    "baud_rate": {
+                        "type": "integer",
+                        "enum": [
+                            300,
+                            1200,
+                            2400,
+                            4800,
+                            9600,
+                            19200,
+                            38400,
+                            57600,
+                            115200,
+                            230400,
+                            460800,
+                            921600,
+                            1000000,
+                            1152000,
+                            1500000,
+                            2000000,
+                            2500000
+                        ],
+                        "description": "波特率",
+                        "default": 115200
+                    }
+                },
+                "required": [
+                    "name",
+                    "port",
+                    "baud_rate"
+                ],
+                "additionalProperties": false
+            },
+            "minItems": 1,
+            "uniqueItemProperties": [
+                "name",
+                "port"
+            ]
+        },
+        "ConfigForCommands": {
+            "type": "object",
+            "description": "命令执行全局配置",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "enabled",
+                        "disabled"
+                    ],
+                    "description": "命令配置状态",
+                    "default": "enabled"
+                },
+                "timeout": {
+                    "type": "integer",
+                    "minimum": 100,
+                    "maximum": 60000,
+                    "description": "全局超时时间（毫秒）",
+                    "default": 4000
+                },
+                "concurrent_strategy": {
+                    "type": "string",
+                    "enum": [
+                        "sequential",
+                        "parallel",
+                        "batch"
+                    ],
+                    "description": "并发执行策略",
+                    "default": "sequential"
+                },
+                "error_actions": {
+                    "type": "array",
+                    "description": "错误处理策略",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "retry": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 10,
+                                "description": "重试次数"
+                            },
+                            "ignore": {
+                                "type": "boolean",
+                                "description": "忽略错误继续执行"
+                            },
+                            "stop": {
+                                "type": "boolean",
+                                "description": "停止后续命令"
+                            }
+                        },
+                        "minProperties": 1,
+                        "additionalProperties": false
+                    },
+                    "default": []
+                }
+            },
+            "required": [
+                "status"
+            ],
+            "additionalProperties": false
+        },
+        "Commands": {
+            "type": "array",
+            "description": "命令列表",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "pattern": "^AT\\+[A-Z]+(=[^\\s]*)?$",
+                        "description": "AT 命令",
+                        "examples": [
+                            "AT+QECHO=1",
+                            "AT+CSUB",
+                            "AT+CSQ",
+                            "AT+CREG?"
+                        ],
+                        "patternErrorMessage": "命令必须以 AT+ 开头"
+                    },
+                    "expected_responses": {
+                        "type": "array",
+                        "description": "期望的响应列表（顺序依次匹配）",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        },
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "examples": [
+                            [
+                                "OK"
+                            ],
+                            [
+                                "OK",
+                                "CONNECT"
+                            ],
+                            [
+                                "SubEdition: V01"
+                            ]
+                        ]
+                    },
+                    "device": {
+                        "type": "string",
+                        "description": "执行命令的设备名称（必须与 Devices 中的 name 匹配）",
+                        "$comment": "动态验证：应匹配 Devices 数组中的某个 name"
+                    },
+                    "order": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "命令执行顺序",
+                        "examples": [
+                            1,
+                            2,
+                            3
+                        ]
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "minimum": 100,
+                        "maximum": 30000,
+                        "description": "单条命令超时时间（毫秒），优先级高于全局配置",
+                        "default": 1000
+                    },
+                    "delay_after": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 10000,
+                        "description": "命令执行后延迟（毫秒）",
+                        "default": 0
+                    },
+                    "ignore_error": {
+                        "type": "boolean",
+                        "description": "是否忽略该命令的错误",
+                        "default": false
+                    },
+                    "variables": {
+                        "type": "object",
+                        "description": "从响应中提取的变量",
+                        "additionalProperties": {
+                            "type": "string",
+                            "description": "正则表达式，用于提取响应内容"
+                        },
+                        "examples": [
+                            {
+                                "signal_strength": "\\+CSQ: (\\d+),"
+                            }
+                        ]
+                    }
+                },
+                "required": [
+                    "command",
+                    "expected_responses",
+                    "device",
+                    "order"
+                ],
+                "additionalProperties": false
+            },
+            "minItems": 1
+        }
+    },
+    "required": [
+        "ConfigForDevices",
+        "Devices",
+        "ConfigForCommands",
+        "Commands"
+    ],
+    "additionalProperties": false,
+    "allOf": [
+        {
+            "$comment": "验证 device 字段必须存在于 Devices 列表中（通过模式匹配）",
+            "if": {
+                "type": "object",
+                "required": [
+                    "Devices",
+                    "Commands"
+                ]
+            },
+            "then": {
+                "properties": {
+                    "Commands": {
+                        "items": {
+                            "properties": {
+                                "device": {
+                                    "type": "string",
+                                    "pattern": "^(DeviceA|DeviceB|DeviceC)$",
+                                    "patternErrorMessage": "设备名称必须在 Devices 列表中定义",
+                                    "description": "可用的设备: DeviceA, DeviceB, DeviceC"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    ]
+}
