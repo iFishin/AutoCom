@@ -24,7 +24,7 @@ classifiers = [
 ]
 keywords = ["serial", "automation", "testing", "embedded", "iot"]
 requires-python = ">=3.7"
-dependencies = ["pyserial>=3.5", "wcwidth"]
+dependencies = ["pyserial>=3.5", "wcwidth", "requests", "pywifi"]
 
 [project.urls]
 Homepage = "https://github.com/iFishin/AutoCom"
