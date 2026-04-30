@@ -1,7 +1,9 @@
 include README.md
 include LICENSE
-include About.md
-include AutoCom字典使用示例.md
+include docs/About.md
+include docs/Started.md
+include docs/DEV.md
+include docs/Actions.md
 include version.py
 include AutoCom.py
 include cli.py
