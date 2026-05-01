@@ -71,6 +71,38 @@ def run_main():
     )
 
     # 添加版本参数
+    # MCP Server 子命令
+    subparsers = parser.add_subparsers(dest="command", help="子命令")
+    mcp_parser = subparsers.add_parser(
+        "mcp",
+        help="启动 MCP Server（为 AI Agent 提供串口操作接口）",
+        epilog="""
+示例:
+  autocom mcp                              # stdio 模式（默认，适合 Claude Desktop）
+  autocom mcp --sse                        # SSE (HTTP) 模式
+  autocom mcp --sse --port 8080            # 自定义端口
+  autocom mcp --sse --host 127.0.0.1       # 仅本地访问
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    mcp_parser.add_argument(
+        "--sse",
+        action="store_true",
+        help="以 SSE (HTTP) 模式运行（默认: stdio 模式）",
+    )
+    mcp_parser.add_argument(
+        "--port",
+        type=int,
+        default=8888,
+        help="SSE 模式下的监听端口（默认: 8888）",
+    )
+    mcp_parser.add_argument(
+        "--host",
+        type=str,
+        default="0.0.0.0",
+        help="SSE 模式下的监听地址（默认: 0.0.0.0）",
+    )
+
     parser.add_argument(
         "-v",
         "--version",
@@ -125,6 +157,16 @@ def run_main():
     )
 
     args = parser.parse_args()
+
+    # 处理子命令
+    if args.command == "mcp":
+        from components.MCPServer import main as mcp_main
+        sys.argv = [sys.argv[0], "--sse"] if args.sse else [sys.argv[0]]
+        # 传递参数
+        if args.sse:
+            sys.argv.extend(["--port", str(args.port), "--host", args.host])
+        mcp_main()
+        return
 
     # 处理 --init 参数
     if args.init:

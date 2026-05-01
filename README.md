@@ -126,6 +126,90 @@ AutoCom/
 | 文件夹遍历 | 批量执行文件夹内所有字典文件 |
 | 监控模式 | 监听文件夹，新文件自动执行 |
 | 持续日志监听 | 后台线程持续记录串口输出 |
+| **MCP Server** | **为 AI Agent 提供串口操作接口，支持 Claude Desktop 等 MCP 客户端** |
+
+---
+
+## 🤖 MCP Server（AI Agent 接口）
+
+AutoCom MCP Server 基于 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) 实现，让 AI Agent（如 Claude Desktop、Cursor 等）能够直接控制串口设备。
+
+### 安装
+
+```bash
+# 安装 MCP 依赖
+pip install autocom[mcp]
+```
+
+### 启动
+
+```bash
+# Stdio 模式（默认，适合 Claude Desktop）
+autocom mcp
+
+# SSE (HTTP) 模式（适合远程调用）
+autocom mcp --sse --port 8888
+```
+
+### 可用的 MCP 工具
+
+| 工具名 | 描述 | 关键参数 |
+|--------|------|----------|
+| `list_devices` | 列出可用串口设备 | 无需参数 |
+| `execute_command` | 发送单条指令并获取响应 | `port`, `command`, `baud_rate`(可选) |
+| `execute_commands` | 批量执行多条指令 | `port`, `commands[]`, `parallel`(可选) |
+| `load_dict` | 加载 AutoCom 字典 JSON 配置 | `file_path`, `config_path`(可选) |
+| `monitor_port` | 监听串口输出 | `port`, `duration`(可选) |
+
+### 配置 Claude Desktop
+
+在 `claude_desktop_config.json` 中添加：
+
+```json
+{
+  "mcpServers": {
+    "autocom": {
+      "command": "autocom",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+### SSE 模式
+
+SSE 模式启动后可通过浏览器或 MCP Inspector 调试：
+
+```
+# 健康检查
+http://localhost:8888/health
+
+# MCP Inspector 调试
+npx @modelcontextprotocol/inspector
+# 连接地址: http://localhost:8888/mcp/sse
+```
+
+### 使用示例（Python API）
+
+```python
+# 扫描设备
+result = await client.call_tool("list_devices", {})
+
+# 发送指令
+result = await client.call_tool("execute_command", {
+    "port": "COM3",
+    "command": "AT+GMR",
+    "baud_rate": 115200,
+    "timeout": 5.0,
+})
+
+# 批量执行
+result = await client.call_tool("execute_commands", {
+    "port": "/dev/ttyUSB0",
+    "commands": ["AT", "AT+GMR", "AT+CSQ"],
+    "parallel": False,
+})
+```
 
 ---
 
