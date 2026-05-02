@@ -583,7 +583,7 @@ class AutoComMCPServer:
             await server.run(
                 read_stream=read_stream,
                 write_stream=write_stream,
-                server.create_initialization_options(),
+                initialization_options=server.create_initialization_options(),
             )
 
     async def run_sse(self) -> None:
@@ -608,7 +608,7 @@ class AutoComMCPServer:
                 await server.run(
                     read_stream=read_stream,
                     write_stream=write_stream,
-                    server.create_initialization_options(),
+                    initialization_options=server.create_initialization_options(),
                 )
 
         app = Starlette(
