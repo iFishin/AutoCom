@@ -503,6 +503,11 @@ class AutoComLogger:
         if not self._logger.isEnabledFor(level):
             return
 
+        # 自动捕获 exc_info（如果调用方传了 exc_info=True 但没传具体异常）
+        if kwargs.get("exc_info") is True and "exc_info" not in kwargs:
+            import sys
+            kwargs["exc_info"] = sys.exc_info()
+
         # 合并上下文
         ctx = LogContext.get_all()
         if ctx:
@@ -527,11 +532,21 @@ class AutoComLogger:
         self._log(logging.WARNING, msg, **kwargs)
 
     def log_error(self, msg: str, **kwargs) -> None:
-        """错误日志"""
+        """错误日志
+
+        Args:
+            msg: 日志消息
+            **kwargs: 支持 exc_info=True 自动捕获异常堆栈
+        """
         self._log(logging.ERROR, msg, **kwargs)
 
     def log_critical(self, msg: str, **kwargs) -> None:
-        """严重错误日志"""
+        """严重错误日志
+
+        Args:
+            msg: 日志消息
+            **kwargs: 支持 exc_info=True 自动捕获异常堆栈
+        """
         self._log(logging.CRITICAL, msg, **kwargs)
 
     def log_pass(self, msg: str, **kwargs) -> None:
@@ -609,7 +624,8 @@ class AutoComLogger:
             self.log_realtime_table_banner(
                 f"ℹ Finished iteration {iteration}/{total} - PASS"
             )
-        self.log_realtime_table_banner(f"ℹ Finished iteration {iteration}/{total}")
+        else:
+            self.log_realtime_table_banner(f"ℹ Finished iteration {iteration}/{total}")
 
     ### 会话日志方法
 
@@ -725,6 +741,23 @@ def setup_root_logger(
     return AutoComLogger.get_instance(
         "AutoCom", level=level, log_file=log_file, enable_color=enable_color
     )
+
+
+def log_exception(
+    logger_instance: Optional[AutoComLogger] = None,
+    msg: str = "Unexpected error",
+) -> None:
+    """便捷记录异常堆栈（在 except 块中调用）
+
+    Args:
+        logger_instance: Logger 实例，默认使用全局 get_logger()
+        msg: 日志消息前缀
+    """
+    import traceback
+
+    _log = logger_instance or get_logger()
+    tb = traceback.format_exc()
+    _log.log_error(f"{msg}\n{tb}")
 
 
 # ============================================================================
