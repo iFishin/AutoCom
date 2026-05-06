@@ -217,13 +217,13 @@ def run_main():
 
         import re
 
-        json_files = [f for f in os.listdir(folder_path) if f.endswith(".json")]
+        config_files = [f for f in os.listdir(folder_path) if f.endswith((".json", ".yaml", ".yml"))]
 
         def _sort_key(x):
             match = re.match(r"(\d+)", x)
             return int(match.group(1)) if match else float("inf")
 
-        sorted_files = sorted(json_files, key=_sort_key)
+        sorted_files = sorted(config_files, key=_sort_key)
 
         start_time = time.time()
         try:

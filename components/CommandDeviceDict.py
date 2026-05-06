@@ -4,6 +4,7 @@ import sys
 from utils.common import CommonUtils
 from utils.dirs import get_dirs
 from components.Device import Device
+from components.DataStore import DataStore
 import os
 import re
 import time
@@ -163,7 +164,7 @@ class CommandDeviceDict:
         self.dict = config_dict
         self.devices = {}
         self.log_date_dir = str(get_dirs()._session_dir)
-        self._data_store = data_store
+        self._data_store = data_store if data_store is not None else DataStore()
 
         # Simplified monitoring mechanism
         self.monitor_threads = {}  # Track monitor threads
