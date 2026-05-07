@@ -17,24 +17,30 @@ import json
 import sys
 import time
 import threading
-from typing import Any, Optional
+from typing import Any, Optional, TYPE_CHECKING
 
-# ---------------------------------------------------------------------------
-# MCP SDK
-# ---------------------------------------------------------------------------
-try:
-    from mcp.server import Server as MCPServer
-    from mcp.server.stdio import stdio_server
-    from mcp.types import (
-        Tool,
-        TextContent,
-        CallToolResult,
-    )
-    from mcp.shared.exceptions import McpError
+# runtime presence flag for the optional `mcp` dependency
+_MCP_AVAILABLE = False
 
-    _MCP_AVAILABLE = True
-except ImportError:  # pragma: no cover
-    _MCP_AVAILABLE = False
+if TYPE_CHECKING:
+    # Static type imports for IDEs / type checkers only
+    from mcp.server import Server as MCPServer  # type: ignore
+    from mcp.server.stdio import stdio_server  # type: ignore
+    from mcp.types import Tool, TextContent, CallToolResult  # type: ignore
+    from mcp.shared.exceptions import McpError  # type: ignore
+    from mcp import ErrorData  # type: ignore
+else:
+    # Runtime import guarded to avoid hard dependency at module import time
+    try:
+        from mcp.server import Server as MCPServer
+        from mcp.server.stdio import stdio_server
+        from mcp.types import Tool, TextContent, CallToolResult
+        from mcp.shared.exceptions import McpError
+        from mcp import ErrorData
+
+        _MCP_AVAILABLE = True
+    except Exception:  # pragma: no cover
+        _MCP_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
 # AutoCom 核心组件
@@ -75,8 +81,16 @@ class AutoComMCPServer:
     # Server Lifecycle
     # ======================================================================
 
-    def _init_server(self) -> MCPServer:
+    def _init_server(self) -> "MCPServer":
         """初始化 MCP Server 实例并注册所有工具"""
+        if not _MCP_AVAILABLE:
+            raise RuntimeError("mcp 库未安装。请运行: pip install mcp")
+
+        # 在运行时确保需要的 mcp 类型已导入（避免模块顶层导入失败导致名称未绑定）
+        from mcp.server import Server as MCPServer
+        from mcp.types import Tool, TextContent, CallToolResult
+        from mcp.shared.exceptions import McpError
+
         server = MCPServer(self.server_name)
 
         # ------------------- list_devices -------------------
@@ -233,7 +247,11 @@ class AutoComMCPServer:
                 elif name == "monitor_port":
                     result = await self._monitor_port(**arguments)
                 else:
-                    raise McpError(f"未知工具: {name}")
+                    error_msg = ErrorData(
+                        code=-1,
+                        message=f"未知工具: {name}",
+                    )
+                    raise McpError(error_msg)
 
                 return CallToolResult(
                     content=[TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
@@ -578,13 +596,21 @@ class AutoComMCPServer:
 
         server = self._init_server()
 
-        async with stdio_server() as (read_stream, write_stream):
-            logger.log_info("MCP Server (stdio) 已启动 — 等待协议通信...")
-            await server.run(
-                read_stream=read_stream,
-                write_stream=write_stream,
-                server.create_initialization_options(),
-            )
+        # 运行并允许通过 Ctrl+C 优雅停止
+        import asyncio
+
+        try:
+            async with stdio_server() as (read_stream, write_stream):
+                logger.log_info("MCP Server (stdio) 已启动 — 等待协议通信...")
+                await server.run(
+                    read_stream=read_stream,
+                    write_stream=write_stream,
+                    initialization_options=server.create_initialization_options(),
+                )
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            logger.log_info("MCP Server (stdio) 接收到停止信号，正在关闭...")
+            # async with 上下文会自动关闭 stdio 连接，尽量让协程返回
+            return
 
     async def run_sse(self) -> None:
         """以 SSE 模式运行 MCP Server（HTTP 服务）"""
@@ -608,7 +634,7 @@ class AutoComMCPServer:
                 await server.run(
                     read_stream=read_stream,
                     write_stream=write_stream,
-                    server.create_initialization_options(),
+                    initialization_options=server.create_initialization_options(),
                 )
 
         app = Starlette(
@@ -619,13 +645,12 @@ class AutoComMCPServer:
         )
 
         logger.log_info(f"MCP Server (SSE) 启动在 http://{self.sse_host}:{self.sse_port}/mcp/sse")
-        logger.log_info("健康检查: http://{self.sse_host}:{self.sse_port}/health")
+        logger.log_info(f"健康检查: http://{self.sse_host}:{self.sse_port}/health")
         logger.log_info("连接后可通过 MCP Inspector 调试: https://github.com/modelcontextprotocol/inspector")
 
         # 添加健康检查路由
         from starlette.responses import JSONResponse
 
-        @app.route("/health")
         async def health(request):
             return JSONResponse({
                 "status": "ok",
@@ -633,9 +658,22 @@ class AutoComMCPServer:
                 "tools": ["list_devices", "execute_command", "execute_commands", "load_dict", "monitor_port"],
             })
 
+        # 显式注册路由，避免依赖装饰器语法在某些运行/检查环境出错
+        app.add_route("/health", health)
+
         config = uvicorn.Config(app, host=self.sse_host, port=self.sse_port, log_level="info")
         server_uv = uvicorn.Server(config)
-        await server_uv.serve()
+        try:
+            await server_uv.serve()
+        except Exception as e:
+            # 捕获 KeyboardInterrupt/取消等导致的异常，优雅退出
+            import asyncio
+
+            if isinstance(e, (KeyboardInterrupt, asyncio.CancelledError)):
+                logger.log_info("MCP Server (SSE) 接收到停止信号，正在关闭...")
+                server_uv.should_exit = True
+                return
+            raise
 
 
 # ============================================================================
@@ -678,10 +716,20 @@ def main():
 
     server = AutoComMCPServer(sse_host=args.host, sse_port=args.port)
 
-    if args.sse:
-        asyncio.run(server.run_sse())
-    else:
-        asyncio.run(server.run_stdio())
+    try:
+        if args.sse:
+            asyncio.run(server.run_sse())
+        else:
+            asyncio.run(server.run_stdio())
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        # 避免 Ctrl+C 导致未捕获的 traceback，优雅退出
+        logger.log_info("MCP Server 收到终止信号，正在退出...")
+        try:
+            sys.exit(0)
+        except SystemExit:
+            # 在某些运行环境 asyncio.run 会把 CancelledError 转为 KeyboardInterrupt，
+            # 确保不再抛出异常到上层
+            return
 
 
 if __name__ == "__main__":

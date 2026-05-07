@@ -114,6 +114,7 @@ AutoCom/
 | [docs/DEV.md](docs/DEV.md) | 开发工具使用说明 |
 | [docs/ToDO.md](docs/ToDO.md) | 待办事项与未来计划 |
 | [CHANGELOG.md](CHANGELOG.md) | 版本变更历史 |
+| [docs/MCP.md](docs/MCP.md) | MCP Server: AI Agent 接口 |
 
 > 📖 **格式框架详解**（Devices、Commands、Actions 的 JSON 格式说明）参见 [docs/About.md](docs/About.md)。
 
