@@ -21,8 +21,7 @@ from components.Logger import AutoComLogger
 dirs = get_dirs()
 # 初始化 Logger
 log_file = str(dirs.session_dir / "EXECUTION.log")
-logger = AutoComLogger.get_instance(name="AutoCom", log_file=log_file)
-
+logger = AutoComLogger(log_file)
 
 def main():
     """CLI 入口函数"""
@@ -32,12 +31,21 @@ def main():
 def run_main():
     """主程序入口函数,用于被 CLI 调用"""
 
-    # 在初始化目录之前检查参数，避免不传参数时创建目录
     if len(sys.argv) == 1:
-        # 显示欢迎信息
-        print()
-        print(f"🚀 AutoCom v{__version__}")
-        print("   串口自动化指令执行工具 - 支持多设备、多指令的串行和并行执行")
+        # 显示欢迎信息（含艺术字）
+        autocom_text_art = """
+ ▄▄▄▄▄▄▄ ▄▄   ▄▄ ▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄ ▄▄   ▄▄ 
+█       █  █ █  █       █       █       █       █  █▄█  █
+█   ▄   █  █ █  █▄     ▄█   ▄   █       █   ▄   █       █
+█  █▄█  █  █▄█  █ █   █ █  █ █  █     ▄▄█  █ █  █       █
+█       █       █ █   █ █  █▄█  █    █  █  █▄█  █       █
+█   ▄   █       █ █   █ █       █    █▄▄█       █ ██▄██ █
+█▄▄█ █▄▄█▄▄▄▄▄▄▄█ █▄▄▄█ █▄▄▄▄▄▄▄█▄▄▄▄▄▄▄█▄▄▄▄▄▄▄█▄█   █▄█
+        """
+
+        print(autocom_text_art)
+        print(f"AutoCom v{__version__}")
+        print("串口自动化指令执行工具 - 支持多设备、多指令的串行和并行执行")
         print()
         print("🎯 初始化执行目录:")
         print(
@@ -45,8 +53,8 @@ def run_main():
         )
         print()
         print("📖 快速开始:")
-        print("   autocom -d dict.json -l 3           # 执行字典文件，循环3次")
-        print("   autocom -d dict.json -i             # 无限循环模式")
+        print("   autocom -d dict.yaml -l 3           # 执行字典文件，循环3次")
+        print("   autocom -d dict.yaml -i             # 无限循环模式")
         print("   autocom -f dicts/                   # 执行文件夹内所有字典")
         print("   autocom -m temps/                   # 监控模式")
         print()
@@ -54,8 +62,11 @@ def run_main():
         print("   autocom --help                      # 查看完整帮助")
         print("   autocom -v                          # 查看版本信息")
         print()
-        print("📚 文档: https://github.com/iFishin/AutoCom")
+        print("✨ 选项说明")
         print()
+        print("  --cli-output-mode  指定 CLI 日志输出方式: 'table' 或 'plain' (默认: 'table')")
+        print()
+        print("📚 文档: https://github.com/iFishin/AutoCom")
         print()
         sys.exit(0)
 
@@ -63,11 +74,11 @@ def run_main():
         description="AutoCom command execution tool",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Examples:\n"
-        "  autocom -d dict.json -l 3              # 循环执行3次\n"
-        "  autocom -d dict.json -i                # 无限循环\n"
+        "  autocom -d dict.yaml -l 3              # 循环执行3次\n"
+        "  autocom -d dict.yaml -i                # 无限循环\n"
         "  autocom -f dicts/                      # 文件夹模式\n"
         "  autocom -m temps/                      # 监控模式\n"
-        "  autocom -d dict.json -c config.json    # 使用配置文件\n",
+        "  autocom -d dict.yaml -c config.yaml    # 使用配置文件\n",
     )
 
     # 添加版本参数
@@ -124,7 +135,19 @@ def run_main():
         help="Initialize current directory with AutoCom project structure (creates dicts, configs, temps folders with examples)",
     )
 
+    parser.add_argument(
+        "--cli-output-mode",
+        choices=["table", "plain"],
+        default="table",
+        help="CLI logging output mode: table or plain (default: table)",
+    )
+
     args = parser.parse_args()
+
+    # 初始化 Logger（现在可以使用 CLI 参数指定输出模式）
+    logger = AutoComLogger.get_instance(
+        name="AutoCom", log_file=log_file, cli_output_mode=args.cli_output_mode
+    )
 
     # 处理 --init 参数
     if args.init:

@@ -2,7 +2,7 @@
 
 # AutoCom
 
-*一款用于自动化执行串口指令的脚本，支持多设备、多指令的串行和并行执行。*
+*一款用于自动化执行串口指令的命令行工具，支持多设备、多指令的串行和并行执行。*
 
 ![Cross Platform](https://img.shields.io/badge/cross--platform-Windows%20%26%20Linux-success.svg)
 ![Serial Communication](https://img.shields.io/badge/communication-Serial%20Port-orange.svg)
@@ -17,16 +17,19 @@
 ## 📦 安装
 
 ### 从 PyPI 安装（推荐）
+
 ```bash
 pip install autocom
 ```
 
 ### 从 GitHub 直接安装
+
 ```bash
 pip install git+https://github.com/iFishin/AutoCom.git
 ```
 
 ### 从源码安装
+
 ```bash
 git clone https://github.com/iFishin/AutoCom.git
 cd AutoCom
@@ -39,18 +42,19 @@ pip install -e .
 ## 🚀 快速开始
 
 ### 命令行使用
+
 ```bash
 # 初始化项目结构（创建 dicts/、configs/、temps/ 目录及示例文件）
 autocom --init
 
 # 执行字典文件（循环3次）
-autocom -d dicts/dict.json -l 3
+autocom -d dicts/dict.yaml -l 3
 
 # 无限循环模式（按 Ctrl+C 停止）
-autocom -d dicts/dict.json -i
+autocom -d dicts/dict.yaml -i
 
 # 使用配置文件
-autocom -d dicts/dict.json -c configs/config.json
+autocom -d dicts/dict.yaml -c configs/config.yaml
 
 # 执行文件夹内所有字典文件
 autocom -f dicts/
@@ -60,6 +64,7 @@ autocom -m temps/
 ```
 
 ### Python API 使用
+
 ```python
 from autocom import CommandDeviceDict, CommandExecutor, CommonUtils
 
