@@ -2,4 +2,4 @@ pyserial>=3.5
 pywifi
 requests
 wcwidth
-PyYAML>=6.0
+PyYAML>=6.0.3
