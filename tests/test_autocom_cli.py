@@ -64,7 +64,8 @@ class TestAutoComCLI(unittest.TestCase):
             dict_path = tf.name
 
         # Patch serial.Serial to return our SimulatedSerial instance
-        with patch("components.Device.serial.Serial") as mock_serial_class:
+        # Patch the top-level serial module used by Device (reliable import)
+        with patch("serial.Serial") as mock_serial_class:
             sim = SimulatedSerial()
             sim.is_open = True
             # Map commands to responses (include CRLF)

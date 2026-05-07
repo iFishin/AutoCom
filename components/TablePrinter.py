@@ -12,7 +12,10 @@ class TablePrinter:
                  headers: List[str],
                  max_width: int = 200,
                  min_width: int = 80,
-                 auto_terminal: bool = True):
+                 auto_terminal: bool = True,
+                 width_mode: str = "proportional",
+                 column_ratios: Optional[List[float]] = None,
+                 fixed_widths: Optional[List[int]] = None):
         """
         初始化表格打印器
         
@@ -26,7 +29,16 @@ class TablePrinter:
         self.max_width = max_width
         self.min_width = min_width
         self.auto_terminal = auto_terminal
-        self.widths = self.calculate_column_widths()
+        # Width calculation mode and parameters
+        # width_mode: "proportional" | "equal" | "content" | "fixed"
+        self.width_mode = width_mode
+        self.column_ratios = column_ratios
+        self.fixed_widths = fixed_widths
+        self.widths = self.calculate_column_widths(
+            mode=self.width_mode,
+            custom_ratios=self.column_ratios,
+            fixed_widths=self.fixed_widths,
+        )
         self.data = []
         self.terminal_width = None
         
@@ -108,7 +120,14 @@ class TablePrinter:
             return fixed_widths
         
         if mode == "proportional" and custom_ratios:
-            widths = [int(total_width * ratio) for ratio in custom_ratios]
+            # Normalize ratios if they don't sum to 1
+            total_ratio = sum(custom_ratios)
+            if total_ratio <= 0:
+                # fallback to equal if invalid ratios
+                col_width = total_width // len(self.headers)
+                return [col_width] * len(self.headers)
+            normalized = [r / total_ratio for r in custom_ratios]
+            widths = [int(total_width * ratio) for ratio in normalized]
             # 调整舍入误差
             diff = total_width - sum(widths)
             if diff != 0:
@@ -192,8 +211,10 @@ class TablePrinter:
         if not self.headers:
             return ""
         
-        # 计算列宽
-        widths = self.calculate_column_widths()
+        # 计算列宽，使用初始化时的模式/参数
+        widths = self.calculate_column_widths(
+            mode=self.width_mode, custom_ratios=self.column_ratios, fixed_widths=self.fixed_widths
+        )
         
         # 构建表格
         lines = []
@@ -349,16 +370,21 @@ class TablePrinter:
         """打印表头"""
         lines = []
         
+        # 计算表头使用的列宽（保持与 print_table 一致）
+        widths = self.calculate_column_widths(
+            mode=self.width_mode, custom_ratios=self.column_ratios, fixed_widths=self.fixed_widths
+        )
+
         # 上边框
-        top_line = self._build_border_line(self.widths, 'top')
+        top_line = self._build_border_line(widths, 'top')
         lines.append(top_line)
         
         # 表头
-        header_line = self._build_data_line(self.headers, self.widths, is_header=True)
+        header_line = self._build_data_line(self.headers, widths, is_header=True)
         lines.append(header_line)
         
         # 分隔线
-        sep_line = self._build_border_line(self.widths, 'middle')
+        sep_line = self._build_border_line(widths, 'middle')
         lines.append(sep_line)
         
         output = '\n'.join(lines)
@@ -406,15 +432,9 @@ class TablePrinter:
             # 填充到指定宽度
             current_width = self._display_width(cell_str)
             padding = widths[i] - current_width
-            
-            if is_header:
-                # 表头居中
-                left_pad = padding // 2
-                right_pad = padding - left_pad
-                cell_str = ' ' * left_pad + cell_str + ' ' * right_pad
-            else:
-                # 数据左对齐
-                cell_str = cell_str + ' ' * padding
+
+            # 数据左对齐
+            cell_str = cell_str + ' ' * padding
             
             cells.append(cell_str)
         

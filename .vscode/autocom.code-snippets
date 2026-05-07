@@ -1,0 +1,99 @@
+{
+  "AutoCom 完整配置模板": {
+    "scope": "yaml",
+    "prefix": "autocom",
+    "body": [
+      "# AutoCom 配置文件",
+      "ConfigForDevices:",
+      "  status: enabled",
+      "  stop_bits: 1",
+      "  parity: null",
+      "  data_bits: 8",
+      "  flow_control:",
+      "    xon_xoff: false",
+      "    rts_cts: false",
+      "    dsr_dtr: false",
+      "  dtr: false",
+      "  rts: false",
+      "",
+      "Devices:",
+      "  - name: ${1:DeviceA}",
+      "    port: ${2:COM1}",
+      "    baud_rate: ${3:115200}",
+      "",
+      "ConfigForCommands:",
+      "  status: enabled",
+      "  timeout: 4000",
+      "  concurrent_strategy: sequential",
+      "  error_actions:",
+      "    - retry: 1",
+      "",
+      "Commands:",
+      "  - command: ${4:AT+QECHO=1}",
+      "    expected_responses:",
+      "      - ${5:OK}",
+      "    device: ${1}",
+      "    order: 1",
+      "    timeout: 1000",
+      ""
+    ],
+    "description": "AutoCom 完整配置模板"
+  },
+  
+  "指令模板": {
+    "scope": "yaml",
+    "prefix": "command",
+    "body": [
+      "- command: ${1:AT+CMD=${2:value}}",
+      "  expected_responses:",
+      "    - ${3:OK}",
+      "  device: ${4:DeviceA}",
+      "  order: ${5:1}",
+      "  timeout: ${6:1000}$0",
+      ""
+    ],
+    "description": "指令模板"
+  },
+  
+  "设备模板": {
+    "scope": "yaml",
+    "prefix": "device",
+    "body": [
+      "- name: ${1:DeviceA}",
+      "  port: ${2:COM13}",
+      "  baud_rate: ${3:115200}$0",
+      ""
+    ],
+    "description": "设备配置模板"
+  },
+  
+  "错误处理模板": {
+    "scope": "yaml",
+    "prefix": "error_action",
+    "body": [
+      "error_actions:",
+      "  - retry: ${1:1}$0",
+      ""
+    ],
+    "description": "错误处理配置"
+  },
+  
+  "带变量的命令模板": {
+    "scope": "yaml",
+    "prefix": "atcmd_var",
+    "body": [
+      "- command: ${1:AT+CSQ}",
+      "  expected_responses:",
+      "    - \"+CSQ: ${2:99},99\"",
+      "    - OK",
+      "  device: ${3:DeviceA}",
+      "  order: ${4:1}",
+      "  timeout: 1000",
+      "  variables:",
+      "    signal_strength: \"\\\\+CSQ: (\\\\d+),\"",
+      "    ber: \"\\\\+CSQ: \\\\d+,(\\\\d+)\"",
+      ""
+    ],
+    "description": "带变量提取的 AT 命令"
+  }
+}

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "autocom"
 dynamic = ["version"]
-description = "一款用于自动化执行串口指令的脚本，支持多设备、多指令的串行和并行执行"
+description = "一款用于自动化执行串口指令的命令行工具，支持多设备、多指令的串行和并行执行"
 readme = "README.md"
 authors = [{ name = "iFishin", email = "i@ifishin.top" }]
 license = { text = "MIT" }
