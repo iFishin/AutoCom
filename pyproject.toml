@@ -27,7 +27,8 @@ requires-python = ">=3.7"
 dependencies = ["pyserial>=3.5", "wcwidth", "requests", "pywifi"]
 
 [project.optional-dependencies]
-mcp = ["mcp>=1.0.0", "starlette", "uvicorn"]
+mcp = ["mcp>=1.0.0", "starlette", "uvicorn", "pyyaml"]
+yaml = ["pyyaml"]
 dev = ["pytest", "pytest-asyncio", "pytest-mock"]
 
 [project.urls]

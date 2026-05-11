@@ -63,9 +63,11 @@ def run_main():
         print("  --cli-output-mode  指定 CLI 日志输出方式: 'table' 或 'plain' (默认: 'table')")
         print()
         print("🧭 MCP Server (AI Agent 接口)")
-        print("   autocom mcp                      # 启动 stdio 模式（默认，适合 Claude Desktop）")
-        print("   autocom mcp --sse                # 启动 SSE (HTTP) 模式（适合远端/服务器）")
-        print("   autocom mcp --sse --port 8888 --host 0.0.0.0  # 在所有接口上监听")
+        print("   autocom mcp                                           # 启动 stdio 模式（默认，适合 Claude Desktop）")
+        print("   autocom mcp --sse                                     # 启动 SSE (HTTP) 模式（适合远端/服务器）")
+        print("   autocom mcp --sse --port 8888 --host 0.0.0.0          # 在所有接口上监听")
+        print("   autocom mcp --streamable                              # 启动 Streamable HTTP 模式（适合需要持续双向消息流的客户端）")
+        print("   autocom mcp --streamable --port 8888 --host 0.0.0.0   # 在所有接口上监听")
         print()
         print("📚 文档: https://github.com/iFishin/AutoCom")
         print()
@@ -98,6 +100,10 @@ def run_main():
   autocom mcp --sse                        # SSE (HTTP) 模式
   autocom mcp --sse --port 8080            # 自定义端口
   autocom mcp --sse --host 127.0.0.1       # 仅本地访问
+  autocom mcp --streamable                 # Streamable HTTP 模式
+  autocom mcp --streamable --port 8080     # 自定义端口
+  autocom mcp --streamable --host 127.0.0.1 # 仅本地访问
+    autocom mcp --streamable --port 8888 --auth-key s3cr3t  # 启用 API Key 鉴权
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -105,6 +111,16 @@ def run_main():
         "--sse",
         action="store_true",
         help="以 SSE (HTTP) 模式运行（默认: stdio 模式）",
+    )
+    mcp_parser.add_argument(
+        "--streamable",
+        action="store_true",
+        help="以 Streamable HTTP 模式运行（长连接/双向通道）",
+    )
+    mcp_parser.add_argument(
+        "--auth-key",
+        type=str,
+        help="为 SSE/Streamable 启用简单 API Key 鉴权（Header: Authorization: Bearer <key> or X-API-Key）",
     )
     mcp_parser.add_argument(
         "--port",
@@ -184,10 +200,21 @@ def run_main():
     # 处理子命令
     if args.command == "mcp":
         from components.MCPServer import main as mcp_main
-        sys.argv = [sys.argv[0], "--sse"] if args.sse else [sys.argv[0]]
-        # 传递参数
+        # 构建要传递给 MCPServer 的 argv 列表
+        sys.argv = [sys.argv[0]]
         if args.sse:
+            sys.argv.append("--sse")
+        elif args.streamable:
+            sys.argv.append("--streamable")
+
+        # 传递端口和 host（无论 SSE 还是 Streamable 都适用）
+        if args.sse or args.streamable:
             sys.argv.extend(["--port", str(args.port), "--host", args.host])
+
+        # 传递鉴权 key（可选）
+        if getattr(args, "auth_key", None):
+            sys.argv.extend(["--auth-key", args.auth_key])
+
         mcp_main()
         return
     

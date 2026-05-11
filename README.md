@@ -155,7 +155,27 @@ autocom mcp
 
 # SSE (HTTP) 模式（适合远程调用）
 autocom mcp --sse --port 8888
+ 
+# Streamable HTTP 模式（长连接/双向通道，适合需要持续双向消息流的客户端）
+autocom mcp --streamable --port 8888 --host 0.0.0.0
 ```
+
+### 认证/鉴权
+
+若在公网或不受信任网络中运行 HTTP 接口，建议启用简单的 API Key 鉴权：
+
+```bash
+autocom mcp --streamable --port 8888 --host 0.0.0.0 --auth-key s3cr3t
+```
+
+请求需包含 `Authorization: Bearer s3cr3t` 或 `X-API-Key: s3cr3t` 头部。
+安全建议（简要）：
+
+- 使用反向代理（Nginx/Traefik）对外提供 TLS；避免直接将服务暴露到公网。
+- 把密钥放在环境变量或机密管理系统里，不要提交到仓库。
+- 配置访问日志、频率限制与防火墙规则来限制滥用。
+
+详情参见 [docs/MCP.md](docs/MCP.md)。
 
 ### 可用的 MCP 工具
 
