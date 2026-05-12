@@ -97,7 +97,8 @@ class TestTablePrinter(unittest.TestCase):
 
     def test_print_full_table(self):
         headers = ["时间","结果","设备","命令","响应"]
-        tp = TablePrinter(headers, auto_terminal=True)
+        # 使用固定宽度确保结果可复现，同时仍会触发长内容的截断
+        tp = TablePrinter(headers, auto_terminal=False, max_width=120, min_width=120)
         tp.add_row(["2026-04-03_11:00:00","OK","dev1","reboot","done"])
         tp.add_row(["2026-04-03_11:00:01","FAIL","device_long_name","long_command_with_emoji✅","this is a very long response that should be truncated or wrapped"])
         tp.add_banner("This is a banner that should span the entire width of the table")
