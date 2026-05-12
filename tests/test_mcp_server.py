@@ -517,34 +517,30 @@ class TestMCPServer(unittest.TestCase):
 
     def test_main_exits_when_mcp_unavailable(self):
         """MCP 未安装时 main() 应退出码 1 并打印提示"""
-        from components.MCPServer import main as mcp_main, _MCP_AVAILABLE
-        orig_available = _MCP_AVAILABLE
+        import components.MCPServer as mcp_mod
+        orig_available = mcp_mod._MCP_AVAILABLE
 
         try:
-            from components.MCPServer import main as mcp_main_mod
-            mcp_main_mod._MCP_AVAILABLE = False
+            mcp_mod._MCP_AVAILABLE = False
             orig_argv = sys.argv[:]
             sys.argv = ["autocom-mcp"]
             buf = io.StringIO()
             with redirect_stdout(buf):
                 with self.assertRaises(SystemExit) as cm:
-                    mcp_main_mod.main()
+                    mcp_mod.main()
             self.assertEqual(cm.exception.code, 1)
             out = buf.getvalue()
             self.assertIn("mcp 库未安装", out)
             sys.argv = orig_argv
         finally:
-            from components.MCPServer import main as mcp_main_mod
-            mcp_main_mod._MCP_AVAILABLE = orig_available
+            mcp_mod._MCP_AVAILABLE = orig_available
 
     def test_run_stdio_exits_when_mcp_unavailable(self):
         """MCP 未安装时 run_stdio() 应退出码 1"""
-        from components.MCPServer import AutoComMCPServer, _MCP_AVAILABLE
-        orig_available = _MCP_AVAILABLE
+        import components.MCPServer as mcp_mod
+        orig_available = mcp_mod._MCP_AVAILABLE
 
         try:
-            from components.MCPServer import _MCP_AVAILABLE as _avail
-            import components.MCPServer as mcp_mod
             mcp_mod._MCP_AVAILABLE = False
             server = mcp_mod.AutoComMCPServer()
             with self.assertRaises(SystemExit) as cm:

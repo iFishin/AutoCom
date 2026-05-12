@@ -393,6 +393,7 @@ class AutoComLogger:
         log_file: Optional[str] = None,
         enable_color: bool = True,
         propagate: bool = False,
+        cli_output_mode: Optional[str] = None,
     ):
         self.name = name
         self._logger = logging.getLogger(name)
@@ -428,11 +429,19 @@ class AutoComLogger:
                 "Executed Time",
                 "Result",
                 "Device",
+                "Elapsed(ms)",
                 "Command",
                 "Response",
-                "Elapsed(ms)",
             ],
+            width_mode="proportional",
+            column_ratios=[2,1,1,1,2,3],
         )
+        # CLI output mode controls how CLI-specific logging (log_step_*, log_iteration_*, log_session_*) is emitted.
+        # Allowed: 'table' (default), 'plain', 'both'
+        env_cli_mode = os.getenv("AUTOCOM_CLI_OUTPUT_MODE", "table")
+        self.cli_output_mode = (cli_output_mode or env_cli_mode).lower()
+        if self.cli_output_mode not in ("table", "plain"):
+            self.cli_output_mode = "table"
 
     def _setup_default_colorizers(self) -> None:
         """设置默认着色规则 - 可扩展"""
@@ -478,6 +487,23 @@ class AutoComLogger:
         with cls._lock:
             if name not in cls._instances:
                 cls._instances[name] = cls(name=name, **kwargs)
+            else:
+                # If an existing instance exists, allow updating its cli_output_mode
+                cli_mode = kwargs.get("cli_output_mode")
+                if cli_mode is not None:
+                    cli_mode = str(cli_mode).lower()
+                    if cli_mode not in ("table", "plain"):
+                        cli_mode = "table"
+                    cls._instances[name].cli_output_mode = cli_mode
+                # Allow updating file output if provided at subsequent calls
+                if "log_file" in kwargs and kwargs.get("log_file"):
+                    try:
+                        lf = kwargs.get("log_file")
+                        if lf is not None:
+                            cls._instances[name].set_log_file(str(lf))
+                    except Exception:
+                        # don't raise during get_instance; fall back silently
+                        pass
             return cls._instances[name]
 
     def set_log_file(self, path: str, mode: str = "a") -> None:
@@ -488,6 +514,8 @@ class AutoComLogger:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
 
         self._file_handler = logging.FileHandler(path, mode=mode, encoding="utf-8")
+        # 保存路径以供 TablePrinter 写文件使用
+        self._log_file = path
         # 文件不使用颜色
         self._file_handler.setFormatter(
             logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -502,6 +530,11 @@ class AutoComLogger:
         """内部日志方法(带上下文合并)"""
         if not self._logger.isEnabledFor(level):
             return
+
+        # 自动捕获 exc_info（如果调用方传了 exc_info=True 但没传具体异常）
+        if kwargs.get("exc_info") is True and "exc_info" not in kwargs:
+            import sys
+            kwargs["exc_info"] = sys.exc_info()
 
         # 合并上下文
         ctx = LogContext.get_all()
@@ -527,11 +560,21 @@ class AutoComLogger:
         self._log(logging.WARNING, msg, **kwargs)
 
     def log_error(self, msg: str, **kwargs) -> None:
-        """错误日志"""
+        """错误日志
+
+        Args:
+            msg: 日志消息
+            **kwargs: 支持 exc_info=True 自动捕获异常堆栈
+        """
         self._log(logging.ERROR, msg, **kwargs)
 
     def log_critical(self, msg: str, **kwargs) -> None:
-        """严重错误日志"""
+        """严重错误日志
+
+        Args:
+            msg: 日志消息
+            **kwargs: 支持 exc_info=True 自动捕获异常堆栈
+        """
         self._log(logging.CRITICAL, msg, **kwargs)
 
     def log_pass(self, msg: str, **kwargs) -> None:
@@ -547,19 +590,23 @@ class AutoComLogger:
     def log_realtime_table_header(self, headers: List[str]) -> None:
         """日志表格头部"""
         self.tp.headers = headers
-        self.tp.print_realtime_header()
+        log_file = getattr(self, "_log_file", None)
+        self.tp.print_realtime_header(log_file=log_file)
 
     def log_realtime_table_row(self, row: List[Any]) -> None:
         """日志表格行"""
-        self.tp.print_realtime_row(row, is_print=True)
+        log_file = getattr(self, "_log_file", None)
+        self.tp.print_realtime_row(row, log_file=log_file, is_print=True)
 
     def log_realtime_table_banner(self, text: str) -> None:
         """日志表格横幅"""
-        self.tp.print_realtime_banner(text)
+        log_file = getattr(self, "_log_file", None)
+        self.tp.print_realtime_banner(text, log_file=log_file, is_print=True)
 
     def log_realtime_table_footer(self) -> None:
         """日志表格底部(结束)"""
-        self.tp.print_realtime_footer()
+        log_file = getattr(self, "_log_file", None)
+        self.tp.print_realtime_footer(log_file=log_file, is_print=True)
 
     ## CLI 迭代日志方法
 
@@ -567,75 +614,139 @@ class AutoComLogger:
 
     def log_step_info(self, step_text: str) -> None:
         """Log step information"""
-        self.log_realtime_table_banner(f"ℹ {step_text}")
+        text = f"ℹ {step_text}"
+        if self.cli_output_mode in ("table"):
+            self.log_realtime_table_banner(text)
+        if self.cli_output_mode in ("plain"):
+            self.log_info(text)
 
     def log_step_success(self, step_text: str) -> None:
         """Log step success"""
-        self.log_realtime_table_banner(f"✅ {step_text}")
+        text = f"✅ {step_text}"
+        if self.cli_output_mode in ("table"):
+            self.log_realtime_table_banner(text)
+        if self.cli_output_mode in ("plain"):
+            self.log_pass(text)
 
     def log_step_error(self, step_text: str) -> None:
         """Log step error"""
-        self.log_realtime_table_banner(f"❌ {step_text}")
+        text = f"❌ {step_text}"
+        if self.cli_output_mode in ("table"):
+            self.log_realtime_table_banner(text)
+        if self.cli_output_mode in ("plain"):
+            self.log_error(text)
 
     def log_step_warning(self, step_text: str) -> None:
         """Log step warning"""
-        self.log_realtime_table_banner(f"⚠️ {step_text}")
+        text = f"⚠️ {step_text}"
+        if self.cli_output_mode in ("table"):
+            self.log_realtime_table_banner(text)
+        if self.cli_output_mode in ("plain"):
+            self.log_warning(text)
 
     ### 迭代循环日志方法
 
     def log_iteration_start(self, iteration: int, total: int) -> None:
         """Log iteration start"""
-        self.log_realtime_table_banner(f"ℹ Starting iteration {iteration}/{total}")
+        text = f"ℹ Starting iteration {iteration}/{total}"
+        if self.cli_output_mode in ("table"):
+            self.log_realtime_table_banner(text)
+        if self.cli_output_mode in ("plain"):
+            self.log_info(text)
 
     def log_iteration_success(self, iteration_text: str) -> None:
         """Log iteration success"""
-        self.log_realtime_table_banner(f"✅ {iteration_text}")
+        text = f"✅ {iteration_text}"
+        if self.cli_output_mode in ("table"):
+            self.log_realtime_table_banner(text)
+        if self.cli_output_mode in ("plain"):
+            self.log_pass(text)
 
     def log_iteration_info(self, iteration_text: str) -> None:
         """Log iteration information"""
-        self.log_realtime_table_banner(f"ℹ {iteration_text}")
+        text = f"ℹ {iteration_text}"
+        if self.cli_output_mode in ("table"):
+            self.log_realtime_table_banner(text)
+        if self.cli_output_mode in ("plain"):
+            self.log_info(text)
 
     def log_iteration_warning(self, iteration_text: str) -> None:
         """Log iteration warning"""
-        self.log_realtime_table_banner(f"⚠️ {iteration_text}")
+        text = f"⚠️ {iteration_text}"
+        if self.cli_output_mode in ("table"):
+            self.log_realtime_table_banner(text)
+        if self.cli_output_mode in ("plain"):
+            self.log_warning(text)
 
     def log_iteration_error(self, iteration_text: str) -> None:
         """Log iteration error"""
-        self.log_realtime_table_banner(f"❌ {iteration_text}")
+        text = f"❌ {iteration_text}"
+        if self.cli_output_mode in ("table"):
+            self.log_realtime_table_banner(text)
+        if self.cli_output_mode in ("plain"):
+            self.log_error(text)
 
     def log_iteration_end(self, iteration: int, total: int, **kwargs) -> None:
         """Log iteration end summary"""
         if kwargs.get("result", False):
-            self.log_realtime_table_banner(
-                f"ℹ Finished iteration {iteration}/{total} - PASS"
-            )
-        self.log_realtime_table_banner(f"ℹ Finished iteration {iteration}/{total}")
+            text = f"ℹ Finished iteration {iteration}/{total} - PASS"
+        else:
+            text = f"ℹ Finished iteration {iteration}/{total}"
+
+        if self.cli_output_mode in ("table"):
+            self.log_realtime_table_banner(text)
+        if self.cli_output_mode in ("plain"):
+            self.log_info(text)
 
     ### 会话日志方法
 
     def log_session_start(self, session_text: str) -> None:
         """Log session header"""
-        self.log_realtime_table_banner(f"{session_text}")
+        text = f"{session_text}"
+        if self.cli_output_mode in ("table"):
+            self.log_realtime_table_banner(text)
+        if self.cli_output_mode in ("plain"):
+            self.log_info(text)
 
     def log_session_success(self, session_text: str) -> None:
         """Log session success"""
-        self.log_realtime_table_banner(f"✅ {session_text}")
+        text = f"✅ {session_text}"
+        if self.cli_output_mode in ("table"):
+            self.log_realtime_table_banner(text)
+        if self.cli_output_mode in ("plain"):
+            self.log_pass(text)
 
     def log_session_info(self, session_text: str) -> None:
         """Log session information"""
-        self.log_realtime_table_banner(f"ℹ {session_text}")
+        text = f"ℹ {session_text}"
+        if self.cli_output_mode in ("table"):
+            self.log_realtime_table_banner(text)
+        if self.cli_output_mode in ("plain"):
+            self.log_info(text)
 
     def log_session_warning(self, session_text: str) -> None:
         """Log session warning"""
-        self.log_realtime_table_banner(f"⚠️ {session_text}")
+        text = f"⚠️ {session_text}"
+        if self.cli_output_mode in ("table"):
+            self.log_realtime_table_banner(text)
+        if self.cli_output_mode in ("plain"):
+            self.log_warning(text)
 
     def log_session_error(self, session_text: str) -> None:
         """Log session error"""
-        self.log_realtime_table_banner(f"❌ {session_text}")
+        text = f"❌ {session_text}"
+        if self.cli_output_mode in ("table"):
+            self.log_realtime_table_banner(text)
+        if self.cli_output_mode in ("plain"):
+            self.log_error(text)
 
     def log_session_end(self, session_text: str) -> None:
         """Log session footer"""
-        self.log_realtime_table_banner(f"{session_text}")
+        text = f"{session_text}"
+        if self.cli_output_mode in ("table"):
+            self.log_realtime_table_banner(text)
+        if self.cli_output_mode in ("plain"):
+            self.log_info(text)
 
     ## 通用执行结果日志方法
 
@@ -658,19 +769,46 @@ class AutoComLogger:
 
         """
         device = kwargs.get("device", "UnknownDevice")
+        elapsed_ms = kwargs.get("elapsed_ms", 0.0)
         command = kwargs.get("command", "UnknownCommand")
         response = kwargs.get("response", "")
-        elapsed_ms = kwargs.get("elapsed_ms", 0.0)
-        self.log_realtime_table_row(
-            [
-                kwargs.get("time_str", ""),
-                "✅PASS" if result else "❌FAIL",
-                device,
-                command,
-                repr(response),
-                f"{elapsed_ms:.2f}",
-            ],
-        )
+
+        # Convert response to a single-line escaped string so control
+        # characters (e.g., \r, \n) and non-decodable bytes are visible
+        # as \r, \n, \xHH or \uXXXX sequences.
+        if isinstance(response, (bytes, bytearray)):
+            try:
+                decoded = response.decode("utf-8")
+            except Exception:
+                decoded = response.decode("latin-1", errors="ignore")
+            rp = decoded.encode("unicode_escape").decode("ascii")
+        elif isinstance(response, str):
+            rp = response.encode("unicode_escape").decode("ascii")
+        else:
+            rp = str(response).encode("unicode_escape").decode("ascii")
+
+        # Build row following TablePrinter headers order
+        row = [
+            kwargs.get("time_str", ""),
+            "✅PASS" if result else "❌FAIL",
+            device,
+            f"{elapsed_ms:.2f}",
+            command,
+            rp,
+        ]
+        # Prepare a concise message used for plain logging
+        msg = f"{device} — {command} ({elapsed_ms:.2f}ms): {rp}"
+
+        # Emit realtime table row if requested
+        if self.cli_output_mode == "table":
+            self.log_realtime_table_row(row)
+
+        # Emit plain logger output if requested
+        if self.cli_output_mode == "plain":
+            if result:
+                self.log_pass(msg)
+            else:
+                self.log_fail(msg)
 
     # ========================================================================
     # 扩展功能
@@ -725,6 +863,23 @@ def setup_root_logger(
     return AutoComLogger.get_instance(
         "AutoCom", level=level, log_file=log_file, enable_color=enable_color
     )
+
+
+def log_exception(
+    logger_instance: Optional[AutoComLogger] = None,
+    msg: str = "Unexpected error",
+) -> None:
+    """便捷记录异常堆栈（在 except 块中调用）
+
+    Args:
+        logger_instance: Logger 实例，默认使用全局 get_logger()
+        msg: 日志消息前缀
+    """
+    import traceback
+
+    _log = logger_instance or get_logger()
+    tb = traceback.format_exc()
+    _log.log_error(f"{msg}\n{tb}")
 
 
 # ============================================================================
