@@ -35,7 +35,7 @@ class CommandExecutor:
             []
         )  # 收集延迟的 (command, response, action_type, context)
 
-        # 从字典数据中获取数据
+        # 从执行配置文件数据中获取数据
         dict_data = (
             command_device_dict_or_dict
             if isinstance(command_device_dict_or_dict, dict)
@@ -535,7 +535,7 @@ class CommandExecutor:
 
         for item in actions_to_execute:
             try:
-                # 处理两种格式：新格式（字典）和旧格式（元组）
+                # 处理两种格式：新格式（执行配置文件格式）和旧格式（元组）
                 if (
                     isinstance(item, dict)
                     and item.get("action_type") == "deferred_execute"

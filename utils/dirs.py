@@ -98,7 +98,7 @@ class Dirs:
         return _ensure_dir(self.device_logs_dir_safe())
 
     def dicts_dir_safe(self) -> Path:
-        """获取字典目录路径，不自动创建"""
+        """获取执行配置文件目录路径，不自动创建"""
         return self.root / "dicts"
 
     @property

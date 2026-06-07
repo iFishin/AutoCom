@@ -3,7 +3,7 @@
 AutoCom MCP Server - FastMCP 重构实现
 
 使用 FastMCP 暴露 AutoCom 的串口操作能力，支持 stdio、SSE、Streamable HTTP 三种运行模式。
-保留原有工具实现（扫描串口、执行指令、批量执行、加载字典、监听串口），并将它们注册为 FastMCP 工具。
+保留原有工具实现（扫描串口、执行指令、批量执行、加载执行配置文件、监听串口），并将它们注册为 FastMCP 工具。
 """
 
 from __future__ import annotations
@@ -94,7 +94,7 @@ class AutoComMCPServer:
 
         @mcp.tool()
         async def load_dict(file_path: str, config_path: Optional[str] = None) -> dict:
-            """加载并解析 AutoCom 字典 JSON 配置文件，返回设备与指令配置"""
+            """加载并解析 AutoCom 执行配置文件（JSON/YAML），返回设备与指令配置"""
             logger.log_info(f"MCP: load_dict {file_path}")
             return await AutoComMCPServer._load_dict(file_path=file_path, config_path=config_path)
 

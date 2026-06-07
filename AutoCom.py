@@ -504,7 +504,7 @@ def monitor_folder(folder_path, file_queue, stop_event):
     """
     logger.log_session_info(f"Starting to monitor folder: {folder_path}")
 
-    # 用于跟踪已处理文件的字典，键为文件路径，值为(修改时间, 内容哈希)元组
+    # 用于跟踪已处理文件的执行配置数据，键为文件路径，值为(修改时间, 内容哈希)元组
     processed_files = {}
 
     # 确保文件夹存在

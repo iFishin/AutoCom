@@ -82,7 +82,7 @@ curl -H "Authorization: Bearer s3cr3t" http://localhost:8888/health
 - `list_devices`：扫描并返回可用串口设备列表。
 - `execute_command`：向指定串口发送单条指令并返回响应（参数：`port`, `command`, `baud_rate`, `timeout`, `hex_mode` 等）。
 - `execute_commands`：批量执行多条指令，支持并行选项（参数：`port`, `commands[]`, `parallel`）。
-- `load_dict`：加载 AutoCom 字典文件（JSON/YAML），返回解析结果（参数：`file_path`, `config_path`）。
+-- `load_dict`：加载 AutoCom 执行配置文件（JSON/YAML），返回解析结果（参数：`file_path`, `config_path`）。
 - `monitor_port`：持续监听串口输出并返回一段时间内的采样数据（参数：`port`, `duration`）。
 
 ## 在 Claude Desktop 中配置示例

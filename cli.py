@@ -53,9 +53,9 @@ def run_main():
         )
         print()
         print("📖 快速开始:")
-        print("   autocom -d dict.yaml -l 3           # 执行字典文件，循环3次")
-        print("   autocom -d dict.yaml -i             # 无限循环模式")
-        print("   autocom -f dicts/                   # 执行文件夹内所有字典")
+        print("   autocom -d dicts/dict.yaml -l 3           # 执行配置文件，循环3次")
+        print("   autocom -d dicts/dict.yaml -i             # 无限循环模式")
+        print("   autocom -f dicts/                          # 执行文件夹内所有执行配置文件")
         print("   autocom -m temps/                   # 监控模式")
         print()
         print("✨ 选项说明")
@@ -285,7 +285,7 @@ def run_main():
     CommonUtils.init_log_file_path(str(dirs.session_dir))
 
     if args.dict:
-        # 使用 dirs 辅助方法获取字典文件路径（优先从工作目录，再从包目录）
+        # 使用 dirs 辅助方法获取执行配置文件路径（优先从工作目录，再从包目录）
         dict_path = dirs.get_dict_path(args.dict)
 
         start_time = time.time()

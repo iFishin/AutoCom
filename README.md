@@ -47,7 +47,7 @@ pip install -e .
 # 初始化项目结构（创建 dicts/、configs/、temps/ 目录及示例文件）
 autocom --init
 
-# 执行字典文件（循环3次）
+# 执行配置文件（循环3次）
 autocom -d dicts/dict.yaml -l 3
 
 # 无限循环模式（按 Ctrl+C 停止）
@@ -56,7 +56,7 @@ autocom -d dicts/dict.yaml -i
 # 使用配置文件
 autocom -d dicts/dict.yaml -c configs/config.yaml
 
-# 执行文件夹内所有字典文件
+# 执行文件夹内所有执行配置文件
 autocom -f dicts/
 
 # 监控模式（监听文件夹，自动执行新文件）
@@ -69,7 +69,7 @@ autocom -m temps/
 from autocom import CommandDeviceDict, CommandExecutor, CommonUtils
 
 # 加载配置
-dict_data = {...}  # 你的配置字典
+dict_data = {...}  # 你的执行配置文件数据
 device_dict = CommandDeviceDict(dict_data)
 
 # 创建执行器
@@ -94,7 +94,7 @@ AutoCom/
 ├── tests/              # 测试文件
 ├── scripts/            # 构建和维护脚本（dev.py、update_actions_doc.py）
 ├── docs/               # 项目文档
-├── dicts/              # 字典配置文件目录
+├── dicts/              # 执行配置文件目录
 ├── configs/            # 设备配置文件目录
 ├── AutoCom.py          # 主程序入口
 ├── cli.py              # 命令行接口
@@ -129,7 +129,7 @@ AutoCom/
 | Action 扩展系统 | 通过 ActionHandler 自定义指令成功/失败后的处理逻辑 |
 | 配置覆盖机制 | ConfigForDevices / ConfigForCommands 简化重复配置 |
 | 常量和变量 | Constants 支持用户输入变量，在指令参数中引用 |
-| 文件夹遍历 | 批量执行文件夹内所有字典文件 |
+| 文件夹遍历 | 批量执行文件夹内所有执行配置文件 |
 | 监控模式 | 监听文件夹，新文件自动执行 |
 | 持续日志监听 | 后台线程持续记录串口输出 |
 | **MCP Server** | **为 AI Agent 提供串口操作接口，支持 Claude Desktop 等 MCP 客户端** |
@@ -184,7 +184,7 @@ autocom mcp --streamable --port 8888 --host 0.0.0.0 --auth-key s3cr3t
 | `list_devices` | 列出可用串口设备 | 无需参数 |
 | `execute_command` | 发送单条指令并获取响应 | `port`, `command`, `baud_rate`(可选) |
 | `execute_commands` | 批量执行多条指令 | `port`, `commands[]`, `parallel`(可选) |
-| `load_dict` | 加载 AutoCom 字典 JSON 配置 | `file_path`, `config_path`(可选) |
+| `load_dict` | 加载 AutoCom 执行配置文件 JSON 配置 | `file_path`, `config_path`(可选) |
 | `monitor_port` | 监听串口输出 | `port`, `duration`(可选) |
 
 ### 配置 Claude Desktop

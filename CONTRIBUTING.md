@@ -5,10 +5,11 @@
 ## 报告问题
 
 提交 Issue 时请包含：
+
 - AutoCom 版本（`autocom -v`）
 - 使用的 Python 版本和操作系统
 - 完整的错误日志（来自 `device_logs/` 目录）
-- 尽可能提供能复现问题的字典文件
+- 尽可能提供能复现问题的执行配置文件
 
 ## 提交 Pull Request
 
@@ -52,6 +53,7 @@ git push origin feat/your-feature
 ```
 
 类型参考：
+
 - `feat:` — 新功能
 - `fix:` — 修复 Bug
 - `refactor:` — 重构
