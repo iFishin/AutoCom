@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import inspect
+import sys
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from typing import Any, Optional, List
@@ -36,7 +38,7 @@ class AutoComMCPServer:
         self.auth_key = auth_key
         if FastMCP is None:
             raise RuntimeError("FastMCP 类不可用，可能是 fastmcp 版本不兼容。请升级 fastmcp 或检查其文档。")
-        self.mcp = FastMCP(server_name=server_name)
+        self.mcp = FastMCP()
         self._register_tools()
 
     def _register_tools(self) -> None:
@@ -459,6 +461,77 @@ def main() -> None:
             logger.log_error(f"Error while running FastMCP.{name}: {e}")
             raise
 
+
+    def _safe_log_info(message: str) -> None:
+        """尝试使用 logger 输出信息，若底层流已关闭则回退到 stderr，避免抛出异常。"""
+        try:
+            logger.log_info(message)
+        except Exception:
+            try:
+                print(message, file=sys.stderr)
+            except Exception:
+                pass
+
+
+    def _invoke_stdio_method(mcp_obj, auth_key=None):
+        """尝试多个可能的 stdio 运行方法名以兼容不同版本的 fastmcp。
+
+        会按候选列表依次尝试，若方法接受 `auth_key` 参数则传入。
+        """
+        candidates = [
+            "run_stdio_async",
+            "run_stdio",
+            "run_stdio_server",
+            "run_stdio_loop",
+            "serve_stdio",
+            "run_stdio_server_async",
+        ]
+
+        for name in candidates:
+            fn = getattr(mcp_obj, name, None)
+            if not fn or not callable(fn):
+                continue
+            logger.log_info(f"MCP: attempting stdio method '{name}'")
+            try:
+                sig = inspect.signature(fn)
+            except Exception:
+                sig = None
+
+            call_kwargs = {}
+            if sig:
+                params = sig.parameters
+                if "auth_key" in params and auth_key is not None:
+                    call_kwargs["auth_key"] = auth_key
+                if "server_name" in params:
+                    call_kwargs["server_name"] = getattr(mcp_obj, "server_name", "autocom")
+
+            try:
+                if call_kwargs:
+                    res = fn(**call_kwargs)
+                else:
+                    res = fn()
+                if asyncio.iscoroutine(res):
+                    return asyncio.run(res)
+                return res
+            except TypeError as e:
+                logger.log_info(f"MCP: TypeError calling {name}: {e}")
+                continue
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                raise
+            except Exception as e:
+                logger.log_error(f"MCP: Error while running {name}: {e}")
+                raise
+
+        available = [n for n in dir(mcp_obj) if not n.startswith("_")]
+        msg = (
+            f"No compatible stdio method found among {candidates}.",
+            f"Available attributes: {available}",
+        )
+        msg_text = " ".join(map(str, msg))
+        print(msg_text)
+        logger.log_error(msg_text)
+        raise SystemExit(1)
+
     # 确定运行模式
     if args.sse:
         transport = "sse"
@@ -469,9 +542,9 @@ def main() -> None:
     else:
         # stdio 模式
         try:
-            _run_mcp_callable(server.mcp, "run_stdio_async")
+            _invoke_stdio_method(server.mcp, auth_key=args.auth_key)
         except (KeyboardInterrupt, asyncio.CancelledError):
-            logger.log_info("MCP Server 收到中断信号，正在退出...")
+            _safe_log_info("MCP Server 收到中断信号，正在退出...")
         return
 
     # 构建中间件列表
@@ -501,7 +574,7 @@ def main() -> None:
             middleware=middleware,
         )
     except (KeyboardInterrupt, asyncio.CancelledError):
-        logger.log_info("MCP Server 收到中断信号，正在退出...")
+        _safe_log_info("MCP Server 收到中断信号，正在退出...")
 
 
 if __name__ == "__main__":
