@@ -1,0 +1,200 @@
+# =============================================
+# AutoCom WiFi 模组测试配置模板
+# 适用：MCU WiFi 模组 AT 指令功能测试
+# 使用前：修改 port 为实际串口号
+# =============================================
+
+ConfigForDevices:
+  baud_rate: 115200
+  stop_bits: 1
+  data_bits: 8
+  parity: null
+  flow_control:
+    xon_xoff: false
+    rts_cts: false
+    dsr_dtr: false
+  dtr: false
+  rts: false
+
+ConfigForCommands:
+  concurrent_strategy: sequential
+  timeout: 3000
+
+ConfigForActions:
+  retry:
+    times: 3
+  wait:
+    duration: 1000
+
+Devices:
+  - name: DUT_WiFi
+    status: enabled
+    port: COM66          # ⚠️ 修改为实际串口号
+
+Constants:
+  TEST_SSID: "Quectel_Test"      # ⚠️ 修改为实际 WiFi SSID
+  TEST_PASSWORD: "quectel123"     # ⚠️ 修改为实际密码
+  DEVICE_IP: "192.168.1.1"        # ⚠️ 修改为实际设备 IP
+
+Commands:
+  # ---------- 1. 基础通信 ----------
+  - command: "AT"
+    device: DUT_WiFi
+    order: 1
+    status: enabled
+    expected_responses: ["OK"]
+    timeout: 2000
+    success_actions:
+      - print: "✅ AT 通信正常"
+    error_actions:
+      - retry: 3
+
+  # ---------- 2. 关闭回显 ----------
+  - command: "ATE0"
+    device: DUT_WiFi
+    order: 2
+    status: enabled
+    expected_responses: ["OK"]
+    timeout: 2000
+    success_actions:
+      - print: "✅ 回显已关闭"
+    error_actions:
+      - retry: 3
+
+  # ---------- 3. 查询固件版本 ----------
+  - command: "AT+GMR"
+    device: DUT_WiFi
+    order: 3
+    status: enabled
+    expected_responses: ["OK"]
+    timeout: 3000
+    success_actions:
+      - print: "✅ 固件版本查询成功"
+    error_actions:
+      - print: "⚠️ 固件版本查询失败"
+
+  # ---------- 4. 查询信号质量 ----------
+  - command: "AT+CSQ"
+    device: DUT_WiFi
+    order: 4
+    status: enabled
+    expected_responses: ["OK"]
+    timeout: 3000
+    success_actions:
+      - print: "✅ 信号质量查询成功"
+      - save_conditional:
+          device: DUT_WiFi
+          variable: csq_value
+          pattern: "\\+CSQ: (\\d+)"
+    error_actions:
+      - retry: 3
+
+  # ---------- 5. 查询当前 WiFi 模式 ----------
+  - command: "AT+CWMODE?"
+    device: DUT_WiFi
+    order: 5
+    status: enabled
+    expected_responses: ["OK"]
+    timeout: 3000
+    success_actions:
+      - print: "✅ WiFi 模式查询成功"
+    error_actions:
+      - print: "⚠️ WiFi 模式查询失败"
+
+  # ---------- 6. 设置为 Station 模式 ----------
+  - command: "AT+CWMODE=1"
+    device: DUT_WiFi
+    order: 6
+    status: enabled
+    expected_responses: ["OK"]
+    timeout: 3000
+    success_actions:
+      - print: "✅ 已设置为 Station 模式"
+    error_actions:
+      - retry: 3
+
+  # ---------- 7. 等待模组稳定 ----------
+  - command: ""
+    device: DUT_WiFi
+    order: 7
+    status: enabled
+    timeout: 100
+    success_actions:
+      - wait:
+          duration: 2000
+
+  # ---------- 8. 连接 WiFi ----------
+  - command: 'AT+CWJAP="$TEST_SSID","$TEST_PASSWORD"'
+    device: DUT_WiFi
+    order: 8
+    status: enabled
+    expected_responses: ["OK", "WIFI GOT IP"]
+    timeout: 15000
+    success_actions:
+      - print: "✅ WiFi 连接成功"
+    error_actions:
+      - print: "❌ WiFi 连接失败，请检查 SSID/密码"
+
+  # ---------- 9. 查询连接状态 ----------
+  - command: "AT+CWJAP?"
+    device: DUT_WiFi
+    order: 9
+    status: enabled
+    expected_responses: ["OK"]
+    timeout: 3000
+    success_actions:
+      - print: "✅ WiFi 连接状态查询成功"
+    error_actions:
+      - print: "⚠️ 查询连接状态失败"
+
+  # ---------- 10. 获取本地 IP ----------
+  - command: "AT+CIFSR"
+    device: DUT_WiFi
+    order: 10
+    status: enabled
+    expected_responses: ["OK"]
+    timeout: 3000
+    success_actions:
+      - print: "✅ 获取本地 IP 成功"
+      - save_conditional:
+          device: DUT_WiFi
+          variable: local_ip
+          pattern: '\\+CIFSR:STAIP,"(.+?)"'
+    error_actions:
+      - print: "⚠️ 获取 IP 失败"
+
+  # ---------- 11. Ping 测试 ----------
+  - command: "AT+PING=\"www.baidu.com\""
+    device: DUT_WiFi
+    order: 11
+    status: enabled
+    expected_responses: ["OK", "+PING"]
+    timeout: 10000
+    success_actions:
+      - print: "✅ Ping 测试成功"
+    error_actions:
+      - print: "⚠️ Ping 测试失败，请检查网络"
+
+  # ---------- 12. HTTP GET 测试 ----------
+  - command: 'AT+HTTPCLIENT=1,0,"http://httpbin.org/get","","",""'
+    device: DUT_WiFi
+    order: 12
+    status: enabled
+    expected_responses: ["OK", "+HTTPCLIENT"]
+    timeout: 15000
+    success_actions:
+      - print: "✅ HTTP GET 请求成功"
+    error_actions:
+      - print: "⚠️ HTTP 请求失败"
+
+  # ---------- 13. 断开 WiFi ----------
+  - command: "AT+CWQAP"
+    device: DUT_WiFi
+    order: 13
+    status: enabled
+    expected_responses: ["OK", "WIFI DISCONNECT"]
+    timeout: 5000
+    success_actions:
+      - print: "✅ WiFi 已断开"
+    error_actions:
+      - print: "⚠️ 断开 WiFi 响应异常"

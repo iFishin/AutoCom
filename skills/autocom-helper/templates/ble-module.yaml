@@ -1,0 +1,172 @@
+# =============================================
+# AutoCom BLE 模组测试配置模板
+# 适用：MCU BLE 模组 AT 指令功能测试
+# 使用前：修改 port 为实际串口号
+# =============================================
+
+ConfigForDevices:
+  baud_rate: 115200
+  stop_bits: 1
+  data_bits: 8
+  parity: null
+  flow_control:
+    xon_xoff: false
+    rts_cts: false
+    dsr_dtr: false
+  dtr: false
+  rts: false
+
+ConfigForCommands:
+  concurrent_strategy: sequential
+  timeout: 3000
+
+ConfigForActions:
+  retry:
+    times: 3
+  wait:
+    duration: 1000
+
+Devices:
+  - name: DUT_BLE
+    status: enabled
+    port: COM67          # ⚠️ 修改为实际串口号
+
+Constants:
+  ADV_NAME: "Quectel_BLE"   # ⚠️ 修改为实际广播名称
+  SCAN_TIMEOUT: "10"        # 扫描超时时间（秒）
+  CONN_ADDR: "AA:BB:CC:DD:EE:FF"  # ⚠️ 修改为实际目标地址
+
+Commands:
+  # ---------- 1. 基础通信 ----------
+  - command: "AT"
+    device: DUT_BLE
+    order: 1
+    status: enabled
+    expected_responses: ["OK"]
+    timeout: 2000
+    success_actions:
+      - print: "✅ AT 通信正常"
+    error_actions:
+      - retry: 3
+
+  # ---------- 2. 关闭回显 ----------
+  - command: "ATE0"
+    device: DUT_BLE
+    order: 2
+    status: enabled
+    expected_responses: ["OK"]
+    timeout: 2000
+    success_actions:
+      - print: "✅ 回显已关闭"
+    error_actions:
+      - retry: 3
+
+  # ---------- 3. 查询固件版本 ----------
+  - command: "AT+GMR"
+    device: DUT_BLE
+    order: 3
+    status: enabled
+    expected_responses: ["OK"]
+    timeout: 3000
+    success_actions:
+      - print: "✅ 固件版本查询成功"
+    error_actions:
+      - print: "⚠️ 固件版本查询失败"
+
+  # ---------- 4. 查询 BLE 角色 ----------
+  - command: "AT+BLEMODE?"
+    device: DUT_BLE
+    order: 4
+    status: enabled
+    expected_responses: ["OK"]
+    timeout: 3000
+    success_actions:
+      - print: "✅ BLE 模式查询成功"
+    error_actions:
+      - print: "⚠️ BLE 模式查询失败"
+
+  # ---------- 5. 设置为广播+从机模式 ----------
+  - command: "AT+BLEMODE=0"
+    device: DUT_BLE
+    order: 5
+    status: enabled
+    expected_responses: ["OK"]
+    timeout: 3000
+    success_actions:
+      - print: "✅ 已设置为广播+从机模式"
+    error_actions:
+      - retry: 3
+
+  # ---------- 6. 设置广播名称 ----------
+  - command: 'AT+BLENAME="$ADV_NAME"'
+    device: DUT_BLE
+    order: 6
+    status: enabled
+    expected_responses: ["OK"]
+    timeout: 3000
+    success_actions:
+      - print: "✅ 广播名称已设置为 $ADV_NAME"
+    error_actions:
+      - retry: 3
+
+  # ---------- 7. 开启广播 ----------
+  - command: "AT+BLEADV=1"
+    device: DUT_BLE
+    order: 7
+    status: enabled
+    expected_responses: ["OK"]
+    timeout: 3000
+    success_actions:
+      - print: "✅ 广播已开启"
+    error_actions:
+      - retry: 3
+
+  # ---------- 8. 等待广播稳定 ----------
+  - command: ""
+    device: DUT_BLE
+    order: 8
+    status: enabled
+    timeout: 100
+    success_actions:
+      - wait:
+          duration: 2000
+
+  # ---------- 9. 扫描周围 BLE 设备 ----------
+  - command: 'AT+BLESCAN=1,"$SCAN_TIMEOUT"'
+    device: DUT_BLE
+    order: 9
+    status: enabled
+    expected_responses: ["OK", "+BLESCAN"]
+    timeout: 15000
+    success_actions:
+      - print: "✅ BLE 扫描完成"
+    error_actions:
+      - print: "⚠️ BLE 扫描超时"
+
+  # ---------- 10. 停止广播 ----------
+  - command: "AT+BLEADV=0"
+    device: DUT_BLE
+    order: 10
+    status: enabled
+    expected_responses: ["OK"]
+    timeout: 3000
+    success_actions:
+      - print: "✅ 广播已停止"
+    error_actions:
+      - print: "⚠️ 停止广播失败"
+
+  # ---------- 11. 查询 MAC 地址 ----------
+  - command: "AT+BLEADDR?"
+    device: DUT_BLE
+    order: 11
+    status: enabled
+    expected_responses: ["OK"]
+    timeout: 3000
+    success_actions:
+      - print: "✅ BLE MAC 地址查询成功"
+      - save_conditional:
+          device: DUT_BLE
+          variable: ble_mac
+          pattern: '\\+BLEADDR: (.+)'
+    error_actions:
+      - print: "⚠️ MAC 地址查询失败"
