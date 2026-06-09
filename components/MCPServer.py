@@ -12,6 +12,9 @@ import asyncio
 import json
 import time
 import inspect
+import contextlib
+import io
+import serial
 import sys
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
@@ -26,6 +29,62 @@ except Exception:  # pragma: no cover
 
 from components.Logger import AutoComLogger, get_logger
 logger: AutoComLogger = get_logger("AutoCom.MCP")
+
+
+def _is_graceful_shutdown_exception(exc: BaseException) -> bool:
+    """判断是否属于可静默处理的退出类异常。"""
+    graceful_types = (KeyboardInterrupt, asyncio.CancelledError, BrokenPipeError, EOFError)
+    if isinstance(exc, graceful_types):
+        return True
+
+    # Python 3.11+：ExceptionGroup 可能包装取消/中断异常
+    with contextlib.suppress(Exception):
+        if isinstance(exc, BaseExceptionGroup):  # type: ignore[name-defined]
+            return all(_is_graceful_shutdown_exception(e) for e in exc.exceptions)
+
+    return False
+
+
+def _run_coroutine_with_graceful_shutdown(coro, on_interrupt=None, suppress_stderr_on_graceful: bool = False):
+    """运行协程并在 Ctrl+C/取消时安静退出，避免向终端打印大量堆栈。"""
+
+    def _loop_exception_handler(loop, context):
+        exc = context.get("exception")
+        if isinstance(exc, BaseException) and _is_graceful_shutdown_exception(exc):
+            return
+        loop.default_exception_handler(context)
+
+    stderr_buffer = io.StringIO() if suppress_stderr_on_graceful else None
+
+    def _run_impl():
+        if hasattr(asyncio, "Runner"):
+            with asyncio.Runner() as runner:
+                loop = runner.get_loop()
+                loop.set_exception_handler(_loop_exception_handler)
+                return runner.run(coro)
+        return asyncio.run(coro)
+
+    try:
+        if stderr_buffer is not None:
+            with contextlib.redirect_stderr(stderr_buffer):
+                return _run_impl()
+        return _run_impl()
+    except BaseException as e:
+        if _is_graceful_shutdown_exception(e):
+            if callable(on_interrupt):
+                on_interrupt()
+            return None
+
+        if stderr_buffer is not None:
+            buffered = stderr_buffer.getvalue()
+            if buffered:
+                with contextlib.suppress(Exception):
+                    sys.stderr.write(buffered)
+                    sys.stderr.flush()
+        raise
+    finally:
+        if stderr_buffer is not None:
+            stderr_buffer.close()
 
 
 class AutoComMCPServer:
@@ -104,6 +163,75 @@ class AutoComMCPServer:
             logger.log_info(f"MCP: monitor_port {port} duration={duration}")
             return await AutoComMCPServer._monitor_port(port=port, baud_rate=baud_rate, duration=duration)
 
+        @mcp.tool()
+        async def monitor_port_stream(port: str, baud_rate: int = 115200):
+            """流式监听串口输出——返回异步生成器，适用于 Streamable MCP 模式，实时推送串口数据块。
+
+            客户端在建立 streamable 连接后调用该工具，会持续收到由该生成器产出的消息，直到连接关闭。
+            每条消息为一个 JSON 对象：{"timestamp_ms":..., "port":..., "data":...}
+            """
+            logger.log_info(f"MCP: monitor_port_stream {port}")
+
+            try:
+                ser = serial.Serial(
+                    port=port,
+                    baudrate=baud_rate,
+                    bytesize=serial.EIGHTBITS,
+                    parity=serial.PARITY_NONE,
+                    stopbits=serial.STOPBITS_ONE,
+                    timeout=0,
+                )
+            except Exception as e:
+                err_text = str(e)
+                # 如果无法打开串口，直接返回一次性错误消息
+                async def _err_gen():
+                    yield {"success": False, "port": port, "error": err_text}
+
+                return _err_gen()
+
+            async def _gen():
+                start_time = time.time()
+                try:
+                    # 首条消息表示连接已建立，便于客户端知道 stream 已启动
+                    yield {"success": True, "port": port, "connected": True, "timestamp_ms": 0}
+                    while True:
+                        # 使用更可靠的 in_waiting 检查可用字节数
+                        try:
+                            avail = getattr(ser, "in_waiting", None)
+                            if avail is not None:
+                                if avail > 0:
+                                    data = ser.read(avail)
+                                else:
+                                    data = b""
+                            else:
+                                data = ser.read_all()
+                        except Exception:
+                            # 回退到 read_all
+                            try:
+                                data = ser.read_all()
+                            except Exception:
+                                data = b""
+                        if data:
+                            try:
+                                text = data.decode("utf-8", errors="replace")
+                            except Exception:
+                                text = data.hex(" ")
+                            msg = {
+                                "success": True,
+                                "port": port,
+                                "timestamp_ms": round((time.time() - start_time) * 1000, 1),
+                                "data": text,
+                            }
+                            yield msg
+                        await asyncio.sleep(0.05)
+                finally:
+                    try:
+                        ser.close()
+                    except Exception:
+                        pass
+
+            return _gen()
+
     # ------------------------- 工具实现（复用原有实现） -------------------------
     @staticmethod
     async def _list_devices() -> dict:
@@ -132,10 +260,10 @@ class AutoComMCPServer:
         hex_mode: bool = False,
         device_name: Optional[str] = None,
     ) -> dict:
-        import serial
 
         start_time = time.time()
         response_data = ""
+        ser = None
         try:
             ser = serial.Serial(
                 port=port,
@@ -172,8 +300,6 @@ class AutoComMCPServer:
                             response_data += data.hex(" ")
                     else:
                         break
-
-            ser.close()
             elapsed_ms = (time.time() - start_time) * 1000
             return {
                 "success": True,
@@ -198,6 +324,12 @@ class AutoComMCPServer:
                 "error": str(e),
                 "elapsed_ms": round((time.time() - start_time) * 1000, 2),
             }
+        finally:
+            if ser is not None:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
 
     @staticmethod
     async def _execute_commands(
@@ -347,10 +479,10 @@ class AutoComMCPServer:
 
     @staticmethod
     async def _monitor_port(port: str, baud_rate: int = 115200, duration: float = 10.0) -> dict:
-        import serial
 
         outputs = []
         start_time = time.time()
+        ser = None
         try:
             ser = serial.Serial(
                 port=port,
@@ -369,7 +501,6 @@ class AutoComMCPServer:
                         text = data.hex(" ")
                     outputs.append({"timestamp": round((time.time() - start_time) * 1000, 1), "data": text})
                 await asyncio.sleep(0.05)
-            ser.close()
             return {
                 "success": True,
                 "port": port,
@@ -382,6 +513,12 @@ class AutoComMCPServer:
             return {"success": False, "port": port, "error": f"串口错误: {e}"}
         except Exception as e:
             return {"success": False, "port": port, "error": str(e)}
+        finally:
+            if ser is not None:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
 
 
 def _create_auth_middleware(auth_key: str):
@@ -455,7 +592,7 @@ def main() -> None:
         try:
             res = fn(*a, **kw)
             if asyncio.iscoroutine(res):
-                return asyncio.run(res)
+                return _run_coroutine_with_graceful_shutdown(res)
             return res
         except Exception as e:
             logger.log_error(f"Error while running FastMCP.{name}: {e}")
@@ -471,6 +608,15 @@ def main() -> None:
                 print(message, file=sys.stderr)
             except Exception:
                 pass
+
+
+    def _safe_stderr_message(message: str) -> None:
+        """仅写 stderr，避免 stdio 关闭后 logging handler 再次抛错。"""
+        try:
+            sys.stderr.write(message + "\n")
+            sys.stderr.flush()
+        except Exception:
+            pass
 
 
     def _invoke_stdio_method(mcp_obj, auth_key=None):
@@ -511,7 +657,10 @@ def main() -> None:
                 else:
                     res = fn()
                 if asyncio.iscoroutine(res):
-                    return asyncio.run(res)
+                    return _run_coroutine_with_graceful_shutdown(
+                        res,
+                        on_interrupt=lambda: _safe_stderr_message("MCP Server 收到中断信号，正在退出..."),
+                    )
                 return res
             except TypeError as e:
                 logger.log_info(f"MCP: TypeError calling {name}: {e}")
@@ -544,7 +693,7 @@ def main() -> None:
         try:
             _invoke_stdio_method(server.mcp, auth_key=args.auth_key)
         except (KeyboardInterrupt, asyncio.CancelledError):
-            _safe_log_info("MCP Server 收到中断信号，正在退出...")
+            _safe_stderr_message("MCP Server 收到中断信号，正在退出...")
         return
 
     # 构建中间件列表

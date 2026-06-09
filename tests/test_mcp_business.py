@@ -2,8 +2,12 @@ import unittest
 import asyncio
 import tempfile
 import json
+import serial
 from unittest.mock import patch
-from components.MCPServer import AutoComMCPServer
+from components.MCPServer import (
+    AutoComMCPServer,
+    _run_coroutine_with_graceful_shutdown,
+)
 
 
 class SimpleSimSerial:
@@ -43,6 +47,26 @@ class SimpleSimSerial:
 
 
 class TestMCPBusiness(unittest.TestCase):
+    def test_run_coroutine_with_graceful_shutdown_swallows_keyboardinterrupt(self):
+        interrupted = {"called": False}
+
+        async def _raise_interrupt():
+            raise KeyboardInterrupt()
+
+        res = _run_coroutine_with_graceful_shutdown(
+            _raise_interrupt(),
+            on_interrupt=lambda: interrupted.update({"called": True}),
+        )
+        self.assertIsNone(res)
+        self.assertTrue(interrupted["called"])
+
+    def test_run_coroutine_with_graceful_shutdown_preserves_regular_error(self):
+        async def _raise_runtime_error():
+            raise RuntimeError("boom")
+
+        with self.assertRaises(RuntimeError):
+            _run_coroutine_with_graceful_shutdown(_raise_runtime_error())
+
     def test_execute_command_success(self):
         # Simulate a device that replies 'OK' to 'AT'
         sim = SimpleSimSerial(command_responses={"AT": b"OK\r\n"})
@@ -56,6 +80,27 @@ class TestMCPBusiness(unittest.TestCase):
         self.assertIsNotNone(response)
         assert response is not None
         self.assertIn("OK", response)
+
+    def test_execute_command_closes_serial_on_error(self):
+        class ErrorSerial:
+            def __init__(self):
+                self.closed = False
+
+            def write(self, data):
+                raise serial.SerialException("write failed")
+
+            def close(self):
+                self.closed = True
+
+        sim = ErrorSerial()
+        with patch("serial.Serial") as mock_serial:
+            mock_serial.return_value = sim
+            res = asyncio.run(
+                AutoComMCPServer._execute_command(port="COM1", command="AT", timeout=0.1)
+            )
+
+        self.assertFalse(res.get("success"))
+        self.assertTrue(sim.closed)
 
     def test_execute_commands_serial(self):
         # Serial (non-parallel) execution of multiple commands
@@ -100,6 +145,27 @@ class TestMCPBusiness(unittest.TestCase):
         self.assertIn("A", output)
         self.assertIn("B", output)
         self.assertIn("C", output)
+
+    def test_monitor_port_closes_serial_on_error(self):
+        class ErrorReadSerial:
+            def __init__(self):
+                self.closed = False
+
+            def read_all(self):
+                raise RuntimeError("read failed")
+
+            def close(self):
+                self.closed = True
+
+        sim = ErrorReadSerial()
+        with patch("serial.Serial") as mock_serial:
+            mock_serial.return_value = sim
+            res = asyncio.run(
+                AutoComMCPServer._monitor_port(port="COM1", duration=0.2)
+            )
+
+        self.assertFalse(res.get("success"))
+        self.assertTrue(sim.closed)
 
 
 if __name__ == "__main__":
