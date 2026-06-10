@@ -13,8 +13,12 @@ ConfigForDevices:
 
 Devices:
   - name: DeviceA
-    port: COM13
+    port: COM57
     baud_rate: 115200
+  - name: DebugA
+    port: COM22
+    baud_rate: 921600
+    monitor: true
 
 ConfigForCommands:
   status: enabled
@@ -25,23 +29,24 @@ ConfigForCommands:
 
 Commands:
   - command: AT+QECHO=1
+    status: disabled
     expected_responses:
       - OK
     device: DeviceA
     order: 1
     timeout: 1000
-  - command: AT+QVERSION
-    expected_responses:
-      - OK
-    device: DeviceA
-    order: 2
-    timeout: 2000
   - command: AT+QRST
     expected_responses:
       - RDY
     device: DeviceA
     order: 3
     timeout: 3000
+  - command: AT+QVERSION
+    expected_responses:
+      - OK
+    device: DeviceA
+    order: 2
+    timeout: 2000
   
   
   
