@@ -33,6 +33,15 @@ class MonitorManager:
         self.command_active = False
         self.command_response_data = []
         self.command_complete_event = threading.Event()
+        # Session routing and scheduling state.
+        self.command_start_index = 0
+        self.stream_data = []
+        self.max_stream_data = 5000
+        self.command_queue_lock = threading.Lock()
+        self.command_queue_cond = threading.Condition(self.command_queue_lock)
+        self.command_queue = []
+        self.command_seq = 0
+        self.command_running = False
 
     def start_monitoring(self):
         """Start monitoring"""
@@ -58,17 +67,54 @@ class MonitorManager:
         with self.lock:
             self.command_active = True
             self.command_response_data.clear()
+            self.command_start_index = len(self.stream_data)
             self.command_complete_event.clear()
 
     def end_command_capture(self):
         """End command data capture"""
         with self.lock:
+            data = list(self.command_response_data)
             self.command_active = False
+            self.command_start_index = len(self.stream_data)
+            return data
+
+    def get_command_capture_snapshot(self):
+        """Get current command capture snapshot without ending the capture window"""
+        with self.lock:
+            if self.command_active:
+                return list(self.stream_data[self.command_start_index :])
             return list(self.command_response_data)
+
+    def acquire_command_slot(self, priority=0):
+        """Acquire execution slot for command send, honoring priority for queued commands."""
+        with self.command_queue_cond:
+            self.command_seq += 1
+            ticket = {
+                "priority": int(priority),
+                "seq": self.command_seq,
+            }
+            self.command_queue.append(ticket)
+
+            while True:
+                head = min(self.command_queue, key=lambda t: (-t["priority"], t["seq"]))
+                if head is ticket and not self.command_running:
+                    self.command_running = True
+                    self.command_queue.remove(ticket)
+                    return
+                self.command_queue_cond.wait()
+
+    def release_command_slot(self):
+        """Release command send slot and wake queued senders."""
+        with self.command_queue_cond:
+            self.command_running = False
+            self.command_queue_cond.notify_all()
 
     def wait_for_command_response(self, timeout):
         """Wait for command response"""
-        return self.command_complete_event.wait(timeout=timeout)
+        triggered = self.command_complete_event.wait(timeout=timeout)
+        if triggered:
+            self.command_complete_event.clear()
+        return triggered
 
     def get_latest_data(self, clear=False):
         """Get latest data"""
@@ -153,9 +199,18 @@ class MonitorManager:
                 self.latest_data.pop(0)
             self.data_event.set()
 
+            # Keep a shared stream buffer for command session routing.
+            self.stream_data.append(line)
+            if len(self.stream_data) > self.max_stream_data:
+                overflow = len(self.stream_data) - self.max_stream_data
+                del self.stream_data[:overflow]
+                self.command_start_index = max(0, self.command_start_index - overflow)
+
             # If executing command, collect response data
             if self.command_active:
-                self.command_response_data.append(line)
+                self.command_response_data = list(
+                    self.stream_data[self.command_start_index :]
+                )
                 self.command_complete_event.set()
 
 
@@ -309,7 +364,12 @@ class CommandDeviceDict:
                     original_send_command = self.devices[device_name].send_command
 
                     def wrapped_send_command(
-                        cmd, timeout, hex_mode=False, expected_responses=None
+                        cmd,
+                        timeout,
+                        hex_mode=False,
+                        expected_responses=None,
+                        priority=0,
+                        completion_rules=None,
                     ):
                         # Monitor version uses simplified logic, wrap result in dict format
                         result_str = self.send_command_with_monitor(
@@ -319,6 +379,8 @@ class CommandDeviceDict:
                             hex_mode,
                             expected_responses,
                             original_send_command,
+                            priority=priority,
+                            completion_rules=completion_rules,
                         )
                         # Wrap string result in dict format for compatibility
                         if isinstance(result_str, dict):
@@ -509,6 +571,8 @@ class CommandDeviceDict:
         hex_mode,
         expected_responses,
         original_send_command,
+        priority=0,
+        completion_rules=None,
     ):
         """
         Send command using monitor - simplified version
@@ -520,31 +584,27 @@ class CommandDeviceDict:
 
         monitor = self.device_monitors[device_name]
         device = self.devices[device_name]
+        completion_rules = completion_rules or {}
 
+        capture_closed = False
+        slot_acquired = False
+        finish_reason = "timeout"
         try:
-            # Start data capture
-            monitor.begin_command_capture()
+            monitor.acquire_command_slot(priority=priority)
+            slot_acquired = True
 
-            # Send command
             with device.lock:
-                if command:
-                    # Clear old data in serial buffer
-                    if device.ser.in_waiting > 0:
-                        discarded = device.ser.read(device.ser.in_waiting)
-                        logger.log_session_info(
-                            f"Cleared buffer: {len(discarded)} bytes"
-                        )
+                # Start data capture once and keep a continuous capture window.
+                monitor.begin_command_capture()
 
-                    # Send command (handle hex_mode)
+                # Send command. In monitor mode, reading must be owned by monitor thread only.
+                if command:
                     if hex_mode:
                         command_bytes = (
-                            device._parse_hex_command(command)
-                            + device.line_ending_bytes
+                            device._parse_hex_command(command) + device.line_ending_bytes
                         )
                     else:
-                        command_bytes = (
-                            command.encode("utf-8") + device.line_ending_bytes
-                        )
+                        command_bytes = command.encode("utf-8") + device.line_ending_bytes
                     device.ser.write(command_bytes)
                     device.ser.flush()
 
@@ -555,37 +615,55 @@ class CommandDeviceDict:
                     )
                     device.write_to_log(f"({timestamp})---> {command}")
 
-            # Wait for response
-            start_time = time.time()
-            response_lines = []
+                # Wait for response
+                start_time = time.time()
+                response_lines = []
+                last_seen_count = 0
+                terminal_seen_time = None
 
-            # Adaptive timeout strategy
-            check_interval = 0.1  # Check every 100ms
-            max_wait_without_data = min(timeout / 3, 2.0)  # Maximum idle time
-            last_data_time = start_time
+                # Adaptive timeout strategy
+                check_interval = 0.1  # Check every 100ms
+                max_wait_without_data = float(
+                    completion_rules.get("idle_timeout", min(timeout / 3, 2.0))
+                )
+                settle_after_terminal = float(
+                    completion_rules.get("settle_after_terminal", 0.05)
+                )
+                last_data_time = start_time
 
-            while (time.time() - start_time) < timeout:
-                # Wait for new data
-                if monitor.wait_for_command_response(check_interval):
-                    # Collect all response data
-                    new_data = monitor.end_command_capture()
-                    monitor.begin_command_capture()  # Restart capture
+                while (time.time() - start_time) < timeout:
+                    monitor.wait_for_command_response(check_interval)
 
-                    if new_data:
-                        response_lines.extend(new_data)
+                    # Snapshot does not reset capture window, avoiding gaps.
+                    snapshot = monitor.get_command_capture_snapshot()
+                    if len(snapshot) > last_seen_count:
+                        response_lines = snapshot
+                        last_seen_count = len(snapshot)
                         last_data_time = time.time()
 
-                # Check if should stop waiting
-                time_without_data = time.time() - last_data_time
-                if response_lines and time_without_data > max_wait_without_data:
-                    logger.log_session_info(
-                        f"Response collection complete, wait time: {time_without_data:.2f}s"
+                    should_finish, finish_reason, terminal_seen_time = self._should_finish_command(
+                        response_lines=response_lines,
+                        expected_responses=expected_responses,
+                        completion_rules=completion_rules,
+                        terminal_seen_time=terminal_seen_time,
+                        now=time.time(),
+                        settle_after_terminal=settle_after_terminal,
                     )
-                    break
+                    if should_finish:
+                        break
 
-            # Get final response data
-            final_data = monitor.end_command_capture()
-            response_lines.extend(final_data)
+                    # Check if should stop waiting
+                    time_without_data = time.time() - last_data_time
+                    if response_lines and time_without_data > max_wait_without_data:
+                        finish_reason = "idle-timeout"
+                        logger.log_session_info(
+                            f"Response collection complete, wait time: {time_without_data:.2f}s"
+                        )
+                        break
+
+                # Close capture and take final snapshot once.
+                response_lines = monitor.end_command_capture()
+                capture_closed = True
 
             if not response_lines:
                 error_msg = (
@@ -617,6 +695,65 @@ class CommandDeviceDict:
         except Exception as e:
             logger.log_session_error(f"Error sending command: {e}")
             return f"ERROR: Command execution exception: {e}"
+        finally:
+            if not capture_closed:
+                try:
+                    monitor.end_command_capture()
+                except Exception:
+                    pass
+            if slot_acquired:
+                monitor.release_command_slot()
+
+    @staticmethod
+    def _match_expected_response(response_lines, expected_responses):
+        """Check whether any expected response appears in captured lines."""
+        if not expected_responses:
+            return False
+        response_text = "\n".join(response_lines)
+        return any(pattern in response_text for pattern in expected_responses)
+
+    @staticmethod
+    def _match_patterns(response_lines, patterns):
+        """Match any pattern in a response transcript."""
+        if not patterns:
+            return False
+        response_text = "\n".join(response_lines)
+        return any(pattern in response_text for pattern in patterns)
+
+    @classmethod
+    def _should_finish_command(
+        cls,
+        response_lines,
+        expected_responses,
+        completion_rules,
+        terminal_seen_time,
+        now,
+        settle_after_terminal,
+    ):
+        """Determine if command wait loop should stop based on completion rules."""
+        if not response_lines:
+            return False, "waiting", terminal_seen_time
+
+        complete_patterns = completion_rules.get("complete_patterns")
+        terminal_patterns = completion_rules.get("terminal_patterns", ["OK", "ERROR"])
+        expected_required = bool(completion_rules.get("expected_required", False))
+
+        expected_matched = cls._match_expected_response(response_lines, expected_responses)
+        if expected_matched:
+            return True, "expected-matched", terminal_seen_time
+
+        if cls._match_patterns(response_lines, complete_patterns):
+            return True, "custom-pattern-matched", terminal_seen_time
+
+        if cls._match_patterns(response_lines, terminal_patterns):
+            if expected_required:
+                return False, "terminal-seen-awaiting-expected", terminal_seen_time
+            if terminal_seen_time is None:
+                terminal_seen_time = now
+            if (now - terminal_seen_time) >= settle_after_terminal:
+                return True, "terminal-pattern-matched", terminal_seen_time
+
+        return False, "waiting", terminal_seen_time
 
     def close_all_devices(self):
         """

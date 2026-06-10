@@ -147,6 +147,37 @@
 }
 ```
 
+当对应设备在 `Devices` 中配置 `monitor: true` 时，`Commands` 还支持如下高级字段：
+
+```json
+{
+    "priority": 8,
+    "completion_rules": {
+        "expected_required": true,
+        "terminal_patterns": ["OK", "ERROR"],
+        "complete_patterns": ["+READY"],
+        "idle_timeout": 0.6,
+        "settle_after_terminal": 0.05
+    }
+}
+```
+
+字段说明：
+
+- `priority`：命令调度优先级，值越大优先级越高。用于“持续监听 + 临时插队写命令”场景。
+- `completion_rules`：命令完成判定规则。
+  - `expected_required`：是否必须命中 `expected_responses` 才算完成。
+  - `terminal_patterns`：终止词列表，默认 `OK`/`ERROR`。
+  - `complete_patterns`：自定义完成词，命中任意一个即可完成。
+  - `idle_timeout`：有响应后，连续空闲多久认为本次响应收集完成（秒）。
+  - `settle_after_terminal`：命中终止词后额外等待的收敛时间（秒）。
+
+建议：
+
+- 常规 AT 场景使用 `priority: 0`。
+- 抢占恢复类命令（例如复位、救援命令）可设置较高 `priority`（如 `8~10`）。
+- 在 URC 很多的场景，建议开启 `expected_required: true`，减少提前结束风险。
+
 ## 效果是怎样？
 
 | File Name                     | Description                                                  |

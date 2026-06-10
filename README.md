@@ -134,6 +134,49 @@ AutoCom/
 | 持续日志监听 | 后台线程持续记录串口输出 |
 | **MCP Server** | **为 AI Agent 提供串口操作接口，支持 Claude Desktop 等 MCP 客户端** |
 
+### Monitor 命令高级参数
+
+当设备在 `Devices` 中开启了 `monitor: true` 时，`Commands` 支持以下高级参数：
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `priority` | int | `0` | 命令排队优先级，值越大越先执行。用于在监听不断流时插队执行高优先级命令。 |
+| `completion_rules` | object | `null` | 命令完成判定策略。可控制终止模式、空闲收敛时间与期望响应约束。 |
+
+`completion_rules` 支持字段：
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `expected_required` | bool | `false` | 为 `true` 时，即使命中终止词，也必须继续等待 `expected_responses` 命中才算完成。 |
+| `terminal_patterns` | string[] | `["OK", "ERROR"]` | 终止词列表。 |
+| `complete_patterns` | string[] | `[]` | 自定义完成词，任意命中即可完成。 |
+| `idle_timeout` | float | `min(timeout/3, 2.0)` | 在有响应后，连续空闲多久判定采集完成（秒）。 |
+| `settle_after_terminal` | float | `0.05` | 命中终止词后额外等待的收敛时间（秒）。 |
+
+示例：
+
+```yaml
+Devices:
+  - name: DeviceA
+    status: enabled
+    port: COM22
+    baud_rate: 921600
+    monitor: true
+
+Commands:
+  - command: AT+QVERSION
+    device: DeviceA
+    timeout: 2000
+    expected_responses: ["OK"]
+    priority: 8
+    completion_rules:
+      expected_required: true
+      terminal_patterns: ["OK", "ERROR"]
+      complete_patterns: ["+READY"]
+      idle_timeout: 0.6
+      settle_after_terminal: 0.05
+```
+
 ---
 
 ## 🤖 MCP Server（AI Agent 接口）

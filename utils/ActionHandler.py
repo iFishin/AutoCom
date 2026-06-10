@@ -317,13 +317,20 @@ class ActionHandler:
             # Get hex_mode from command if available
             hex_mode = command.get("hex_mode", False)
 
+            send_args = {
+                "timeout": command["timeout"] / 1000,
+                "hex_mode": hex_mode,
+                "expected_responses": updated_expected_responses,
+            }
+
+            if self._supports_monitor_send_options(device_name):
+                send_args["priority"] = context.get("priority", command.get("priority", 0))
+                send_args["completion_rules"] = context.get(
+                    "completion_rules", command.get("completion_rules")
+                )
+
             # Call send_command with new signature
-            result = device.send_command(
-                cmd_str,
-                timeout=command["timeout"] / 1000,
-                hex_mode=hex_mode,
-                expected_responses=updated_expected_responses,
-            )
+            result = device.send_command(cmd_str, **send_args)
 
             # Extract response text from result dictionary
             response_text = result["response"]
@@ -353,6 +360,12 @@ class ActionHandler:
                 self.executor.isAllPassed = False
 
         return False
+
+    def _supports_monitor_send_options(self, device_name):
+        """Only monitor-enabled devices support priority/completion_rules options."""
+        command_device_dict = getattr(self.executor, "command_device_dict", None)
+        monitors = getattr(command_device_dict, "device_monitors", {})
+        return device_name in monitors
 
     def handle_set_status(self, status, command, response, context):
         """

@@ -229,13 +229,20 @@ class CommandExecutor:
         else:
             hex_mode = False  # Default to normal mode if not specified
 
+        priority = self._resolve_priority(command, device_name)
+        completion_rules = self._resolve_completion_rules(command, device_name)
+
         # Call send_command with expected responses
-        result = device.send_command(
-            cmd_str,
-            timeout=command["timeout"] / 1000,
-            hex_mode=hex_mode,
-            expected_responses=updated_expected_responses,
-        )
+        send_args = {
+            "timeout": command["timeout"] / 1000,
+            "hex_mode": hex_mode,
+            "expected_responses": updated_expected_responses,
+        }
+        if self._supports_monitor_send_options(device_name):
+            send_args["priority"] = priority
+            send_args["completion_rules"] = completion_rules
+
+        result = device.send_command(cmd_str, **send_args)
 
         # Extract response and success flag from result
         response = result["response"]
@@ -254,6 +261,8 @@ class CommandExecutor:
             "device_name": device_name,
             "cmd_str": cmd_str,
             "expected_responses": updated_expected_responses,
+            "priority": priority,
+            "completion_rules": completion_rules,
         }
 
         # 调用新的 ActionHandler
@@ -366,6 +375,41 @@ class CommandExecutor:
                 handle_response_actions(command, response, "error_response_actions")
 
         return self.isAllPassed
+
+    def _supports_monitor_send_options(self, device_name):
+        """Only monitor-enabled devices support priority/completion_rules options."""
+        monitors = getattr(self.command_device_dict, "device_monitors", {})
+        return device_name in monitors
+
+    def _resolve_priority(self, command, device_name):
+        """Resolve priority from command config with variable expansion."""
+        raw_priority = command.get("priority", 0)
+        resolved = self.handle_variables_from_str(raw_priority, device_name)
+        try:
+            return int(resolved)
+        except (TypeError, ValueError):
+            logger.log_step_warning(
+                f"Invalid priority '{resolved}' for device {device_name}, using 0"
+            )
+            return 0
+
+    def _resolve_completion_rules(self, command, device_name):
+        """Resolve completion rules from command config with variable expansion."""
+        raw_rules = command.get("completion_rules")
+        if not raw_rules:
+            return None
+
+        def _resolve(value):
+            if isinstance(value, str):
+                return self.handle_variables_from_str(value, device_name)
+            if isinstance(value, list):
+                return [_resolve(v) for v in value]
+            if isinstance(value, dict):
+                return {k: _resolve(v) for k, v in value.items()}
+            return value
+
+        resolved = _resolve(raw_rules)
+        return resolved if isinstance(resolved, dict) else None
 
     def set_iteration_info(self, current_iteration, total_iterations=None):
         """Set iteration information for logging purposes
