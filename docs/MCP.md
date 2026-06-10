@@ -82,8 +82,21 @@ curl -H "Authorization: Bearer s3cr3t" http://localhost:8888/health
 - `list_devices`：扫描并返回可用串口设备列表。
 - `execute_command`：向指定串口发送单条指令并返回响应（参数：`port`, `command`, `baud_rate`, `timeout`, `hex_mode` 等）。
 - `execute_commands`：批量执行多条指令，支持并行选项（参数：`port`, `commands[]`, `parallel`）。
--- `load_dict`：加载 AutoCom 执行配置文件（JSON/YAML），返回解析结果（参数：`file_path`, `config_path`）。
+- `load_dict`：加载 AutoCom 执行配置文件（JSON/YAML），返回解析结果（参数：`file_path`, `config_path`）。
+- `validate_dict`：体检 AutoCom 执行配置文件，输出错误与告警（参数：`file_path`, `config_path`）。
 - `monitor_port`：持续监听串口输出并返回一段时间内的采样数据（参数：`port`, `duration`）。
+- `monitor_port_stream`：流式监听串口输出，返回持续的消息流用于实时推送（参数：`port`, `baud_rate`）。适用于 Streamable MCP 客户端。
+
+`execute_command`/`execute_commands` 还支持高级参数：
+
+- `expected_responses`：字符串数组，命中后可提前结束采集并返回 `matched`。
+- `completion_rules`：完成判定规则对象。
+  - `expected_required`：为 true 时必须命中 expected 才完成。
+  - `terminal_patterns`：终止词，默认 `["OK", "ERROR"]`。
+  - `complete_patterns`：自定义完成词，任意命中即可完成。
+  - `idle_timeout`：响应空闲收敛超时（秒）。
+  - `settle_after_terminal`：命中终止词后额外收敛等待（秒）。
+- `priority`：命令优先级（用于与 monitor 场景调度对齐，默认 0）。
 
 ## 在 Claude Desktop 中配置示例
 

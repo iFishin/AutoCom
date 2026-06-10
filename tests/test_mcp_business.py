@@ -81,6 +81,26 @@ class TestMCPBusiness(unittest.TestCase):
         assert response is not None
         self.assertIn("OK", response)
 
+    def test_execute_command_expected_responses_and_finish_reason(self):
+        sim = SimpleSimSerial(command_responses={"AT+QVERSION": b"LINE\r\nOK\r\n"})
+        with patch("serial.Serial") as mock_serial:
+            mock_serial.return_value = sim
+            res = asyncio.run(
+                AutoComMCPServer._execute_command(
+                    port="COM1",
+                    command="AT+QVERSION",
+                    timeout=0.3,
+                    expected_responses=["OK"],
+                    completion_rules={"expected_required": True},
+                    priority=9,
+                )
+            )
+
+        self.assertTrue(res.get("success"))
+        self.assertEqual(res.get("priority"), 9)
+        self.assertIn("OK", res.get("matched", []))
+        self.assertEqual(res.get("finish_reason"), "expected-matched")
+
     def test_execute_command_closes_serial_on_error(self):
         class ErrorSerial:
             def __init__(self):
@@ -129,6 +149,21 @@ class TestMCPBusiness(unittest.TestCase):
         self.assertIsNotNone(summary)
         assert summary is not None
         self.assertIn("device_count", summary)
+
+    def test_validate_dict_reports_issues(self):
+        bad_data = {
+            "Devices": [{"name": "D1", "status": "enabled"}],
+            "Commands": [{"command": "AT", "device": "D2", "timeout": -1}],
+        }
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as tf:
+            json.dump(bad_data, tf)
+            tf.flush()
+            path = tf.name
+
+        res = asyncio.run(AutoComMCPServer._validate_dict(file_path=path))
+        self.assertFalse(res.get("success"))
+        self.assertGreaterEqual(res.get("issue_count", 0), 1)
+        self.assertGreaterEqual(res.get("warning_count", 0), 1)
 
     def test_monitor_port_collects_chunks(self):
         # Provide several chunks then empty
