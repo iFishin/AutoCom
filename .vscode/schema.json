@@ -141,6 +141,11 @@
                         ],
                         "description": "波特率",
                         "default": 115200
+                    },
+                    "monitor": {
+                        "type": "boolean",
+                        "description": "是否监控该设备的串口输出（仅在 ConfigForDevices.status 为 enabled 时生效）",
+                        "default": false
                     }
                 },
                 "required": [
@@ -236,6 +241,15 @@
                         ],
                         "patternErrorMessage": "命令必须以 AT+ 开头"
                     },
+                    "status": {
+                        "type": "string",
+                        "enum": [
+                            "enabled",
+                            "disabled"
+                        ],
+                        "description": "命令配置状态",
+                        "default": "enabled"
+                    },
                     "expected_responses": {
                         "type": "array",
                         "description": "期望的响应列表（顺序依次匹配）",
@@ -257,6 +271,59 @@
                                 "SubEdition: V01"
                             ]
                         ]
+                    },
+                    "hex_mode": {
+                        "type": "boolean",
+                        "description": "是否按十六进制发送命令",
+                        "default": false
+                    },
+                    "priority": {
+                        "type": "integer",
+                        "description": "命令优先级（值越大越优先，主要用于 monitor 场景）",
+                        "default": 0
+                    },
+                    "completion_rules": {
+                        "type": "object",
+                        "description": "命令完成判定规则（monitor 场景可用）",
+                        "properties": {
+                            "expected_required": {
+                                "type": "boolean",
+                                "description": "命中终止词后是否仍需等待 expected_responses",
+                                "default": false
+                            },
+                            "terminal_patterns": {
+                                "type": "array",
+                                "description": "终止词列表",
+                                "items": {
+                                    "type": "string",
+                                    "minLength": 1
+                                },
+                                "default": [
+                                    "OK",
+                                    "ERROR"
+                                ]
+                            },
+                            "complete_patterns": {
+                                "type": "array",
+                                "description": "自定义完成词列表，命中任意一项即可完成",
+                                "items": {
+                                    "type": "string",
+                                    "minLength": 1
+                                },
+                                "default": []
+                            },
+                            "idle_timeout": {
+                                "type": "number",
+                                "minimum": 0,
+                                "description": "响应空闲收敛超时（秒）"
+                            },
+                            "settle_after_terminal": {
+                                "type": "number",
+                                "minimum": 0,
+                                "description": "命中终止词后额外收敛等待（秒）"
+                            }
+                        },
+                        "additionalProperties": false
                     },
                     "device": {
                         "type": "string",
@@ -323,33 +390,5 @@
         "ConfigForCommands",
         "Commands"
     ],
-    "additionalProperties": false,
-    "allOf": [
-        {
-            "$comment": "验证 device 字段必须存在于 Devices 列表中（通过模式匹配）",
-            "if": {
-                "type": "object",
-                "required": [
-                    "Devices",
-                    "Commands"
-                ]
-            },
-            "then": {
-                "properties": {
-                    "Commands": {
-                        "items": {
-                            "properties": {
-                                "device": {
-                                    "type": "string",
-                                    "pattern": "^(DeviceA|DeviceB|DeviceC)$",
-                                    "patternErrorMessage": "设备名称必须在 Devices 列表中定义",
-                                    "description": "可用的设备: DeviceA, DeviceB, DeviceC"
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    ]
+    "additionalProperties": false
 }
