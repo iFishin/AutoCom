@@ -1,0 +1,319 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Shared schema fragments for AutoCom",
+    "definitions": {
+        "action": {
+            "type": "object",
+            "description": "单个或多个 action 对象。允许未注册的 action（不会报错），但对已知 action 做类型校验。",
+            "minProperties": 1,
+            "properties": {
+                "test": {
+                    "type": "string"
+                },
+                "save": {
+                    "type": "object",
+                    "properties": {
+                        "device": {
+                            "type": "string"
+                        },
+                        "variable": {
+                            "type": "string"
+                        },
+                        "value": {}
+                    },
+                    "required": [
+                        "device",
+                        "variable",
+                        "value"
+                    ],
+                    "additionalProperties": false
+                },
+                "save_conditional": {
+                    "type": "object",
+                    "properties": {
+                        "device": {
+                            "type": "string"
+                        },
+                        "variable": {
+                            "type": "string"
+                        },
+                        "pattern": {
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "device",
+                        "variable",
+                        "pattern"
+                    ],
+                    "additionalProperties": false
+                },
+                "retry": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "set_status": {
+                    "type": "string"
+                },
+                "wait": {
+                    "type": "object",
+                    "properties": {
+                        "duration": {
+                            "type": "integer",
+                            "minimum": 0
+                        }
+                    },
+                    "required": [
+                        "duration"
+                    ],
+                    "additionalProperties": false
+                },
+                "print": {
+                    "type": "string"
+                },
+                "set_status_by_order": {
+                    "type": "object",
+                    "properties": {
+                        "order": {
+                            "type": "integer",
+                            "minimum": 1
+                        },
+                        "status": {
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "order",
+                        "status"
+                    ],
+                    "additionalProperties": false
+                },
+                "execute_command": {
+                    "type": "object",
+                    "properties": {
+                        "command": {
+                            "type": "string"
+                        },
+                        "timeout": {
+                            "type": "integer",
+                            "minimum": 0
+                        }
+                    },
+                    "required": [
+                        "command"
+                    ],
+                    "additionalProperties": false
+                },
+                "execute_command_by_order": {
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "generate_random_str": {
+                    "type": "object",
+                    "properties": {
+                        "device": {
+                            "type": "string"
+                        },
+                        "variable": {
+                            "type": "string"
+                        },
+                        "length": {
+                            "type": "integer",
+                            "minimum": 1
+                        }
+                    },
+                    "required": [
+                        "device",
+                        "variable",
+                        "length"
+                    ],
+                    "additionalProperties": false
+                },
+                "calculate_length": {
+                    "type": "object",
+                    "properties": {
+                        "device": {
+                            "type": "string"
+                        },
+                        "variable": {
+                            "type": "string"
+                        },
+                        "data": {
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "device",
+                        "variable",
+                        "data"
+                    ],
+                    "additionalProperties": false
+                },
+                "calculate_crc": {
+                    "type": "object",
+                    "properties": {
+                        "device": {
+                            "type": "string"
+                        },
+                        "variable": {
+                            "type": "string"
+                        },
+                        "raw_data": {
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "device",
+                        "variable",
+                        "raw_data"
+                    ],
+                    "additionalProperties": false
+                },
+                "replace_str": {
+                    "type": "object",
+                    "properties": {
+                        "device": {
+                            "type": "string"
+                        },
+                        "variable": {
+                            "type": "string"
+                        },
+                        "data": {
+                            "type": "string"
+                        },
+                        "original_str": {
+                            "type": "string"
+                        },
+                        "new_str": {
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "device",
+                        "variable",
+                        "data",
+                        "original_str",
+                        "new_str"
+                    ],
+                    "additionalProperties": false
+                },
+                "wifi_connect": {
+                    "type": "object",
+                    "properties": {
+                        "ssid": {
+                            "type": "string"
+                        },
+                        "password": {
+                            "type": "string"
+                        },
+                        "timeout": {
+                            "type": "integer",
+                            "minimum": 0
+                        }
+                    },
+                    "required": [
+                        "ssid",
+                        "password"
+                    ],
+                    "additionalProperties": false
+                },
+                "get_wifi_config": {
+                    "type": "object",
+                    "properties": {
+                        "device_ip": {
+                            "type": "string"
+                        },
+                        "ssid": {
+                            "type": "string"
+                        },
+                        "password": {
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "device_ip",
+                        "ssid",
+                        "password"
+                    ],
+                    "additionalProperties": false
+                },
+                "post_wifi_config": {
+                    "type": "object",
+                    "properties": {
+                        "device_ip": {
+                            "type": "string"
+                        },
+                        "ssid": {
+                            "type": "string"
+                        },
+                        "password": {
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "device_ip",
+                        "ssid",
+                        "password"
+                    ],
+                    "additionalProperties": false
+                },
+                "get_network_page": {
+                    "type": "object",
+                    "properties": {
+                        "device_ip": {
+                            "type": "string"
+                        },
+                        "url": {
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "device_ip",
+                        "url"
+                    ],
+                    "additionalProperties": false
+                },
+                "send_file": {
+                    "anyOf": [
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "object",
+                            "properties": {
+                                "path": {
+                                    "type": "string"
+                                },
+                                "encoding": {
+                                    "type": "string",
+                                    "default": "utf-8"
+                                },
+                                "line_ending": {
+                                    "type": "string",
+                                    "enum": [
+                                        "lf",
+                                        "crlf",
+                                        "cr",
+                                        "none"
+                                    ],
+                                    "default": "lf"
+                                }
+                            },
+                            "required": [
+                                "path"
+                            ],
+                            "additionalProperties": false
+                        }
+                    ]
+                },
+                "ignore": {
+                    "type": "boolean"
+                },
+                "stop": {
+                    "type": "boolean"
+                }
+            },
+            "additionalProperties": true
+        }
+    }
+}

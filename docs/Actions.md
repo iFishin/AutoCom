@@ -72,7 +72,7 @@
         "variable": "variable_name",
         "pattern": "regex_pattern"
     }
-}
+} 
 ```
 
 ---

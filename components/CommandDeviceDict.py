@@ -301,8 +301,8 @@ class CommandDeviceDict:
                 )
 
         # 所有常量都已处理好，现在开始初始化设备
-        for device in config_dict["Devices"]:
-            if device["status"] == "enabled":
+        for device in config_dict.get("Devices", []):
+            if device.get("status", "enabled") == "enabled":
                 parity_map = {
                     "None": serial.PARITY_NONE,
                     "Even": serial.PARITY_EVEN,

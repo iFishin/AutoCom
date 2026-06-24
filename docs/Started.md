@@ -146,16 +146,37 @@ pip install git+https://github.com/iFishin/AutoCom.git
 
 ```text
 AutoCom/
-├── scripts/
-│   └── dev.py              # 开发工具 (新!)
-├── AutoCom.py              # 主程序
-├── cli.py                  # CLI 入口
-├── version.py              # 版本文件
-├── components/             # 组件模块
-├── utils/                  # 工具模块
-├── setup.py                # 安装配置
-├── pyproject.toml          # 现代化配置
-└── README.md               # 项目说明
+├── cli.py                   # CLI 入口
+├── AutoCom.py               # 主执行引擎
+├── version.py               # 版本号
+├── pyproject.toml           # 构建配置
+├── components/
+│   ├── SessionStore.py      # SQLite 持久化（替代旧 DataStore）
+│   ├── Context.py           # 运行时变量上下文
+│   ├── PipelineScheduler.py # 流水线调度器（程序计数器 + 控制流）
+│   ├── steps/               # Step Handler（serial/http/script/wait/action_batch）
+│   ├── CommandExecutor.py   # 旧兼容层
+│   ├── CommandDeviceDict.py # 设备管理
+│   ├── Device.py            # 串口设备
+│   └── Logger.py            # 日志系统
+├── utils/
+│   ├── TemplateEngine.py    # 模板引擎（变量替换 + 条件评估）
+│   ├── ActionHandler.py     # Action 分发
+│   ├── CustomActionHandler.py
+│   ├── common.py            # 工具函数
+│   └── dirs.py              # 路径管理
+├── dicts/
+│   └── AutoCom2_Dicts/      # 新格式示例配置 (7个)
+├── data/
+│   └── sessions.db          # SQLite 执行记录
+├── docs/
+│   ├── Started.md           # 本文件
+│   ├── About.md             # 架构说明
+│   ├── Actions.md           # Action 参考
+│   └── MCP.md               # AI Agent 接口
+├── tests/                   # 测试文件
+└── scripts/
+    └── dev.py               # 开发工具
 ```
 
 ## 💡 开发提示

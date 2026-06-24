@@ -1,25 +1,46 @@
+"""
+CommandExecutor — 命令执行器（兼容层 + 新架构入口）
+
+保持向后兼容的同时，内部改用 PipelineScheduler 驱动 Steps 执行。
+"""
+
+import os
+import sys
 import time
 import threading
-import sys
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
+from typing import Any, Optional
+
 from utils.common import CommonUtils
 from components.DataStore import DataStore
 from components.CommandDeviceDict import CommandDeviceDict
 from utils.ActionHandler import ActionHandler
 from components.Logger import get_logger, AutoComLogger
+from components.SessionStore import SessionStore
+from components.Context import Context
+from components.PipelineScheduler import PipelineScheduler
+from components.steps import BUILTIN_HANDLERS
+from utils.dirs import get_dirs
 
 logger: AutoComLogger = get_logger("AutoCom")
 
 
 class CommandExecutor:
-    def __init__(self, command_device_dict_or_dict, session_id=None):
+    """命令执行器。
 
-        # 创建 DataStore 实例
-        self.data_store = DataStore(session_id=session_id)
+    兼容旧代码：仍暴露 data_store / execute_command() API。
+    但内部用 PipelineScheduler + Step Handlers 驱动。
+    """
+
+    def __init__(self, command_device_dict_or_dict, session_id=None,
+                 context: Optional[Context] = None):
         self.lock = threading.Lock()
+        self.context = context  # 可能为 None，在 _ensure_context() 中创建
 
-        # 后台命令执行队列（用于处理 success_response_actions 中的嵌套命令）
+        # ── 旧 DataStore 兼容层 ──
+        
+        # 后台命令执行队列（旧系统保留）
         self.deferred_command_queue = Queue()
         self.deferred_execution_thread = None
 
@@ -27,13 +48,9 @@ class CommandExecutor:
         self.current_iteration = None
         self.total_iterations = None
 
-        # 并行执行期间的延迟 actions 收集（避免在并行期间干扰串口通信）
-        self.defer_response_actions = (
-            False  # 标志：是否延迟处理 execute_command_by_order
-        )
-        self.deferred_response_actions = (
-            []
-        )  # 收集延迟的 (command, response, action_type, context)
+        # 并行执行期间的延迟 actions 收集
+        self.defer_response_actions = False
+        self.deferred_response_actions = []
 
         # 从执行配置文件数据中获取数据
         dict_data = (
@@ -42,168 +59,148 @@ class CommandExecutor:
             else command_device_dict_or_dict.dict
         )
 
-        # 处理常量
-        if "Constants" in dict_data:
-            need_input_constants = []
-            loaded_constants = []
+        # ── 处理 Constants（写入 Context 或旧 DataStore） ──
+        self._process_constants(dict_data)
 
-            for key, value in dict_data["Constants"].items():
-                if value == "":  # 空字符串，需要用户输入
-                    need_input_constants.append(key)
-                else:
-                    self.data_store.store_data("Constants", key, value)
-                    loaded_constants.append(key)
-
-            # 处理需要用户输入的常量
-            if need_input_constants:
-                logger.log_session_start("The following constants need your input:")
-
-                for key in need_input_constants:
-                    max_retries = 3
-                    for attempt in range(max_retries):
-                        try:
-                            # 提示用户输入并去除首尾空格
-                            value = input(f"Please enter value for {key}: ").strip()
-
-                            if not value:  # 如果输入为空
-                                if attempt < max_retries - 1:
-                                    logger.log_session_start(
-                                        f"Value cannot be empty. Please try again ({attempt + 1}/{max_retries})"
-                                    )
-                                    continue
-                                else:
-                                    logger.log_session_start(
-                                        f"No valid value provided for {key} after {max_retries} attempts"
-                                    )
-                                    sys.exit(1)
-
-                            # 存储用户输入的值
-                            self.data_store.store_data("Constants", key, value)
-                            logger.log_session_start(f"✓ Stored {key} = {value}")
-                            break
-
-                        except KeyboardInterrupt:
-                            logger.log_session_start("\n❌ Input cancelled by user")
-                            sys.exit(1)
-                        except Exception as e:
-                            if attempt < max_retries - 1:
-                                logger.log_session_start(
-                                    f"Error: {e}. Please try again ({attempt + 1}/{max_retries})"
-                                )
-                                continue
-                            else:
-                                logger.log_session_start(
-                                    f"❌ Failed to get value for {key} after {max_retries} attempts: {e}"
-                                )
-                                sys.exit(1)
-
-                logger.log_session_start(
-                    f"✓ Successfully collected values for all {len(need_input_constants)} constants",
-                )
-
-        # 创建或更新 CommandDeviceDict
+        # ── 创建 CommandDeviceDict（打开串口） ──
         if isinstance(command_device_dict_or_dict, dict):
             self.command_device_dict = CommandDeviceDict(
-                command_device_dict_or_dict, self.data_store
+                command_device_dict_or_dict,
+                self._compat_data_store(),
             )
         else:
             self.command_device_dict = command_device_dict_or_dict
-            # 注入 DataStore 实例到现有的 CommandDeviceDict
             if self.command_device_dict._data_store is None:
-                self.command_device_dict._data_store = self.data_store
+                self.command_device_dict._data_store = self._compat_data_store()
 
-        # Check if there is a custom ActionHandler
-        action_handler_class = ActionHandler  # Default to the base class
+        # ── 注入 Device 实例到 Context ──
+        ctx = self._ensure_context()
+        for name, dev in self.command_device_dict.devices.items():
+            ctx.set(f"_runtime.devices.{name}", dev)
+            # 同时记录设备元信息
+            ctx.set(f"devices.{name}.port",
+                    getattr(dev, "port", ""))
+            ctx.set(f"devices.{name}.baud_rate",
+                    getattr(dev, "baud_rate", 115200))
 
-        if "ConfigForActions" in self.command_device_dict.dict:
-            handler_class_path = self.command_device_dict.dict["ConfigForActions"].get(
-                "handler_class"
-            )
-            if handler_class_path:
-                try:
-                    # Dynamically import the specified handler class
-                    module_path, class_name = handler_class_path.rsplit(".", 1)
-                    module = __import__(module_path, fromlist=[class_name])
-                    custom_handler_class = getattr(module, class_name)
-                    action_handler_class = custom_handler_class
-                    logger.log_session_start(
-                        f"Custom ActionHandler loaded: {handler_class_path}"
-                    )
-                except (ImportError, AttributeError) as e:
-                    logger.log_session_start(
-                        f"Failed to load custom ActionHandler: {e}"
-                    )
+        # ── 创建 ActionHandler ──
+        self.action_handler = self._create_action_handler(dict_data)
 
-        # Create an instance of ActionHandler
-        self.action_handler = action_handler_class(self)
+        # ── 创建 Step Handlers ──
+        self.step_handlers = {}
+        ctx = self._ensure_context()
+        for stype, handler_cls in BUILTIN_HANDLERS.items():
+            self.step_handlers[stype] = handler_cls(ctx, self.action_handler)
 
-        # 启动后台命令执行线程
+        # ── 创建 PipelineScheduler ──
+        self.scheduler: Optional[PipelineScheduler] = None
+
+        # 启动后台命令执行线程（旧系统保留）
         self._start_deferred_execution_thread()
 
-    def _start_deferred_execution_thread(self):
-        """启动后台线程处理延迟执行的命令（避免嵌套锁导致的死锁）"""
-        self.deferred_execution_thread = threading.Thread(
-            target=self._deferred_execution_worker, daemon=False
-        )
-        self.deferred_execution_thread.start()
+    # ── 属性兼容 ──
 
-    def _deferred_execution_worker(self):
-        """后台线程工作函数，处理延迟执行的命令"""
-        while True:
-            try:
-                item = self.deferred_command_queue.get(timeout=1)
-                if item is None:  # Sentinel value to stop the thread
-                    self.deferred_command_queue.task_done()
-                    break
+    @property
+    def data_store(self):
+        """旧代码通过 data_store 读写变量 → 统一走 Context。"""
+        return self._compat_data_store()
 
-                cmd = item
+    @data_store.setter
+    def data_store(self, value):
+        """测试兼容：允许外部直接注入 mock DataStore。"""
+        self._legacy_data_store = value
+
+    @property
+    def ctx(self) -> Context:
+        """新代码统一用 ctx。"""
+        return self._ensure_context()
+
+    # ── 内部：Context 懒初始化 ──
+
+    def _ensure_context(self) -> Context:
+        """如果外部未传入 Context，自动创建一个（standalone 模式）。"""
+        if not hasattr(self, 'context') or self.context is None:
+            from components.SessionStore import SessionStore
+            store = SessionStore(get_dirs().db_path)
+            sid = time.strftime("%Y-%m-%d_%H%M%S")
+            store.create_session(sid, config_name="standalone")
+            self.context = Context(store, sid)
+        return self.context
+
+    def _compat_data_store(self):
+        """返回兼容的 DataStore/Context 对象。
+
+        Context 支持 store_data/get_data 兼容 API，完全替代旧 DataStore。
+        """
+        return self._ensure_context()
+
+    def handle_variables_from_str(self, param, device_name=None):
+        """兼容旧 ActionHandler 的 {VAR} 变量替换入口。"""
+        if isinstance(param, str):
+            return CommonUtils.process_variables(
+                param, self._compat_data_store(), device_name)
+        return param
+
+    # ── 常量处理 ──
+
+    def _process_constants(self, dict_data: dict):
+        if "Constants" not in dict_data:
+            return
+
+        need_input = []
+        for key, value in dict_data["Constants"].items():
+            val = str(value) if value is not None else ""
+            if val == "":
+                need_input.append(key)
+            else:
+                self._compat_data_store().store_data("Constants", key, val)
+
+        # 需要用户输入的常量
+        if need_input:
+            logger.log_session_start("The following constants need your input:")
+            for key in need_input:
+                for attempt in range(3):
+                    try:
+                        val = input(f"Please enter value for {key}: ").strip()
+                        if not val:
+                            if attempt < 2:
+                                logger.log_session_start(
+                                    f"Value cannot be empty. Please try again ({attempt + 1}/3)")
+                                continue
+                            else:
+                                logger.log_session_start(
+                                    f"No valid value provided for {key}")
+                                sys.exit(1)
+                        self._compat_data_store().store_data("Constants", key, val)
+                        break
+                    except KeyboardInterrupt:
+                        logger.log_session_start("\n❌ Input cancelled by user")
+                        sys.exit(1)
+
+    # ── ActionHandler 创建 ──
+
+    def _create_action_handler(self, dict_data: dict) -> ActionHandler:
+        handler_class = ActionHandler
+        if "ConfigForActions" in dict_data:
+            class_path = dict_data["ConfigForActions"].get("handler_class")
+            if class_path:
                 try:
-                    self.execute_command(cmd)
-                except Exception as e:
-                    logger.log_step_error(f"Error executing deferred command: {e}")
-                finally:
-                    self.deferred_command_queue.task_done()
+                    mod_path, cls_name = class_path.rsplit(".", 1)
+                    module = __import__(mod_path, fromlist=[cls_name])
+                    handler_class = getattr(module, cls_name)
+                    logger.log_session_start(f"Custom ActionHandler loaded: {class_path}")
+                except (ImportError, AttributeError) as e:
+                    logger.log_session_start(f"Failed to load custom ActionHandler: {e}")
+        return handler_class(self)
 
-            except:  # Queue.Empty exception
-                continue
-
-    def enqueue_deferred_command(self, command):
-        """将命令加入后台执行队列，避免嵌套锁死锁"""
-        self.deferred_command_queue.put(command)
-
-    def _handle_response_actions_with_defer(
-        self, command, response, action_type, context
-    ):
-        """处理 response_actions，在并行执行期间延迟所有响应处理"""
-        # 如果在并行执行期间，收集所有响应处理，包括 retry，稍后统一执行
-        if self.defer_response_actions:
-            self.deferred_response_actions.append(
-                (command, response, action_type, context)
-            )
-            return True
-
-        # 不在并行执行期间，直接处理
-        def handle_response_actions(command, response, action_type):
-            return self.action_handler.handle_response_actions(
-                command, response, action_type, context
-            )
-
-        return handle_response_actions(command, response, action_type)
+    # ── 旧 execute_command 保留（向后兼容） ──
 
     def execute_command(self, command) -> bool:
+        """保留原 execute_command 方法，供旧 action handler 调用。
+
+        内部仍走旧的 device.send_command 逻辑。
+        """
         self.isAllPassed = False
-
-        # For backward compatibility, keep this method
-        def handle_variables_from_str(param, device_name):
-            if isinstance(param, str):
-                # 尝试从 Constants 和设备变量中获取变量值
-                result = CommonUtils.process_variables(
-                    param, self.data_store, device_name
-                )
-                return result
-            return param
-
-        self.handle_variables_from_str = handle_variables_from_str
 
         device_name = command["device"]
         device = self.command_device_dict.devices[device_name]
@@ -212,8 +209,7 @@ class CommandExecutor:
         if "expected_responses" in command:
             for expected_response in command["expected_responses"]:
                 updated_expected_responses.append(
-                    handle_variables_from_str(expected_response, device_name)
-                )
+                    handle_variables_from_str(expected_response, device_name))
 
         if "command" in command:
             cmd_str = handle_variables_from_str(command["command"], device_name)
@@ -224,15 +220,10 @@ class CommandExecutor:
             for param in command["parameters"]:
                 cmd_str += handle_variables_from_str(param, device_name)
 
-        if "hex_mode" in command:
-            hex_mode = command["hex_mode"]
-        else:
-            hex_mode = False  # Default to normal mode if not specified
-
+        hex_mode = command.get("hex_mode", False)
         priority = self._resolve_priority(command, device_name)
         completion_rules = self._resolve_completion_rules(command, device_name)
 
-        # Call send_command with expected responses
         send_args = {
             "timeout": command["timeout"] / 1000,
             "hex_mode": hex_mode,
@@ -243,19 +234,11 @@ class CommandExecutor:
             send_args["completion_rules"] = completion_rules
 
         result = device.send_command(cmd_str, **send_args)
-
-        # Extract response and success flag from result
         response = result["response"]
         success = result["success"]
         elapsed_time = result["elapsed_time"]
         matched = result["matched"]
 
-        now = (
-            time.strftime("%Y-%m-%d_%H:%M:%S", time.localtime())
-            + f":{int((time.time() % 1) * 1000):03d}"
-        )
-
-        # 创建上下文对象，用于传递给 ActionHandler
         context = {
             "device": device,
             "device_name": device_name,
@@ -265,140 +248,117 @@ class CommandExecutor:
             "completion_rules": completion_rules,
         }
 
-        # 调用新的 ActionHandler
-        def handle_actions(command, response, action_type):
-            return self.action_handler.handle_actions(
-                command, response, action_type, context
-            )
-
-        # handle_response_actions 方法
-        def handle_response_actions(command, response, action_type):
-            return self.action_handler.handle_response_actions(
-                command, response, action_type, context
-            )
-
-        # Prepare command display string
-        response_preview = response[:48] + "" if len(response) > 48 else response
-
+        response_preview = response[:48] + "..." if len(response) > 48 else response
         if cmd_str.strip() == "":
             cmd_str = "ℹ INFO"
 
-        # Check if all expected responses matched (success flag from device)
         if success and updated_expected_responses:
-            # 有期望响应且全部匹配成功
-            status_msg = f"Passed ({elapsed_time*1000:.2f}ms, matched {len(matched)}/{len(updated_expected_responses)})"
             logger.log_execution(
-                time_str=now,
-                result=True,
-                device=device_name,
-                command=cmd_str,
-                response=response_preview,
-                elapsed_ms=elapsed_time * 1000,
-            )
+                time_str=time.strftime("%Y-%m-%d_%H:%M:%S"),
+                result=True, device=device_name,
+                command=cmd_str, response=response_preview,
+                elapsed_ms=elapsed_time * 1000)
             self.isAllPassed = True
-
-            # 使用新的 ActionHandler 处理 actions
             with self.lock:
-                isActionPassed = all(
-                    [
-                        handle_actions(command, response, "success_actions"),
-                        self._handle_response_actions_with_defer(
-                            command, response, "success_response_actions", context
-                        ),
-                        handle_response_actions(
-                            command, response, "error_response_actions"
-                        ),
-                    ]
-                )
-                if not isActionPassed:
-                    logger.log_step_error(
-                        "Action handling failed, check logs for details."
-                    )
-
-                self.isAllPassed &= isActionPassed
+                is_ok = all([
+                    self.action_handler.handle_actions(command, response, "success_actions", context),
+                    self._handle_response_actions_with_defer(command, response, "success_response_actions", context),
+                    self.action_handler.handle_response_actions(command, response, "error_response_actions", context),
+                ])
+                self.isAllPassed = self.isAllPassed and is_ok
         elif not updated_expected_responses:
-            # 没有设置期望响应,无论有无响应都算成功(超时即可)
-            if response:
-                status_msg = f"Got response ({elapsed_time:.2f}s)"
-            else:
-                status_msg = f"Completed ({elapsed_time:.2f}s)"
-
             logger.log_execution(
-                time_str=now,
-                result=True,
-                device=device_name,
-                command=cmd_str,
-                response=response_preview,
-                elapsed_ms=elapsed_time * 1000,
-            )
+                time_str=time.strftime("%Y-%m-%d_%H:%M:%S"),
+                result=True, device=device_name,
+                command=cmd_str, response=response_preview,
+                elapsed_ms=elapsed_time * 1000)
             self.isAllPassed = True
-
-            # 使用新的 ActionHandler 处理 actions
             with self.lock:
-                isActionPassed = all(
-                    [
-                        handle_actions(command, response, "success_actions"),
-                        self._handle_response_actions_with_defer(
-                            command, response, "success_response_actions", context
-                        ),
-                        handle_response_actions(
-                            command, response, "error_response_actions"
-                        ),
-                    ]
-                )
-                if not isActionPassed:
-                    logger.log_step_error(
-                        "Action handling failed, check logs for details."
-                    )
-
-                self.isAllPassed &= isActionPassed
+                is_ok = all([
+                    self.action_handler.handle_actions(command, response, "success_actions", context),
+                    self._handle_response_actions_with_defer(command, response, "success_response_actions", context),
+                    self.action_handler.handle_response_actions(command, response, "error_response_actions", context),
+                ])
+                self.isAllPassed = self.isAllPassed and is_ok
         else:
-            # 有期望响应但未完全匹配
-            status_msg = f"Failed ({elapsed_time:.2f}s, matched {len(matched)}/{len(updated_expected_responses)})"
-
             logger.log_execution(
-                time_str=now,
-                result=False,
-                device=device_name,
-                command=cmd_str,
-                response=response_preview,
-                elapsed_ms=elapsed_time * 1000,
-            )
+                time_str=time.strftime("%Y-%m-%d_%H:%M:%S"),
+                result=False, device=device_name,
+                command=cmd_str, response=response_preview,
+                elapsed_ms=elapsed_time * 1000)
             self.isAllPassed = False
-
-            # 使用新的 ActionHandler 处理 actions
-            with self.lock:  # 使用锁确保原子性
-                handle_actions(command, response, "error_actions")
-                self._handle_response_actions_with_defer(
-                    command, response, "success_response_actions", context
-                )
-                handle_response_actions(command, response, "error_response_actions")
+            with self.lock:
+                self.action_handler.handle_actions(command, response, "error_actions", context)
+                self._handle_response_actions_with_defer(command, response, "success_response_actions", context)
+                self.action_handler.handle_response_actions(command, response, "error_response_actions", context)
 
         return self.isAllPassed
 
+    # ── 新 execute：走 PipelineScheduler ──
+
+    def execute(self) -> bool:
+        """执行所有步骤（新架构：走 PipelineScheduler）。"""
+        dict_data = self.command_device_dict.dict
+
+        # Commands → Steps 自动转换
+        if "Steps" not in dict_data and "Commands" in dict_data:
+            dict_data["Steps"] = PipelineScheduler._convert_commands(dict_data["Commands"])
+
+        steps = dict_data.get("Steps", [])
+        if not steps:
+            logger.log_session_start("No steps to execute.")
+            return False
+
+        # 自动给缺失 device 的 step 赋值为唯一设备
+        devices = self.command_device_dict.devices
+        if devices and len(devices) == 1:
+            only_dev_name = next(iter(devices))
+            for s in steps:
+                if "device" not in s:
+                    s["device"] = only_dev_name
+
+        # 标记迭代
+        ctx = self._ensure_context()
+        if self.current_iteration is not None:
+            ctx.set("session.iteration", self.current_iteration)
+            ctx.set("session.total", self.total_iterations or 0)
+            for device_name, device in self.command_device_dict.devices.items():
+                device.mark_iteration(self.current_iteration, self.total_iterations)
+
+        # 创建调度器
+        self.scheduler = PipelineScheduler(
+            steps=steps,
+            ctx=ctx,
+            handlers=self.step_handlers,
+            action_handler=self.action_handler,
+        )
+
+        # 执行
+        result = self.scheduler.run()
+
+        # 等待延迟命令执行完成
+        self._wait_for_deferred_commands()
+
+        return result
+
+    # ── 以下为旧系统保留方法 ──
+
     def _supports_monitor_send_options(self, device_name):
-        """Only monitor-enabled devices support priority/completion_rules options."""
         monitors = getattr(self.command_device_dict, "device_monitors", {})
         return device_name in monitors
 
     def _resolve_priority(self, command, device_name):
-        """Resolve priority from command config with variable expansion."""
-        raw_priority = command.get("priority", 0)
-        resolved = self.handle_variables_from_str(raw_priority, device_name)
+        raw = command.get("priority", 0)
+        resolved = self.handle_variables_from_str(raw, device_name)
         try:
             return int(resolved)
-        except (TypeError, ValueError):
-            logger.log_step_warning(
-                f"Invalid priority '{resolved}' for device {device_name}, using 0"
-            )
+        except (ValueError, TypeError):
             return 0
 
     def _resolve_completion_rules(self, command, device_name):
-        """Resolve completion rules from command config with variable expansion."""
         raw_rules = command.get("completion_rules")
         if not raw_rules:
             return None
-
         def _resolve(value):
             if isinstance(value, str):
                 return self.handle_variables_from_str(value, device_name)
@@ -407,191 +367,80 @@ class CommandExecutor:
             if isinstance(value, dict):
                 return {k: _resolve(v) for k, v in value.items()}
             return value
-
-        resolved = _resolve(raw_rules)
-        return resolved if isinstance(resolved, dict) else None
+        return _resolve(raw_rules)
 
     def set_iteration_info(self, current_iteration, total_iterations=None):
-        """Set iteration information for logging purposes
-
-        Args:
-            current_iteration: Current iteration number (1-based)
-            total_iterations: Total number of iterations (optional)
-        """
         self.current_iteration = current_iteration
         self.total_iterations = total_iterations
 
-    def execute(self) -> bool:
-        commands = self.command_device_dict.dict["Commands"]
-        if not commands:
-            logger.log_session_start("No commands to execute.")
-            return False
+    def _start_deferred_execution_thread(self):
+        self.deferred_execution_thread = threading.Thread(
+            target=self._deferred_execution_worker, daemon=False)
+        self.deferred_execution_thread.start()
 
-        # Mark iteration in all device logs if iteration info is set
-        if self.current_iteration is not None:
-            for device_name, device in self.command_device_dict.devices.items():
-                device.mark_iteration(self.current_iteration, self.total_iterations)
-
-        i = 0
-        self.isSinglePassed = True
-        while i < len(commands):
-            # 在处理任何命令前，检查是否有延迟的 response actions 需要执行
-            # 这确保触发的命令在适当的时机执行，不会打断并行块
-            if (
-                not commands[i].get("concurrent_strategy") == "parallel"
-                and self.deferred_response_actions
-            ):
-                self._execute_deferred_response_actions()
-
-            if commands[i].get("status") == "disabled":
-                i += 1
+    def _deferred_execution_worker(self):
+        while True:
+            try:
+                item = self.deferred_command_queue.get(timeout=1)
+                if item is None:
+                    self.deferred_command_queue.task_done()
+                    break
+                try:
+                    self.execute_command(item)
+                except Exception as e:
+                    logger.log_step_error(f"Error executing deferred command: {e}")
+                finally:
+                    self.deferred_command_queue.task_done()
+            except:  # Queue.Empty
                 continue
 
-            # Handle parallel execution strategy
-            if commands[i].get("concurrent_strategy") == "parallel":
-                # Collect all consecutive parallel commands with the same order
-                current_order = commands[i].get("order")
-                parallel_commands = [commands[i]]
-                next_idx = i + 1
+    def enqueue_deferred_command(self, command):
+        self.deferred_command_queue.put(command)
 
-                while (
-                    next_idx < len(commands)
-                    and commands[next_idx].get("concurrent_strategy") == "parallel"
-                    and commands[next_idx].get("order") == current_order
-                ):
-                    parallel_commands.append(commands[next_idx])
-                    next_idx += 1
-
-                # Execute parallel commands
-                result = self._execute_parallel_commands(parallel_commands)
-                if not result:
-                    self.isSinglePassed = False
-                i = next_idx
-            else:
-                # Sequential execution (default behavior)
-                result = self.execute_command(commands[i])
-                if not result:
-                    self.isSinglePassed = False
-                i += 1
-
-        # 等待所有延迟执行的命令完成
-        self._wait_for_deferred_commands()
-
-        return self.isSinglePassed
+    def _handle_response_actions_with_defer(self, command, response, action_type, context):
+        if self.defer_response_actions:
+            self.deferred_response_actions.append((command, response, action_type, context))
+            return True
+        return self.action_handler.handle_response_actions(command, response, action_type, context)
 
     def _wait_for_deferred_commands(self):
-        """等待所有延迟执行的命令完成"""
-        # 将所有后台队列中的命令执行完毕
         self.deferred_command_queue.join()
 
+    def _execute_deferred_response_actions(self):
+        if not self.deferred_response_actions:
+            return
+        actions = self.deferred_response_actions.copy()
+        self.deferred_response_actions.clear()
+        for item in actions:
+            try:
+                if isinstance(item, dict) and item.get("action_type") == "deferred_execute":
+                    self.execute_command(item["command"])
+                else:
+                    command, response, action_type, context = item
+                    self.action_handler.handle_response_actions(
+                        command, response, action_type, context)
+            except Exception as e:
+                logger.log_step_error(f"❌ Error processing deferred action: {e}")
+
     def shutdown(self):
-        """关闭后台执行线程"""
+        """关闭后台执行线程并关闭 Context。"""
         try:
-            # 首先等待队列中所有任务完成（最多等待 10 秒）
             self.deferred_command_queue.join()
-        except Exception as e:
-            logger.log_session_end(
-                f"Warning: Error while waiting for deferred commands: {e}"
-            )
-
-        # 发送停止信号
+        except Exception:
+            pass
         try:
-            self.deferred_command_queue.put(None)  # Sentinel value
-        except Exception as e:
-            logger.log_session_end(
-                f"Warning: Error while sending stop signal to deferred execution thread: {e}"
-            )
-
-        # 等待线程退出（最多等待 5 秒）
+            self.deferred_command_queue.put(None)
+        except Exception:
+            pass
         if self.deferred_execution_thread and self.deferred_execution_thread.is_alive():
             try:
                 self.deferred_execution_thread.join(timeout=5)
-                if self.deferred_execution_thread.is_alive():
-                    logger.log_session_end(
-                        "Warning: Deferred execution thread did not terminate within 5 seconds"
-                    )
-            except Exception as e:
-                logger.log_session_end(
-                    f"Warning: Error while joining deferred execution thread: {e}"
-                )
-
-    def _execute_parallel_commands(self, commands) -> bool:
-        # Group commands by device to avoid contention on same serial port
-        device_groups = {}
-        self.isParallelPassed = True
-        for cmd in commands:
-            device = cmd["device"]
-            if device not in device_groups:
-                device_groups[device] = []
-            device_groups[device].append(cmd)
-
-        # 在并行执行期间，延迟处理 execute_command_by_order，避免打乱并行流程
-        previous_defer_state = self.defer_response_actions
-        self.defer_response_actions = True
-        # 不要清空列表，因为可能有来自之前并行块的延迟命令，只在执行时才清空
-
-        try:
-            # Execute commands for each device in parallel
-            with ThreadPoolExecutor(max_workers=len(device_groups)) as executor:
-                futures = []
-
-                # Submit device command groups to thread pool
-                for device_commands in device_groups.values():
-                    future = executor.submit(
-                        self._execute_device_commands, device_commands
-                    )
-                    futures.append(future)
-
-                # Wait for all command groups to complete
-                for future in futures:
-                    try:
-                        result = future.result(timeout=30)
-                        if not result:
-                            self.isParallelPassed = False
-                    except Exception as e:
-                        logger.log_step_error(f"Error executing parallel commands: {e}")
-                        self.isParallelPassed = False
-        finally:
-            # 并行执行完毕后，恢复之前的延迟状态
-            self.defer_response_actions = previous_defer_state
-
-            # 不在这里执行延迟 actions，而是留到主循环中的适当时机
-            # （在执行下一个非并行指令前执行，以避免打断后续的并行块）
-
-        return self.isParallelPassed
-
-    def _execute_device_commands(self, device_commands) -> bool:
-        # Execute commands for a single device sequentially
-        isAllPassed = True
-        for cmd in device_commands:
-            if not self.execute_command(cmd):
-                isAllPassed = False
-        return isAllPassed
-
-    def _execute_deferred_response_actions(self):
-        """执行所有延迟的 execute_command_by_order 操作"""
-        if not self.deferred_response_actions:
-            return
-
-        # 保存当前的延迟列表，然后清空它
-        actions_to_execute = self.deferred_response_actions.copy()
-        self.deferred_response_actions.clear()
-
-        for item in actions_to_execute:
+            except Exception:
+                pass
+        # 关闭 Context
+        if self.context is not None:
             try:
-                # 处理两种格式：新格式（执行配置文件格式）和旧格式（元组）
-                if (
-                    isinstance(item, dict)
-                    and item.get("action_type") == "deferred_execute"
-                ):
-                    # 新格式：直接执行命令
-                    cmd = item["command"]
-                    self.execute_command(cmd)
-                else:
-                    # 旧格式：处理响应操作
-                    command, response, action_type, context = item
-                    self.action_handler.handle_response_actions(
-                        command, response, action_type, context
-                    )
+                self.context.close_session("completed")
             except Exception as e:
-                logger.log_step_error(f"❌ Error processing deferred action: {e}")
+                logger.log_session_error(f"Error closing context: {e}")
+                pass

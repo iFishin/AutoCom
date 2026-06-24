@@ -39,7 +39,7 @@ autocom = "cli:main"
 autocom-dev = "scripts.dev:main"
 
 [tool.setuptools]
-packages = ["components", "utils"]
+packages = ["components", "components.steps", "utils"]
 py-modules = ["AutoCom", "cli", "version", "__init__"]
 
 [tool.setuptools.dynamic]

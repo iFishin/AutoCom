@@ -70,6 +70,16 @@ class ActionHandler:
             )
         return param
 
+    def _resolve_action_params(self, value):
+        """递归解析 action 参数，便于写入 action_batch 诊断日志。"""
+        if isinstance(value, str):
+            return self.handle_variables_from_str(value)
+        if isinstance(value, dict):
+            return {k: self._resolve_action_params(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self._resolve_action_params(v) for v in value]
+        return value
+
     def safe_store_data(self, device_name, variable, value):
         """
         安全地存储数据，带有错误处理和验证
@@ -89,10 +99,10 @@ class ActionHandler:
                 )
                 return False
 
-            self.executor.data_store.store_data(device_name, variable, value)
+            self.executor.ctx.store_data(device_name, variable, value)
 
             # 验证数据是否成功存储
-            stored_value = self.executor.data_store.get_data(device_name, variable)
+            stored_value = self.executor.ctx.get_data(device_name, variable)
             if stored_value != value:
                 logger.log_warning(
                     f"⚠️ Warning: Stored value verification failed for {device_name}.{variable}"
@@ -137,17 +147,54 @@ class ActionHandler:
                     if key in self.handlers:
                         # 找到了处理器，调用对应方法
                         # logger.print_log_line(f"Processing action: {key}")
+                        context.pop("_last_action_error", None)
+                        raw_params = value
+                        resolved_params = self._resolve_action_params(value)
                         handler_result = self.handlers[key](
                             value, command, response, context
                         )
+                        action_results = context.setdefault("_action_results", [])
                         if handler_result is False:  # 明确返回 False 表示失败
                             result = False
+                            action_results.append(
+                                {
+                                    "action": key,
+                                    "status": "failed",
+                                    "params": raw_params,
+                                    "resolved_params": resolved_params,
+                                    "detail": context.get(
+                                        "_last_action_error", "handler returned False"
+                                    ),
+                                }
+                            )
+                        else:
+                            action_results.append(
+                                {
+                                    "action": key,
+                                    "status": "passed",
+                                    "params": raw_params,
+                                    "resolved_params": resolved_params,
+                                }
+                            )
                         found = True
                         break
 
                 if not found:
                     # 找不到处理方法
                     logger.log_step_error(f"Unknown action type: {action}")
+                    context.setdefault("_action_results", []).append(
+                        {
+                            "action": (
+                                next(iter(action.keys()), "unknown")
+                                if isinstance(action, dict)
+                                else "unknown"
+                            ),
+                            "status": "error",
+                            "params": action,
+                            "resolved_params": action,
+                            "detail": f"Unknown action type: {action}",
+                        }
+                    )
                     result = False
 
             except Exception as e:
@@ -160,6 +207,19 @@ class ActionHandler:
                 )
                 logger.log_step_error(
                     f"Error occurred while processing action on device '{device_name}'{port_info}: {e}"
+                )
+                context.setdefault("_action_results", []).append(
+                    {
+                        "action": (
+                            next(iter(action.keys()), "unknown")
+                            if isinstance(action, dict)
+                            else "unknown"
+                        ),
+                        "status": "error",
+                        "params": action,
+                        "resolved_params": action,
+                        "detail": str(e),
+                    }
                 )
                 result = False
 
@@ -177,7 +237,7 @@ class ActionHandler:
             # success_response_actions 或 error_response_actions 格式（键为匹配条件，值为 actions 列表）
             for key, action_list in actions.items():
                 if key in response:
-                    logger.log_step_info(f"ℹ Response contains `{key}`")
+                    logger.log_step_info(f"Response contains `{key}`")
                     # 对每个 action 进行处理
                     for action in action_list:
                         try:
@@ -230,7 +290,7 @@ class ActionHandler:
         }
         """
         test_message = self.handle_variables_from_str(text)
-        logger.log_step_info(f"ℹ Test action executed with message: {test_message}")
+        logger.log_step_info(f"Test action executed with message: {test_message}")
         return True
 
     def handle_save(self, config, command, response, context):
@@ -250,7 +310,7 @@ class ActionHandler:
         variable = self.handle_variables_from_str(config["variable"])
         value = self.handle_variables_from_str(config["value"])
 
-        logger.log_step_info(f"ℹ Saving data from response to {device_name}.{variable}")
+        logger.log_step_info(f"Saving data from response to {device_name}.{variable}")
         return self.safe_store_data(device_name, variable, value)
 
     def handle_save_conditional(self, config, command, response, context):
@@ -270,7 +330,7 @@ class ActionHandler:
         variable = self.handle_variables_from_str(config["variable"])
 
         logger.log_step_info(
-            f"ℹ Saving data from response to {device_name}.{variable} if condition is met"
+            f"Saving data from response to {device_name}.{variable} if condition is met"
         )
 
         if "pattern" in config:
@@ -301,7 +361,7 @@ class ActionHandler:
         updated_expected_responses = context["expected_responses"]
 
         # 只有在命令字符串不为空时才重试
-        if not cmd_str or cmd_str.strip() == "ℹ INFO":
+        if not cmd_str or cmd_str.strip() == "INFO":
             logger.log_step_info(
                 f"⚠️ Skip retry: No valid command to retry on device '{device_name}'"
             )
@@ -324,7 +384,9 @@ class ActionHandler:
             }
 
             if self._supports_monitor_send_options(device_name):
-                send_args["priority"] = context.get("priority", command.get("priority", 0))
+                send_args["priority"] = context.get(
+                    "priority", command.get("priority", 0)
+                )
                 send_args["completion_rules"] = context.get(
                     "completion_rules", command.get("completion_rules")
                 )
@@ -377,7 +439,7 @@ class ActionHandler:
         }
         """
         logger.log_step_info(
-            f"ℹ Setting status of command with order {command['order']} to {status}"
+            f"Setting status of command with order {command['order']} to {status}"
         )
         command["status"] = status
         return True
@@ -398,7 +460,7 @@ class ActionHandler:
         else:
             duration = float(wait_action)
 
-        logger.log_step_info(f"ℹ Waiting for {duration} milliseconds")
+        logger.log_step_info(f"Waiting for {duration} milliseconds")
         time.sleep(duration / 1000)
         return True
 
@@ -411,7 +473,7 @@ class ActionHandler:
             "print": "message_to_print"
         }
         """
-        print_action = "ℹ  " + message
+        print_action = " " + message
         logger.log_step_info(self.handle_variables_from_str(print_action))
         return True
 
@@ -430,7 +492,7 @@ class ActionHandler:
         order = config.get("order")
         status = config.get("status")
         logger.log_step_info(
-            f"ℹ Setting status of command with order {order} to {status}"
+            f"Setting status of command with order {order} to {status}"
         )
 
         for cmd in self.executor.command_device_dict.dict["Commands"]:
@@ -453,7 +515,7 @@ class ActionHandler:
         """
         device = context["device"]
 
-        logger.log_step_info(f"ℹ Executing command: {config['command']}")
+        logger.log_step_info(f"Executing command: {config['command']}")
 
         # Get hex_mode from config if available
         hex_mode = config.get("hex_mode", False)
@@ -478,7 +540,7 @@ class ActionHandler:
         注意: 此命令会被延迟到当前并行执行块完毕后执行，
         以避免在多设备并行通信时干扰响应匹配。
         """
-        logger.log_step_info(f"ℹ Executing command with order {order}")
+        logger.log_step_info(f"Executing command with order {order}")
 
         for cmd in self.executor.command_device_dict.dict["Commands"]:
             if cmd["order"] == order:
@@ -615,7 +677,7 @@ class ActionHandler:
         password = self.handle_variables_from_str(config["password"])
         timeout = int(config.get("timeout", 10))  # 默认10秒超时
 
-        logger.log_step_info(f"ℹ Connecting to WiFi network: {ssid}")
+        logger.log_step_info(f"Connecting to WiFi network: {ssid}")
 
         try:
             # Initialize WiFi
@@ -658,12 +720,13 @@ class ActionHandler:
                 time.sleep(0.5)
 
             # Timeout without connection
-            logger.log_step_error(
-                f"Connection to WiFi timed out, please check if the SSID and password are correct"
-            )
+            msg = "Connection to WiFi timed out, please check if the SSID and password are correct"
+            context["_last_action_error"] = msg
+            logger.log_step_error(msg)
             return False
 
         except Exception as e:
+            context["_last_action_error"] = str(e)
             logger.log_step_error(f"Error occurred while connecting to WiFi: {e}")
             return False
 
@@ -681,7 +744,6 @@ class ActionHandler:
         }
         """
         import requests
-        import time
 
         # 获取并处理参数
         device_ip = self.handle_variables_from_str(config["device_ip"])
@@ -689,46 +751,67 @@ class ActionHandler:
         password = self.handle_variables_from_str(config["password"])
 
         # 构建目标URL
-        config_url = (
-            f"http://{device_ip}/connect?ssid={ssid}&pass={password}&submit=Submit"
+        config_url = f"http://{device_ip}/connect"
+        config_params = {"ssid": ssid, "pass": password, "submit": "Submit"}
+        target_url = (
+            requests.Request("GET", config_url, params=config_params).prepare().url
         )
 
-        logger.log_step_info(f"ℹ Sending WiFi configuration to device {device_ip}")
-        logger.log_step_info(f"  Target URL: {config_url}")
+        logger.log_step_info(f"Sending WiFi configuration to device {device_ip}")
+        logger.log_step_info(f"  Target URL: {target_url}")
+
+        response = requests.get(config_url, params=config_params, timeout=5)
+        response.raise_for_status()
+        logger.log_step_info("WiFi configuration request successful!")
+        return True
+
+    def handle_get_wifi_config_once(self, config, command, response, context):
+        """
+        单次发送 WiFi 配置到指定设备 IP (通过 GET 请求)
+
+        用法:
+        {
+            "get_wifi_config_once": {
+                "device_ip": "192.168.88.1",
+                "ssid": "MyWiFi",
+                "password": "MyPassword",
+                "timeout": 5
+            }
+        }
+        """
+        import requests
+
+        device_ip = self.handle_variables_from_str(config["device_ip"])
+        ssid = self.handle_variables_from_str(config["ssid"])
+        password = self.handle_variables_from_str(config["password"])
+        timeout = float(self.handle_variables_from_str(config.get("timeout", 5)))
+
+        config_url = f"http://{device_ip}/connect"
+        config_headers = {"Connection": "close"}
+        config_params = {"ssid": ssid, "pass": password, "submit": "Submit"}
+        target_url = (
+            requests.Request("GET", config_url, params=config_params).prepare().url
+        )
+
+        logger.log_step_info(f"Sending WiFi configuration once to device {device_ip}")
+        logger.log_step_info(f"  Target URL: {target_url}")
 
         try:
-            # 第一次发送WiFi配置
-            try:
-                requests.get(config_url, timeout=5)
-                logger.log_step_info(
-                    f"ℹ First WiFi configuration request sent successfully!"
-                )
-            except Exception as e:
-                logger.log_step_info(f"ℹ First request encountered an error.")
-                logger.log_step_info(f"ℹ Proceeding to wait and retry...")
-
-            # 等待10秒
+            http_response = requests.get(
+                config_url,
+                params=config_params,
+                headers=config_headers,
+                timeout=timeout,
+            )
+            http_response.close()
+        except requests.exceptions.RequestException as e:
             logger.log_step_info(
-                f"ℹ Waiting for 15 seconds before sending the second request..."
+                f"WiFi configuration GET request was sent, but the device closed the connection without response: {e}"
             )
-            time.sleep(15)
+            return True
 
-            # 第二次发送WiFi配置
-            response = requests.get(config_url, timeout=5)
-            if response.status_code == 200:
-                logger.log_step_info(f"Second WiFi configuration request successful!")
-                return True
-            else:
-                logger.log_step_error(
-                    f"Second WiFi configuration request failed with status code: {response.status_code}"
-                )
-                return False
-
-        except Exception as e:
-            logger.log_step_error(
-                f"Error occurred while sending WiFi configuration: {str(e)}"
-            )
-            return False
+        logger.log_step_info("WiFi configuration GET request sent once.")
+        return True
 
     def handle_post_wifi_config(self, config, command, response, context):
         """
@@ -759,7 +842,7 @@ class ActionHandler:
         # 构建请求载荷
         config_data = {"ssid": ssid, "pwd": password}
 
-        logger.log_step_info(f"ℹ Sending WiFi configuration to device {device_ip}")
+        logger.log_step_info(f"Sending WiFi configuration to device {device_ip}")
         logger.log_step_info(f"  Target URL: {config_url}")
 
         try:
@@ -768,16 +851,64 @@ class ActionHandler:
                 requests.post(
                     url=config_url, headers=config_headers, data=config_data, timeout=5
                 )
-                logger.log_step_info(f"ℹ WiFi configuration request sent successfully!")
+                logger.log_step_info(f"WiFi configuration request sent successfully!")
             except Exception as e:
-                logger.log_step_info(f"ℹ Request encountered an error.")
-                logger.log_step_info(f"ℹ Proceeding to wait and retry...")
+                logger.log_step_info(f"Request encountered an error.")
+                logger.log_step_info(f"Proceeding to wait and retry...")
 
         except Exception as e:
             logger.log_step_error(
                 f"Error occurred while sending WiFi configuration: {str(e)}"
             )
             return False
+
+    def handle_post_wifi_config_once(self, config, command, response, context):
+        """
+        单次发送 WiFi 配置到指定设备 IP (通过 POST 请求)
+
+        用法:
+        {
+            "post_wifi_config_once": {
+                "device_ip": "192.168.1.1",
+                "ssid": "MyWiFi",
+                "password": "MyPassword",
+                "timeout": 5
+            }
+        }
+        """
+        import requests
+
+        device_ip = self.handle_variables_from_str(config["device_ip"])
+        ssid = self.handle_variables_from_str(config["ssid"])
+        password = self.handle_variables_from_str(config["password"])
+        timeout = float(self.handle_variables_from_str(config.get("timeout", 5)))
+
+        config_url = f"http://{device_ip}/index.html"
+        config_headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Connection": "close",
+        }
+        config_data = {"ssid": ssid, "pwd": password}
+
+        logger.log_step_info(f"Sending WiFi configuration once to device {device_ip}")
+        logger.log_step_info(f"  Target URL: {config_url}")
+
+        try:
+            http_response = requests.post(
+                url=config_url,
+                headers=config_headers,
+                data=config_data,
+                timeout=timeout,
+            )
+            http_response.close()
+        except requests.exceptions.RequestException as e:
+            logger.log_step_info(
+                f"WiFi configuration POST request was sent, but the device closed the connection without response: {e}"
+            )
+            return True
+
+        logger.log_step_info("WiFi configuration POST request sent once.")
+        return True
 
     def handle_get_network_page(self, config, command, response, context):
         """
@@ -800,7 +931,7 @@ class ActionHandler:
         # 构建目标URL
         target_url = f"http://{device_ip}{url}"
 
-        logger.log_step_info(f"ℹ Fetching network page content from {target_url}")
+        logger.log_step_info(f"Fetching network page content from {target_url}")
 
         try:
             response = requests.get(target_url, timeout=5)

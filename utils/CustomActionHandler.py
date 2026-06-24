@@ -316,7 +316,7 @@ class CustomActionHandler(ActionHandler):
             if "save_to" in config:
                 s = config["save_to"]
                 try:
-                    self.executor.data_store.store_data(
+                    self.executor.ctx.store_data(
                         self.handle_variables_from_str(s.get("device")),
                         self.handle_variables_from_str(s.get("variable")),
                         result_text,
@@ -375,7 +375,7 @@ class CustomActionHandler(ActionHandler):
             # 保存响应
             if "save_to" in config:
                 save_to = config["save_to"]
-                self.executor.data_store.store_data(
+                self.executor.ctx.store_data(
                     self.handle_variables_from_str(save_to["device"]),
                     self.handle_variables_from_str(save_to["variable"]),
                     response.text,

@@ -2,12 +2,10 @@
 
 # AutoCom
 
-*一款用于自动化执行串口指令的命令行工具，支持多设备、多指令的串行和并行执行。*
+*通用流水线自动化执行工具 —— 串口 / HTTP / 本地脚本 / 混合编排*
 
 ![Cross Platform](https://img.shields.io/badge/cross--platform-Windows%20%26%20Linux-success.svg)
-![Serial Communication](https://img.shields.io/badge/communication-Serial%20Port-orange.svg)
-![Multi-Device](https://img.shields.io/badge/support-Multi--Device-blueviolet.svg)
-![Automation](https://img.shields.io/badge/type-Automation%20Tool-red.svg)
+![Pipeline](https://img.shields.io/badge/type-Pipeline%20Automation-blue.svg)
 ![PyPI](https://img.shields.io/badge/PyPI-autocom-blue.svg)
 
 </div>
@@ -16,24 +14,15 @@
 
 ## 📦 安装
 
-### 从 PyPI 安装（推荐）
-
 ```bash
 pip install autocom
 ```
 
-### 从 GitHub 直接安装
-
-```bash
-pip install git+https://github.com/iFishin/AutoCom.git
-```
-
-### 从源码安装
+或从源码安装：
 
 ```bash
 git clone https://github.com/iFishin/AutoCom.git
 cd AutoCom
-pip install -r requirements.txt
 pip install -e .
 ```
 
@@ -41,65 +30,126 @@ pip install -e .
 
 ## 🚀 快速开始
 
-### 命令行使用
+### 执行流水线
 
 ```bash
-# 初始化项目结构（创建 dicts/、configs/、temps/ 目录及示例文件）
-autocom --init
+# 单次执行（Config 块声明执行方式）
+autocom -p dicts/AutoCom2_Dicts/action_batch_demo.yaml
 
-# 执行配置文件（循环3次）
-autocom -d dicts/dict.yaml -l 3
+# 指定循环次数
+autocom -p pipeline.yaml -l 5
 
-# 无限循环模式（按 Ctrl+C 停止）
-autocom -d dicts/dict.yaml -i
-
-# 使用配置文件
-autocom -d dicts/dict.yaml -c configs/config.yaml
-
-# 执行文件夹内所有执行配置文件
+# 批量执行文件夹
 autocom -f dicts/
 
-# 监控模式（监听文件夹，自动执行新文件）
+# 监控模式，新文件自动执行
 autocom -m temps/
 ```
 
-### Python API 使用
+### 流水线配置文件示例（新 Steps 格式）
 
-```python
-from autocom import CommandDeviceDict, CommandExecutor, CommonUtils
+```yaml
+Config:
+  description: "固件升级 + 云端上报"
+  mode: single
 
-# 加载配置
-dict_data = {...}  # 你的执行配置文件数据
-device_dict = CommandDeviceDict(dict_data)
+Devices:
+  - name: DeviceA
+    port: COM66
+    baud_rate: 115200
 
-# 创建执行器
-executor = CommandExecutor(device_dict)
+Steps:
+  - id: check_fw
+    type: serial
+    device: DeviceA
+    send: AT+QVERSION
+    expect: ["OK"]
+    capture:
+      version: "Version: (\\d+\\.\\d+\\.\\d+)"
 
-# 执行指令
-result = executor.execute()
+  - id: check_ota
+    type: http
+    url: "http://ota.example.com/check?fw={{ steps.check_fw.capture.version }}"
 
-# 清理资源
-device_dict.close_all_devices()
-executor.data_store.stop()
+  - id: health_check
+    type: script
+    command: pytest tests/diag.py
+    on_error: skip
+
+  - id: report
+    type: action_batch
+    actions:
+      - save:
+          to: constants.result
+          value: "done"
+      - print: "流水线完成"
 ```
+
+### 支持的控制流
+
+```yaml
+- id: check_network
+  type: serial
+  send: AT+CREG?
+  expect: ["+CREG: 1"]
+  on_error: goto(troubleshoot)    # 失败跳转
+  on_success: continue            # 成功继续
+
+- id: process_data
+  type: script
+  command: python parse.py
+  if: "{{ steps.check_network.capture.rssi }} >= 20"  # 条件跳过
+  on_error: retry(3)              # 失败重试 3 次
+```
+
+---
+
+## ✨ 核心特性
+
+| 特性 | 说明 |
+|------|------|
+| **Steps 流水线** | 每一步独立定义类型，不限串口 |
+| **串口 (serial)** | AT 指令、expect 匹配、capture 变量提取 |
+| **HTTP (http)** | GET/POST/PUT/DELETE、status_code/body 校验 |
+| **脚本 (script)** | subprocess 执行、stdout 捕获、exit_code 校验 |
+| **Action 批处理 (action_batch)** | 纯逻辑操作，无需 I/O |
+| **控制流** | `if` / `unless` 条件跳过、`on_error: retry/goto/abort` |
+| **模板变量** | `{{ steps.xxx.capture.yyy }}` 精确路径 / `{VAR}` 模糊搜索 |
+| **类型感知存储** | 变量保持 int/float/bool/json 类型写 SQLite |
+| **向后兼容** | 旧 `Commands[]` 格式自动转换为 `type: serial` Steps |
 
 ---
 
 ## 📁 项目结构
 
-```plain
+```
 AutoCom/
-├── components/         # 核心组件模块（Device、Logger、TablePrinter、CommandDeviceDict、DataStore、CommandExecutor）
-├── utils/              # 工具类和辅助函数（ActionHandler、common、dirs）
-├── tests/              # 测试文件
-├── scripts/            # 构建和维护脚本（dev.py、update_actions_doc.py）
-├── docs/               # 项目文档
-├── dicts/              # 执行配置文件目录
-├── configs/            # 设备配置文件目录
-├── AutoCom.py          # 主程序入口
-├── cli.py              # 命令行接口
-├── version.py          # 版本信息
-└── CHANGELOG.md        # 变更日志
+├── components/
+│   ├── SessionStore.py       # SQLite 持久化层（替代旧 JSON DataStore）
+│   ├── Context.py             # 运行时变量上下文
+│   ├── PipelineScheduler.py   # 流水线调度器（程序计数器 + 控制流）
+│   ├── steps/                 # 各 type 的 Handler
+│   │   ├── serial.py
+│   │   ├── http.py
+│   │   ├── script.py
+│   │   ├── wait.py
+│   │   └── action_batch.py
+│   ├── CommandExecutor.py     # 旧兼容层（保留 execute_command()）
+│   ├── Device.py              # 串口设备抽象
+│   └── Logger.py              # 日志系统
+├── utils/
+│   ├── TemplateEngine.py      # 变量解析 + 条件评估
+│   ├── ActionHandler.py       # Action 分发系统
+│   └── dirs.py                # 路径管理
+├── dicts/
+│   └── AutoCom2_Dicts/        # 新格式示例配置文件
+├── docs/
+│   ├── Started.md             # 开发指南
+│   └── MCP.md                 # MCP Server 文档
+├── data/
+│   └── sessions.db            # SQLite 执行记录
+├── cli.py                     # CLI 入口
+└── AutoCom.py                 # 主执行引擎
 ```
 
 ---
@@ -108,177 +158,23 @@ AutoCom/
 
 | 文档 | 说明 |
 |------|------|
-| [docs/About.md](docs/About.md) | 项目背景与设计理念 |
 | [docs/Started.md](docs/Started.md) | 开发快速指南与发布流程 |
+| [docs/About.md](docs/About.md) | 项目背景与设计理念 |
 | [docs/Actions.md](docs/Actions.md) | 所有 Action 操作项的详细说明 |
-| [docs/DEV.md](docs/DEV.md) | 开发工具使用说明 |
-| [docs/ToDO.md](docs/ToDO.md) | 待办事项与未来计划 |
-| [CHANGELOG.md](CHANGELOG.md) | 版本变更历史 |
 | [docs/MCP.md](docs/MCP.md) | MCP Server: AI Agent 接口 |
-
-> 📖 **格式框架详解**（Devices、Commands、Actions 的 JSON 格式说明）参见 [docs/About.md](docs/About.md)。
-
----
-
-## 🔧 核心功能
-
-| 功能 | 说明 |
-|------|------|
-| 多设备支持 | 同时管理多个串口设备，支持不同配置 |
-| 串行/并行执行 | 指令可按顺序执行或并行并发执行 |
-| Action 扩展系统 | 通过 ActionHandler 自定义指令成功/失败后的处理逻辑 |
-| 配置覆盖机制 | ConfigForDevices / ConfigForCommands 简化重复配置 |
-| 常量和变量 | Constants 支持用户输入变量，在指令参数中引用 |
-| 文件夹遍历 | 批量执行文件夹内所有执行配置文件 |
-| 监控模式 | 监听文件夹，新文件自动执行 |
-| 持续日志监听 | 后台线程持续记录串口输出 |
-| **MCP Server** | **为 AI Agent 提供串口操作接口，支持 Claude Desktop 等 MCP 客户端** |
-
-### Monitor 命令高级参数
-
-当设备在 `Devices` 中开启了 `monitor: true` 时，`Commands` 支持以下高级参数：
-
-| 参数 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `priority` | int | `0` | 命令排队优先级，值越大越先执行。用于在监听不断流时插队执行高优先级命令。 |
-| `completion_rules` | object | `null` | 命令完成判定策略。可控制终止模式、空闲收敛时间与期望响应约束。 |
-
-`completion_rules` 支持字段：
-
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `expected_required` | bool | `false` | 为 `true` 时，即使命中终止词，也必须继续等待 `expected_responses` 命中才算完成。 |
-| `terminal_patterns` | string[] | `["OK", "ERROR"]` | 终止词列表。 |
-| `complete_patterns` | string[] | `[]` | 自定义完成词，任意命中即可完成。 |
-| `idle_timeout` | float | `min(timeout/3, 2.0)` | 在有响应后，连续空闲多久判定采集完成（秒）。 |
-| `settle_after_terminal` | float | `0.05` | 命中终止词后额外等待的收敛时间（秒）。 |
-
-示例：
-
-```yaml
-Devices:
-  - name: DeviceA
-    status: enabled
-    port: COM22
-    baud_rate: 921600
-    monitor: true
-
-Commands:
-  - command: AT+QVERSION
-    device: DeviceA
-    timeout: 2000
-    expected_responses: ["OK"]
-    priority: 8
-    completion_rules:
-      expected_required: true
-      terminal_patterns: ["OK", "ERROR"]
-      complete_patterns: ["+READY"]
-      idle_timeout: 0.6
-      settle_after_terminal: 0.05
-```
+| [dicts/AutoCom2_Dicts/](dicts/AutoCom2_Dicts/) | 7 个新格式示例文件 |
 
 ---
 
-## 🤖 MCP Server（AI Agent 接口）
-
-AutoCom MCP Server 基于 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) 实现，让 AI Agent（如 Claude Desktop、Cursor 等）能够直接控制串口设备。
-
-### 安装
+## 🌐 MCP Server（AI Agent 接口）
 
 ```bash
-# 安装 MCP 依赖
 pip install autocom[mcp]
+autocom mcp                     # Claude Desktop 集成
+autocom mcp --sse --port 8888   # HTTP 模式
 ```
-
-### 启动
-
-```bash
-# Stdio 模式（默认，适合 Claude Desktop）
-autocom mcp
-
-# SSE (HTTP) 模式（适合远程调用）
-autocom mcp --sse --port 8888
- 
-# Streamable HTTP 模式（长连接/双向通道，适合需要持续双向消息流的客户端）
-autocom mcp --streamable --port 8888 --host 0.0.0.0
-```
-
-### 认证/鉴权
-
-若在公网或不受信任网络中运行 HTTP 接口，建议启用简单的 API Key 鉴权：
-
-```bash
-autocom mcp --streamable --port 8888 --host 0.0.0.0 --auth-key s3cr3t
-```
-
-请求需包含 `Authorization: Bearer s3cr3t` 或 `X-API-Key: s3cr3t` 头部。
-安全建议（简要）：
-
-- 使用反向代理（Nginx/Traefik）对外提供 TLS；避免直接将服务暴露到公网。
-- 把密钥放在环境变量或机密管理系统里，不要提交到仓库。
-- 配置访问日志、频率限制与防火墙规则来限制滥用。
 
 详情参见 [docs/MCP.md](docs/MCP.md)。
-
-### 可用的 MCP 工具
-
-| 工具名 | 描述 | 关键参数 |
-|--------|------|----------|
-| `list_devices` | 列出可用串口设备 | 无需参数 |
-| `execute_command` | 发送单条指令并获取响应 | `port`, `command`, `baud_rate`(可选) |
-| `execute_commands` | 批量执行多条指令 | `port`, `commands[]`, `parallel`(可选) |
-| `load_dict` | 加载 AutoCom 执行配置文件 JSON 配置 | `file_path`, `config_path`(可选) |
-| `monitor_port` | 监听串口输出 | `port`, `duration`(可选) |
-
-### 配置 Claude Desktop
-
-在 `claude_desktop_config.json` 中添加：
-
-```json
-{
-  "mcpServers": {
-    "autocom": {
-      "command": "autocom",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-### SSE 模式
-
-SSE 模式启动后可通过浏览器或 MCP Inspector 调试：
-
-```
-# 健康检查
-http://localhost:8888/health
-
-# MCP Inspector 调试
-npx @modelcontextprotocol/inspector
-# 连接地址: http://localhost:8888/mcp/sse
-```
-
-### 使用示例（Python API）
-
-```python
-# 扫描设备
-result = await client.call_tool("list_devices", {})
-
-# 发送指令
-result = await client.call_tool("execute_command", {
-    "port": "COM3",
-    "command": "AT+GMR",
-    "baud_rate": 115200,
-    "timeout": 5.0,
-})
-
-# 批量执行
-result = await client.call_tool("execute_commands", {
-    "port": "/dev/ttyUSB0",
-    "commands": ["AT", "AT+GMR", "AT+CSQ"],
-    "parallel": False,
-})
-```
 
 ---
 

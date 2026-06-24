@@ -7,6 +7,7 @@ import re
 import queue
 import sys
 import yaml
+from dataclasses import dataclass, field
 from pathlib import Path
 from utils.common import CommonUtils
 from components.CommandDeviceDict import CommandDeviceDict
@@ -218,13 +219,120 @@ def apply_configs_for_commands(configForCommands: dict, dict_data: dict):
                 command[action_type].extend(cfg_actions)
 
 
-def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=None):
+# ── 配置文件保存（保留原始格式） ──
+
+def _save_dict(dict_data: dict, output_path: str | Path):
+    """将 dict_data 写入文件，根据 output_path 后缀自动选择格式。"""
+    ext = Path(output_path).suffix.lower()
+    if ext in (".yaml", ".yml"):
+        import yaml
+        with open(output_path, "w", encoding="utf-8") as f:
+            yaml.dump(dict_data, f, allow_unicode=True, default_flow_style=False)
+    else:
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(dict_data, f, indent=2, ensure_ascii=False)
+
+
+# ── 执行配置（从 Config 块读取 + CLI 覆盖） ──
+
+@dataclass
+class ExecutionConfig:
+    """解析后的执行配置。CLI 参数优先于 Config 块。"""
+    mode: str = "single"             # single | loop | infinite
+    iterations: int = 1              # loop 模式的循环次数
+    interval_ms: int = 0             # 迭代间隔（毫秒）
+    stop_on_failure: bool = True     # 失败是否终止
+    max_failures: int = 0            # 最大允许失败次数（0=不限）
+    description: str = ""            # 配置文件描述
+
+
+def _as_int(value, default=0):
+    try:
+        if value in (None, ""):
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def resolve_execution_config(
+    dict_data: dict,
+    cli_loop: int | None = None,
+    cli_infinite: bool = False,
+    cli_mode: str | None = None,
+) -> ExecutionConfig:
+    """从配置文件的 Config 块 + CLI 参数合并执行配置。
+
+    优先级：CLI 参数 > Config 块 > 兼容默认值
+    """
+    cfg = dict_data.get("Config", {}) or {}
+    has_config = "Config" in dict_data
+
+    # 顶层 loop 快捷写法: loop: 3  →  Config: {mode: loop, loop: {iterations: 3}}
+    top_level_loop = dict_data.get("loop")
+    if top_level_loop and isinstance(top_level_loop, (int, str)):
+        has_config = True
+        if cfg is None:
+            cfg = {}
+        cfg["mode"] = "loop"
+        if isinstance(cfg.get("loop"), dict):
+            cfg["loop"]["iterations"] = int(top_level_loop)
+        else:
+            cfg["loop"] = {"iterations": int(top_level_loop)}
+
+    if has_config:
+        # ── 新格式：配置文件声明执行方式 ──
+        mode = cli_mode or cfg.get("mode", "single")
+        if cli_loop is not None:
+            mode = "loop"
+        if cli_infinite:
+            mode = "infinite"
+        loop_cfg = cfg.get("loop", {}) or {}
+        iterations = (
+            cli_loop if cli_loop is not None
+            else _as_int(loop_cfg.get("iterations", 1), 1)
+        )
+        if mode == "single":
+            iterations = 1
+        return ExecutionConfig(
+            mode=mode,
+            iterations=_as_int(iterations, 1),
+            interval_ms=_as_int(loop_cfg.get("interval_ms", 0), 0),
+            stop_on_failure=(
+                loop_cfg.get("stop_on_failure", False)
+                if not cli_infinite else False
+            ),
+            max_failures=_as_int(loop_cfg.get("max_failures", 0), 0),
+            description=cfg.get("description", ""),
+        )
+    else:
+        # ── 旧格式：向后兼容，由 CLI 参数决定 ──
+        mode = "infinite" if cli_infinite else "loop"
+        iterations = cli_loop if cli_loop is not None else 3
+        return ExecutionConfig(
+            mode=mode, iterations=iterations,
+            interval_ms=0, stop_on_failure=False, max_failures=0,
+        )
+
+
+def execute_with_loop(dict_path: str, loop_count: int = None, infinite_loop=False, config=None):
     # Load the dictionary file
     dict_data = load_commands_from_file(dict_path)
 
     # Merge configuration if provided
     if config:
         merge_config(config, dict_data)
+
+    # 解析执行配置
+    exec_cfg = resolve_execution_config(
+        dict_data, cli_loop=loop_count, cli_infinite=infinite_loop,
+    )
+
+    logger.log_session_start(
+        f"🚀 执行模式: {exec_cfg.mode}"
+        + (f" × {exec_cfg.iterations}" if exec_cfg.mode == "loop" else "")
+        + (f" — {exec_cfg.description}" if exec_cfg.description else "")
+    )
 
     # Initialize counters before try block to avoid UnboundLocalError in finally
     executed_count = 0
@@ -233,10 +341,10 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
     executor: Optional[CommandExecutor] = None
 
     try:
-        if "ConfigForDevices" in dict_data:
-            apply_configs_for_device(
-                dict_data.get("ConfigForDevices", {}), dict_data.get("Devices", [])
-            )
+        # 始终执行设备默认值填充（即使没有 ConfigForDevices 块）
+        apply_configs_for_device(
+            dict_data.get("ConfigForDevices", {}), dict_data.get("Devices", [])
+        )
 
         # Create CommandExecutor to create CommandDeviceDict
         executor = CommandExecutor(dict_data)
@@ -255,111 +363,104 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
 
         if output_file_path is not None:
             try:
-                with open(output_file_path, "w") as output_file:
-                    json.dump(dict_data, output_file, indent=2)
+                _save_dict(dict_data, output_file_path)
                 logger.log_session_start(f"Dictionary saved to {output_file_path}")
             except Exception as e:
                 logger.log_session_error(f"Error saving dictionary to file: {e}")
 
-        # Sort commands by ORDER but preserve original sequence for same order values
+        # ── 兼容旧 Commands 格式：排序和应用全局配置 ──
         cdd_dict: Any = (
             command_device_dict.dict
             if command_device_dict is not None and hasattr(command_device_dict, "dict")
             else command_device_dict
         )
-
-        commands = sorted(
-            enumerate(cdd_dict["Commands"]),
-            key=lambda x: (
-                x[1]["order"],
-                x[0],
-            ),  # Sort by order first, then by original index
-        )
-        commands = [cmd[1] for cmd in commands]  # Extract just the commands
-
-        # If ConfigForCommands exists, apply configurations to commands
-        if "ConfigForCommands" in cdd_dict:
-            apply_configs_for_commands(
-                cdd_dict.get("ConfigForCommands", {}),
-                cdd_dict,
+        if "Commands" in cdd_dict:
+            commands = sorted(
+                enumerate(cdd_dict["Commands"]),
+                key=lambda x: (x[1]["order"], x[0]),
             )
+            if "ConfigForCommands" in cdd_dict:
+                apply_configs_for_commands(
+                    cdd_dict.get("ConfigForCommands", {}),
+                    cdd_dict,
+                )
 
+        # ── 统一执行循环 ──
         failure_count = 0
-        executed_count = 0  # Track actual number of COMPLETED iterations
+        executed_count = 0
+        iteration = 0
 
-        # Use while True for infinite loop mode, otherwise use for loop
-        if infinite_loop:
-            logger.log_session_start(
-                "🔄 Infinite loop mode enabled - Press Ctrl+C to stop"
+        while True:
+            iteration += 1
+
+            # 终止条件
+            if exec_cfg.mode == "single" and iteration > 1:
+                break
+            if exec_cfg.mode == "loop" and iteration > exec_cfg.iterations:
+                break
+
+            current_iteration = executed_count + 1
+            total_iterations = (
+                exec_cfg.iterations
+                if exec_cfg.mode == "loop"
+                else 1 if exec_cfg.mode == "single"
+                else None
             )
-            iteration = 0
-            while True:
-                iteration += 1
-                current_iteration = executed_count + 1  # 显示当前正在执行的迭代编号
-                # logger.log_iteration_start(iteration=current_iteration, total=iteration)
-                result = False  # Initialize result before try block
-                try:
-                    # Set iteration info in executor for logging
-                    executor.set_iteration_info(current_iteration)
-                    result = executor.execute()
-                    executed_count += 1
-                except Exception as e:
-                    # 获取设备信息用于错误提示
-                    device_info = []
-                    if command_device_dict is not None and hasattr(
-                        command_device_dict, "devices"
-                    ):
-                        for dev_name, dev in command_device_dict.devices.items():
-                            if hasattr(dev, "port"):
-                                device_info.append(f"{dev_name}({dev.port})")
-                            else:
-                                device_info.append(dev_name)
-                    devices_str = ", ".join(device_info) if device_info else "Unknown"
 
-                    logger.log_iteration_error(
-                        f"❌ Error during iteration {current_iteration}: {e}"
-                    )
-                    logger.log_iteration_error(f"Devices involved: {devices_str}")
-                    executed_count += 1  # 即使失败也算完成了一次
-                    result = False
-                if not result:
-                    failure_count += 1
-                logger.log_iteration_end(iteration=current_iteration, total=loop_count)
-        else:
-            # Normal loop with specified count
-            iteration = 0
-            for i in range(loop_count):
-                iteration += 1
-                # logger.log_iteration_start(iteration=iteration, total=loop_count)
-                current_iteration = executed_count + 1  # 显示当前正在执行的迭代编号
-                result = False  # Initialize result before try block
-                try:
-                    # Set iteration info in executor for logging
-                    executor.set_iteration_info(current_iteration, loop_count)
-                    result = executor.execute()
-                    executed_count += 1  # 只有成功完成才增加计数
-                except Exception as e:
-                    # 获取设备信息用于错误提示
-                    device_info = []
-                    if command_device_dict is not None and hasattr(
-                        command_device_dict, "devices"
-                    ):
-                        for dev_name, dev in command_device_dict.devices.items():
-                            if hasattr(dev, "port"):
-                                device_info.append(f"{dev_name}({dev.port})")
-                            else:
-                                device_info.append(dev_name)
-                    devices_str = ", ".join(device_info) if device_info else "Unknown"
+            if exec_cfg.mode == "infinite":
+                logger.log_session_start(
+                    f"🔄 迭代 #{current_iteration} — 无限模式 (Ctrl+C 停止)"
+                )
 
-                    logger.log_iteration_error(
-                        f"Error during iteration {current_iteration}: {e}"
-                    )
-                    logger.log_iteration_error(f"Devices involved: {devices_str}")
-                    executed_count += 1  # 即使失败也算完成了一次
-                    result = False
-                if not result:
-                    failure_count += 1
-                logger.log_iteration_end(iteration=current_iteration, total=loop_count)
+            result = False
+            try:
+                executor.set_iteration_info(current_iteration, total_iterations)
+                result = executor.execute()
+                executed_count += 1
+            except Exception as e:
+                device_info = []
+                if command_device_dict is not None and hasattr(
+                    command_device_dict, "devices"
+                ):
+                    for dev_name, dev in command_device_dict.devices.items():
+                        port = getattr(dev, "port", None)
+                        device_info.append(
+                            f"{dev_name}({port})" if port else dev_name
+                        )
+                devices_str = ", ".join(device_info) if device_info else "Unknown"
+                logger.log_iteration_error(
+                    f"❌ 迭代 #{current_iteration} 异常: {e}"
+                )
+                logger.log_iteration_error(f"涉及设备: {devices_str}")
+                executed_count += 1
+
+            if not result:
+                failure_count += 1
+
+            # 失败终止条件
+            if not result and exec_cfg.stop_on_failure:
+                logger.log_session_info(
+                    "⏹️ 失败终止（stop_on_failure=true）"
+                )
+                break
+            if (
+                exec_cfg.max_failures > 0
+                and failure_count >= exec_cfg.max_failures
+            ):
+                logger.log_session_info(
+                    f"⏹️ 达到最大失败次数 {exec_cfg.max_failures}"
+                )
+                break
+
+            logger.log_iteration_end(
+                iteration=current_iteration,
+                total=total_iterations or 0,
+            )
+
+            # 迭代间隔
+            if exec_cfg.interval_ms > 0:
+                time.sleep(exec_cfg.interval_ms / 1000)
+
     except KeyboardInterrupt:
         logger.log_iteration_error("Execution interrupted by user")
         sys.exit(1)
@@ -378,15 +479,10 @@ def execute_with_loop(dict_path: str, loop_count=3, infinite_loop=False, config=
             command_device_dict.close_all_devices()
         if "executor" in locals() and executor is not None:
             try:
-                # 关闭后台执行线程
+                # 关闭后台执行线程（也会自动关闭 Context/SessionStore）
                 executor.shutdown()
             except Exception as e:
                 logger.log_session_error(f"Warning: Error shutting down executor: {e}")
-
-            try:
-                executor.data_store.stop()
-            except Exception as e:
-                logger.log_session_error(f"Warning: Error stopping data store: {e}")
 
         # Use executed_count (actual iterations) instead of loop_count in summary
         if executed_count == 0:
@@ -482,12 +578,6 @@ def execute_with_folder(path: str, files: list, config: dict = {}):
             executor.shutdown()
         except Exception as e:
             logger.log_session_error(f"Warning: Error shutting down executor: {e}")
-
-        try:
-            executor.data_store.force_save()  # Use force_save instead of non-existent save_to_file
-            executor.data_store.stop()
-        except Exception as e:
-            logger.log_session_error(f"Warning: Error stopping data store: {e}")
 
         logger.log_session_end(
             (
@@ -617,8 +707,7 @@ def process_file_queue(file_queue, stop_event):
                 )
 
                 try:
-                    with open(output_file_path, "w") as output_file:
-                        json.dump(dict_data, output_file, indent=2)
+                    _save_dict(dict_data, output_file_path)
                     logger.log_session_start(f"Dictionary saved to {output_file_path}")
                 except Exception as e:
                     logger.log_session_error(f"Error saving dictionary to file: {e}")
@@ -679,16 +768,10 @@ def process_file_queue(file_queue, stop_event):
 
                 if executor:
                     try:
-                        # 关闭后台执行线程
+                        # 关闭后台执行线程（也会自动关闭 Context/SessionStore）
                         executor.shutdown()
                     except Exception as e:
                         logger.log_session_error(f"Error shutting down executor: {e}")
-
-                    try:
-                        executor.data_store.force_save()  # Use force_save instead of non-existent save_to_file
-                        executor.data_store.stop()
-                    except Exception as e:
-                        logger.log_session_error(f"Error stopping executor: {e}")
 
             # 标记任务完成
             file_queue.task_done()

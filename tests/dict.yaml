@@ -27,6 +27,7 @@ ConfigForCommands:
 
 Commands:
   - command: AT+QECHO=1
+    hex_mode: false
     expected_responses:
       - OK
     device: DeviceA
@@ -34,6 +35,7 @@ Commands:
     timeout: 1000
   
   - command: AT+CSUB
+    hex_mode: false
     expected_responses:
       - "SubEdition: V01"
     device: DeviceA
@@ -41,6 +43,7 @@ Commands:
     timeout: 1000
   
   - command: AT+QECHO=1
+    hex_mode: false
     expected_responses:
       - OK
     device: DeviceA

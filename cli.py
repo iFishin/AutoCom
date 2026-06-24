@@ -28,6 +28,39 @@ def main():
     run_main()
 
 
+def _open_studio(port: int = 0):
+    """启动 Pipeline 可视化编辑器。"""
+    import webbrowser
+    from pathlib import Path
+
+    # studio/index.html 相对于此文件所在目录
+    studio_html = Path(__file__).resolve().parent / "studio" / "index.html"
+
+    if not studio_html.exists():
+        print(f"❌ 未找到: {studio_html}")
+        sys.exit(1)
+
+    if port > 0:
+        # HTTP 服务模式（可跨设备访问）
+        print(f"🌐 Starting AutoCom Studio on http://localhost:{port}")
+        print("   Press Ctrl+C to stop")
+        webbrowser.open(f"http://localhost:{port}")
+        import http.server
+        import socketserver
+        os.chdir(studio_html.parent)
+        with socketserver.TCPServer(("", port), http.server.SimpleHTTPRequestHandler) as httpd:
+            try:
+                httpd.serve_forever()
+            except KeyboardInterrupt:
+                print("\nStopped.")
+    else:
+        # 直接打开本地文件
+        url = studio_html.as_uri()
+        webbrowser.open(url)
+        print(f"📋 AutoCom Studio 已打开")
+        print(f"   URL: {url}")
+
+
 def run_main():
     """主程序入口函数,用于被 CLI 调用"""
 
@@ -44,48 +77,51 @@ def run_main():
         """
 
         print(autocom_text_art)
-        print(f"AutoCom v{__version__}")
-        print("串口自动化指令执行工具 - 支持多设备、多指令的串行和并行执行")
+        print(f"  AutoCom v{__version__} — 通用流水线自动化执行工具")
+        print(f"  {'─' * 50}")
         print()
-        print("🎯 初始化执行目录:")
-        print(
-            "   autocom --init                      # 在当前目录创建执行结构和示例文件"
-        )
+        print("  🚀  执行流水线:")
+        print(f"    autocom -p pipeline.yaml        {'执行流水线文件 (YAML/JSON)'}")
+        print(f"    autocom -p pipeline.yaml -l 5   {'覆盖循环次数'}")
         print()
-        print("📖 快速开始:")
-        print("   autocom -d dicts/dict.yaml -l 3           # 执行配置文件，循环3次")
-        print("   autocom -d dicts/dict.yaml -i             # 无限循环模式")
-        print("   autocom -f dicts/                          # 执行文件夹内所有执行配置文件")
-        print("   autocom -m temps/                   # 监控模式")
+        print("  📂  批量执行:")
+        print(f"    autocom -f dicts/               {'执行文件夹内所有配置文件'}")
+        print(f"    autocom -m temps/               {'监控模式 (新文件自动执行)'}")
         print()
-        print("✨ 选项说明")
+        print("  🔧  初始化 & 查看:")
+        print(f"    autocom --init                  {'在当前目录创建示例结构和配置'}")
+        print(f"    autocom -v                      {'查看版本号'}")
+        print(f"    autocom --help                  {'查看完整参数说明'}")
         print()
-        print("  --cli-output-mode  指定 CLI 日志输出方式: 'table' 或 'plain' (默认: 'table')")
+        print("  🌐  MCP Server (AI Agent 接口):")
+        print(f"    autocom mcp                     {'启动 stdio 模式 (Claude Desktop)'}")
+        print(f"    autocom mcp --sse               {'启动 SSE (HTTP/Socket)'}")
+        print(f"    autocom mcp --streamable        {'启动 Streamable HTTP'}")
         print()
-        print("🧭 MCP Server (AI Agent 接口)")
-        print("   autocom mcp                                           # 启动 stdio 模式（默认，适合 Claude Desktop）")
-        print("   autocom mcp --sse                                     # 启动 SSE (HTTP) 模式（适合远端/服务器）")
-        print("   autocom mcp --sse --port 8888 --host 0.0.0.0          # 在所有接口上监听")
-        print("   autocom mcp --streamable                              # 启动 Streamable HTTP 模式（适合需要持续双向消息流的客户端）")
-        print("   autocom mcp --streamable --port 8888 --host 0.0.0.0   # 在所有接口上监听")
-        print()
-        print("📚 文档: https://github.com/iFishin/AutoCom")
-        print()
-        print("🔍 更多帮助:")
-        print("   autocom --help                      # 查看完整帮助")
-        print("   autocom -v                          # 查看版本信息")
+        print(f"  {'─' * 50}")
+        print("  📖  完整文档: https://github.com/iFishin/AutoCom")
         print()
         sys.exit(0)
 
     parser = argparse.ArgumentParser(
-        description="AutoCom command execution tool",
+        description="AutoCom — 通用流水线自动化执行工具（串口 / HTTP / 脚本 / 混合）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Examples:\n"
-        "  autocom -d dict.yaml -l 3              # 循环执行3次\n"
-        "  autocom -d dict.yaml -i                # 无限循环\n"
-        "  autocom -f dicts/                      # 文件夹模式\n"
-        "  autocom -m temps/                      # 监控模式\n"
-        "  autocom -d dict.yaml -c config.yaml    # 使用配置文件\n",
+        epilog="""用法示例:
+
+  # 执行流水线（推荐新格式）
+  autocom -p pipeline.yaml              # Config 块决定执行方式
+  autocom -p pipeline.yaml -l 5         # 覆盖执行次数
+
+  # 兼容旧格式
+  autocom -d dict.yaml                  # 自动识别旧 Commands 格式
+
+  # 批量模式
+  autocom -f dicts/                     # 执行文件夹内所有文件
+  autocom -m temps/                     # 监控文件夹，自动执行新文件
+
+  # 输出格式
+  autocom -p pipeline.yaml --cli-output-mode plain   # 纯文本输出
+""",
     )
 
     # 添加版本参数
@@ -135,64 +171,89 @@ def run_main():
         help="SSE 模式下的监听地址（默认: 0.0.0.0）",
     )
 
+    # ── studio 子命令 ──
+    studio_parser = subparsers.add_parser(
+        "studio",
+        help="启动 Pipeline 可视化编辑器（浏览器中打开）",
+        epilog="""用法:
+  autocom studio              # 在浏览器中打开可视化编辑器
+  autocom studio --port 8080  # 启动 HTTP 服务模式（可选）
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    studio_parser.add_argument(
+        "--port",
+        type=int,
+        default=0,
+        help="以 HTTP 服务模式运行（可选，默认直接打开本地文件）",
+    )
+
     parser.add_argument(
         "-v",
         "--version",
         action="version",
         version=f"AutoCom v{__version__}",
-        help="Show version information and exit",
+        help="显示版本号",
     )
 
     group1 = parser.add_mutually_exclusive_group()
     group1.add_argument(
-        "-f",
-        "--folder",
+        "-p",
+        "--pipeline",
+        dest="dict",
         type=str,
-        help="Path to the folder containing dictionary JSON files (default: dicts)",
+        help="流水线配置文件路径（YAML/JSON，推荐格式）",
     )
     group1.add_argument(
         "-d",
         "--dict",
+        dest="dict",
         type=str,
-        help="Path to the dictionary JSON file (default: dicts/dict.json)",
+        help=argparse.SUPPRESS,  # 隐藏，向后兼容
+    )
+    group1.add_argument(
+        "-f",
+        "--folder",
+        type=str,
+        help="批量执行文件夹内所有配置文件",
     )
 
     parser.add_argument(
         "-l",
         "--loop",
-        default=3,
+        default=None,
         type=int,
-        help="Number of times to loop execution (default: 3)",
+        help="覆盖循环执行次数（默认取 Config 块或旧格式 3 次）",
     )
     parser.add_argument(
         "-i",
         "--infinite",
         action="store_true",
-        help="Enable infinite loop mode - keep running until Ctrl+C is pressed",
+        help="无限循环模式（Ctrl+C 停止）",
     )
     parser.add_argument(
         "-c",
         "--config",
         type=str,
-        help="Path to the configuration JSON file (default: config.json)",
+        help=argparse.SUPPRESS,  # 已废弃，功能由 Config 块替代
     )
     parser.add_argument(
         "-m",
         "--monitor",
         type=str,
-        help="Enable monitoring mode (you can also use -c/--config with this)",
+        help="监控模式：监听文件夹，新文件自动执行",
     )
     parser.add_argument(
         "--init",
         action="store_true",
-        help="Initialize current directory with AutoCom project structure (creates dicts, configs, temps folders with examples)",
+        help="在当前目录创建示例配置和目录结构",
     )
 
     parser.add_argument(
         "--cli-output-mode",
         choices=["table", "plain"],
         default="table",
-        help="CLI logging output mode: table or plain (default: table)",
+        help="日志输出格式: table（表格）| plain（纯文本，默认 table）",
     )
 
     args = parser.parse_args()
@@ -217,7 +278,12 @@ def run_main():
 
         mcp_main()
         return
-    
+
+    # studio 子命令
+    if args.command == "studio":
+        _open_studio(args.port)
+        return
+
     # 初始化 Logger（现在可以使用 CLI 参数指定输出模式）
     logger = AutoComLogger.get_instance(
         name="AutoCom", log_file=log_file, cli_output_mode=args.cli_output_mode
@@ -238,7 +304,7 @@ def run_main():
                 "💡 Tip: Edit files in dicts/ to customize your commands"
             )
             logger.log_session_start(
-                "💡 Tip: Run 'autocom -d dicts/dict.json -l 3' to test"
+                "💡 Tip: Run 'autocom -p dicts/dict.json' to test"
             )
 
         except Exception as e:
@@ -275,14 +341,25 @@ def run_main():
             logger.log_session_error(f"Error: {e}")
             sys.exit(1)
 
-    # 【提前初始化 Logger】在所有分支之前，确保所有路径都能使用
-    # 显式创建工作目录
-    device_logs_dir = str(dirs.device_logs_dir)
-    temps_dir = str(dirs.temp_dir)
-    data_store_dir = str(dirs.data_store_dir)
-
     # 初始化 CommonUtils 日志路径（在创建了 device_logs 目录后）
     CommonUtils.init_log_file_path(str(dirs.session_dir))
+
+    # ── 旧参数废弃警告 ──
+    # 检查是否使用了旧式参数（-d 仍可用，-c 已废弃）
+    _old_args_used = []
+    # 检测 -d 被使用：当 -p 为空且 -d 有值时
+    if hasattr(args, 'dict') and args.dict and not any(
+        a in sys.argv for a in ['-p', '--pipeline']
+    ):
+        pass  # -d 仍兼容，不警告
+    if args.config:
+        logger.log_session_warning(
+            "⚠️  -c/--config 参数已废弃，执行配置请直接在配置文件的 Config 块中声明"
+        )
+    if args.infinite:
+        logger.log_session_warning(
+            "ℹ️  -i/--infinite 仍可用，但建议在配置文件的 Config 块中声明 mode: infinite"
+        )
 
     if args.dict:
         # 使用 dirs 辅助方法获取执行配置文件路径（优先从工作目录，再从包目录）

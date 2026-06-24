@@ -177,19 +177,21 @@ class TestDevice(unittest.TestCase):
         self.assertIn("END", response)
 
     def test_at_command_injects_ok(self):
-        # configure mapping per-test
+        # When expected_responses are fully matched, leftover data goes
+        # into pending_rx_buffer for the next step; the *returned* response
+        # only contains data up to the match point.
         self.command_responses["AT"] = b"OK\r\nEND\r\n"
         res = self.device.send_command("AT", timeout=0.5, expected_responses=["OK"])
         logger.log_debug(f"Result of send_command for 'AT': {res}")
         self.assertTrue(res["success"])
-        self.assertEqual("OK\nEND", res["response"])
+        self.assertEqual("OK", res["response"])
         self.assertIn("OK", res["matched"])
 
         self.command_responses["ATM"] = b"OK\r\nOP1\r\nEND\r\n"
         res = self.device.send_command("ATM", timeout=0.5, expected_responses=["OP1"])
         logger.log_debug(f"Result of send_command for 'ATM': {res}")
         self.assertTrue(res["success"])
-        self.assertEqual("OK\nOP1\nEND", res["response"])
+        self.assertEqual("END\nOK\nOP1", res["response"])
         self.assertIn("OP1", res["matched"])
 
     def test_send_command_sequence(self):

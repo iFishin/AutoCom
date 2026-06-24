@@ -67,6 +67,11 @@ class Device:
         self.log_file = None
 
         self.response_buffer = deque()  # Buffer for command responses
+        # (timestamp_str, data_bytes) — preserves real arrival time for chronological log replay
+        self.pending_rx_buffer: deque[tuple[str, bytes]] = deque()
+        self.pending_logged_lines = deque()  # Kept for compatibility (unused when buffer_background=True)
+        self.buffer_background = True
+        self._logging_chunk_buffer = bytearray()  # Accumulates partial lines between logging thread pauses
         self.last_iteration_success = None  # Track result of last iteration
         # Try to open the serial port and handle common failures (e.g. permission, not found)
         try:
@@ -101,40 +106,38 @@ class Device:
     def _continuous_logging(self):
         """Continuous logging thread function
 
-        This thread runs in the background to:
-        1. Collect device output while send_command is running
-        2. Log background data when logging is active
-        3. Pause automatically when send_command needs exclusive control
+        Background reader that buffers serial output between steps.
+        When send_command starts, logging_active is cleared and the thread
+        flushes its in-flight chunk buffer into pending_rx_buffer before pausing.
         """
-        buffer = bytearray()
-
         while not self.shutdown_flag:
             try:
                 # Check if logging should be paused (during command execution)
                 if not self.logging_active.is_set():
+                    self._flush_pending_chunk_buffer()
                     time.sleep(0.01)
                     continue
 
                 # Only read from serial if no command is in progress
-                # This prevents conflicts with send_command's direct serial reads
                 if not self.command_in_progress.is_set():
                     with self.lock:
                         if self.ser.is_open and self.ser.in_waiting > 0:
                             chunk = self.ser.read(min(self.ser.in_waiting, 512))
-                            buffer.extend(chunk)
+                            self._logging_chunk_buffer.extend(chunk)
 
-                # Process complete lines
-                while b"\n" in buffer:
-                    line, buffer = buffer.split(b"\n", 1)
+                # Process complete lines from the instance buffer
+                while b"\n" in self._logging_chunk_buffer:
+                    line, self._logging_chunk_buffer = \
+                        self._logging_chunk_buffer.split(b"\n", 1)
                     if line.strip():
                         self._process_log_line(line.strip())
 
-                # Handle incomplete data (optional, for very long lines)
-                if buffer and len(buffer) > 1024:  # If buffer gets too large
-                    self._process_log_line(bytes(buffer))
-                    buffer = bytearray()
+                # Flush oversized partial data to avoid memory growth
+                if self._logging_chunk_buffer and len(self._logging_chunk_buffer) > 1024:
+                    self._process_log_line(bytes(self._logging_chunk_buffer))
+                    self._logging_chunk_buffer = bytearray()
 
-                time.sleep(0.01)  # Small delay to prevent CPU spinning
+                time.sleep(0.01)
 
             except Exception as e:
                 logger.log_session_start(f"Logging thread error: {e}")
@@ -145,12 +148,20 @@ class Device:
             self._process_log_line(bytes(buffer))
 
     def _process_log_line(self, data_bytes):
-        """Process and log a line of data
+        """Process and log a line of data from the serial device.
 
-        During send_command, this is only called when logging_active is False,
-        so we just log the background data without buffering.
+        When buffer_background=True, data arriving between steps is stored
+        in pending_rx_buffer as (timestamp, bytes) tuples so that the next
+        send_command can replay it in chronological order with the correct
+        original arrival timestamps.
         """
         try:
+            if self.buffer_background:
+                ts = self._get_timestamp()
+                with self.lock:
+                    self.pending_rx_buffer.append((ts, data_bytes.strip() + b"\n"))
+                return
+
             data = CommonUtils.force_decode(data_bytes)
             timestamp = self._get_timestamp()
             log_line = f"[{timestamp}] {data}"
@@ -159,8 +170,22 @@ class Device:
             if self.log_file and not self.log_file.closed:
                 self.write_to_log(log_line)
 
+            with self.lock:
+                self.pending_logged_lines.append(data)
+
         except Exception as e:
             logger.log_session_start(f"Error processing log line: {e}")
+
+    def _flush_pending_chunk_buffer(self):
+        """Flush any data still sitting in the logging thread's chunk buffer
+        into pending_rx_buffer before send_command takes over."""
+        if self._logging_chunk_buffer:
+            data = bytes(self._logging_chunk_buffer)
+            if data.strip():
+                ts = self._get_timestamp()
+                with self.lock:
+                    self.pending_rx_buffer.append((ts, data.strip() + b"\n"))
+            self._logging_chunk_buffer = bytearray()
 
     def _parse_line_ending(self, line_ending):
         """
@@ -269,15 +294,35 @@ class Device:
             }
 
         try:
-            # Step 1. Pause continuous logging thread and clear buffer
+            # Step 1. Pause continuous logging thread and flush its chunk buffer
             self.logging_active.clear()
             time.sleep(0.05)  # Small delay to ensure logging thread pauses
+            self._flush_pending_chunk_buffer()
 
             # Step 2. Clear response buffer and set command in progress flag
             self.response_buffer.clear()
             self.command_in_progress.set()
 
-            # Step 3. Send command
+            # Step 3. Extract pending entries with timestamps and write to log
+            #         in CHRONOLOGICAL order (original arrival timestamps) BEFORE
+            #         writing the command marker. This ensures the device log
+            #         correctly reflects real-world serial output order.
+            raw_response: list[str] = []
+            pending_bytes = bytearray()  # Raw bytes for matching
+            with self.lock:
+                while self.pending_rx_buffer:
+                    ts, data = self.pending_rx_buffer.popleft()
+                    decoded = CommonUtils.force_decode(data)
+                    self.write_to_log(f"[{ts}] {decoded.strip()}")
+                    pending_bytes.extend(data)
+
+            # Parse pending data into decoded lines for matching
+            while b"\n" in pending_bytes:
+                line, pending_bytes = pending_bytes.split(b"\n", 1)
+                if line.strip():
+                    raw_response.append(CommonUtils.force_decode(line.strip()))
+
+            # Step 3b. Send command (or log empty command marker)
             with self.lock:
                 if command:
                     # Convert command to bytes based on hex_mode
@@ -300,17 +345,28 @@ class Device:
                     log_line = f"({timestamp})---> <EMPTY COMMAND>"
                     self.write_to_log(log_line)
 
-            # Step 4. Wait for response with timeout
-            raw_response = []
-            buffer = bytearray()
-            matched_expectations = []
+            # Step 4. Initialize matching state
+            buffer = bytearray()  # Only new data from serial goes here
+            matched_all = False
+            matched_expectations: list[str] = []
             expected_responses = expected_responses or []
-            next_expected_idx = 0  # Track which expected response to match next
+            next_expected_idx = 0
+
+            # Pre-check pending data against expected responses
+            if raw_response and expected_responses:
+                for data in raw_response:
+                    if next_expected_idx < len(expected_responses):
+                        expected = expected_responses[next_expected_idx]
+                        if expected in data:
+                            matched_expectations.append(expected)
+                            next_expected_idx += 1
+                if next_expected_idx >= len(expected_responses):
+                    matched_all = True
 
             max_timeout = timeout
             check_interval = 0.01  # 10ms check interval
 
-            while (time.time() - start_time) < max_timeout:
+            while not matched_all and (time.time() - start_time) < max_timeout:
                 try:
                     # Read from serial port directly (since logging thread is paused)
                     with self.lock:
@@ -338,18 +394,14 @@ class Device:
                                     matched_expectations.append(expected)
                                     next_expected_idx += 1
 
-                                    # If all expectations matched, wait a bit for trailing data then exit
+                                    # If all expectations matched, stop immediately and
+                                    # leave remaining bytes for the next step.
                                     if next_expected_idx >= len(expected_responses):
-                                        time.sleep(
-                                            0.05
-                                        )  # Small delay to catch trailing data
-                                        with self.lock:
-                                            if self.ser.in_waiting > 0:
-                                                chunk = self.ser.read(
-                                                    min(self.ser.in_waiting, 512)
-                                                )
-                                                buffer.extend(chunk)
+                                        matched_all = True
                                         break
+
+                    if matched_all:
+                        break
 
                     # Handle data in buffer without newline: wait for timeout to confirm it's the last data
                     if buffer and b"\n" not in buffer:
@@ -370,7 +422,6 @@ class Device:
                             time.sleep(0.01)  # Check every 10ms
 
                         # If timeout occurred with no new data, this is the last incomplete line
-                        # Manually add newline to process it
                         if not data_received_during_wait and buffer:
                             buffer.extend(b"\n")  # Add newline character
 
@@ -404,23 +455,33 @@ class Device:
                     )
                     sys.exit(1)
 
-            # Step 5. Process any remaining data in buffer
-            while b"\n" in buffer:
-                line, buffer = buffer.split(b"\n", 1)
-                if line.strip():
-                    data = CommonUtils.force_decode(line.strip())
+            # Step 5. Handle any remaining data in buffer
+            if not matched_all:
+                # Still haven't matched — process remaining buffer as part of this step's response
+                while b"\n" in buffer:
+                    line, buffer = buffer.split(b"\n", 1)
+                    if line.strip():
+                        data = CommonUtils.force_decode(line.strip())
+                        timestamp = self._get_timestamp()
+                        log_line = f"[{timestamp}] {data}"
+                        self.write_to_log(log_line)
+                        raw_response.append(data)
+
+                # Handle incomplete line in buffer
+                if buffer.strip():
+                    data = CommonUtils.force_decode(buffer.strip())
                     timestamp = self._get_timestamp()
                     log_line = f"[{timestamp}] {data}"
                     self.write_to_log(log_line)
                     raw_response.append(data)
-
-            # Handle incomplete line in buffer
-            if buffer.strip():
-                data = CommonUtils.force_decode(buffer.strip())
-                timestamp = self._get_timestamp()
-                log_line = f"[{timestamp}] {data}"
-                self.write_to_log(log_line)
-                raw_response.append(data)
+            elif buffer:
+                # matched_all=True — save leftover for the next step
+                ts = self._get_timestamp()
+                with self.lock:
+                    self.pending_rx_buffer.appendleft((ts, bytes(buffer)))
+                    # NOTE: appendleft puts it at the *front* of the pending queue
+                    # so next step sees this data before anything the background
+                    # thread may have read in the brief gap between steps.
 
             elapsed_time = time.time() - start_time
             response_text = "\n".join(raw_response) if raw_response else ""
@@ -442,8 +503,8 @@ class Device:
             # Step 6. Cleanup - always executed
             # Clear command in progress flag
             self.command_in_progress.clear()
-            # Clear any remaining data in response buffer
-            self.response_buffer.clear()
+            # Clear command-local response buffer only; pending_rx_buffer is preserved
+            # for the next step when we stopped immediately after matching.
             # Resume continuous logging thread
             self.logging_active.set()
 

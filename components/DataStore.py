@@ -47,7 +47,6 @@ class DataStore:
         # Setup filename with session ID
         if filename is None:
             data_dir = "temps/data_store"
-            os.makedirs(data_dir, exist_ok=True)
             self.filename = f"{data_dir}/session_{self.session_id}.json"
         else:
             self.filename = filename
@@ -309,6 +308,7 @@ class DataStore:
                     existing_data[device] = variables
 
             # Atomic write
+            os.makedirs(os.path.dirname(self.filename) or ".", exist_ok=True)
             with open(temp_file, "w") as f:
                 json.dump(existing_data, f, indent=2)
 

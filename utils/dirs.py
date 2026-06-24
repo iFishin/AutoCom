@@ -89,6 +89,24 @@ class Dirs:
     def data_store_dir(self) -> Path:
         return _ensure_dir(self.data_store_dir_safe())
 
+    # ── 新版持久化存储（SQLite） ──
+
+    def data_dir_safe(self) -> Path:
+        """获取持久化数据目录路径，不自动创建"""
+        return self.root / "data"
+
+    @property
+    def data_dir(self) -> Path:
+        return _ensure_dir(self.data_dir_safe())
+
+    @property
+    def db_path(self) -> Path:
+        """SQLite 数据库路径。优先环境变量 AUTOCOM_DB，默认 data/sessions.db"""
+        env = os.getenv("AUTOCOM_DB")
+        if env:
+            return Path(env).resolve()
+        return self.data_dir / "sessions.db"
+
     def device_logs_dir_safe(self) -> Path:
         """获取设备日志目录路径，不自动创建"""
         return self.root / "device_logs"
@@ -179,6 +197,7 @@ class Dirs:
         """一键创建基础目录 + 拷贝示例"""
         _ensure_dir(self.temp_dir)
         _ensure_dir(self.data_store_dir)
+        _ensure_dir(self.data_dir)          # ← 新版 SQLite 存储
         _ensure_dir(self.device_logs_dir)
         _ensure_dir(self.dicts_dir)
         _ensure_dir(self.configs_dir)
