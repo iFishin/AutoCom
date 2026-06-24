@@ -178,12 +178,13 @@ class TestDevice(unittest.TestCase):
 
     def test_at_command_injects_ok(self):
         # When expected_responses are fully matched, leftover data goes
-        # into pending_rx_buffer for the next step; the *returned* response
-        # only contains data up to the match point.
+        # into pending_rx_buffer for the next step. Unmatched pending data
+        # is preserved (not consumed) so subsequent steps still see it.
         self.command_responses["AT"] = b"OK\r\nEND\r\n"
         res = self.device.send_command("AT", timeout=0.5, expected_responses=["OK"])
         logger.log_debug(f"Result of send_command for 'AT': {res}")
         self.assertTrue(res["success"])
+        # OK is matched; END is leftover in pending_rx_buffer
         self.assertEqual("OK", res["response"])
         self.assertIn("OK", res["matched"])
 
@@ -191,7 +192,9 @@ class TestDevice(unittest.TestCase):
         res = self.device.send_command("ATM", timeout=0.5, expected_responses=["OP1"])
         logger.log_debug(f"Result of send_command for 'ATM': {res}")
         self.assertTrue(res["success"])
-        self.assertEqual("END\nOK\nOP1", res["response"])
+        # END was in pending buffer but doesn't match OP1 — it's preserved,
+        # not consumed. So the response only has OK and OP1 from serial.
+        self.assertEqual("OK\nOP1", res["response"])
         self.assertIn("OP1", res["matched"])
 
     def test_send_command_sequence(self):

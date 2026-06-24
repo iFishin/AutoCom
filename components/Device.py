@@ -303,6 +303,12 @@ class Device:
             self.response_buffer.clear()
             self.command_in_progress.set()
 
+            # Initialize matching state (used by Step 3c and main loop)
+            matched_expectations: list[str] = []
+            matched_all = False
+            expected_responses = expected_responses or []
+            next_expected_idx = 0
+
             # Step 3. Extract pending entries (DON'T log yet — will log after command marker
             #         so the log shows: step marker first, then pending data, then new data).
             pending_entries: list[tuple[str, bytes]] = []
@@ -333,39 +339,50 @@ class Device:
                     log_line = f"({timestamp})---> <EMPTY COMMAND>"
                     self.write_to_log(log_line)
 
-            # Step 3c. Write buffered pending data to log (after command marker),
-            #         with current timestamp so it belongs visually to this step.
+            # Step 3c. Write buffered pending data to log (after command marker).
+            #         Each pending line is checked against expected_responses:
+            #         - Matched → written to log + added to raw_response
+            #         - Unmatched → preserved in pending_rx_buffer for the next step
+            #         This prevents one step from consuming data that belongs to a
+            #         later step (e.g. first serial_wait consuming WLAN_CONNECTED
+            #         meant for the second serial_wait).
+            remaining_pending: list[tuple[str, bytes]] = []
             raw_response: list[str] = []
-            pending_bytes = bytearray()  # Raw bytes for matching
             for ts, data in pending_entries:
                 decoded = CommonUtils.force_decode(data)
+                line = decoded.strip()
                 now_ts = self._get_timestamp()
-                self.write_to_log(f"[{now_ts}] {decoded.strip()}")
-                pending_bytes.extend(data)
 
-            # Parse pending data into decoded lines for matching
-            while b"\n" in pending_bytes:
-                line, pending_bytes = pending_bytes.split(b"\n", 1)
-                if line.strip():
-                    raw_response.append(CommonUtils.force_decode(line.strip()))
+                matched = False
+                if next_expected_idx < len(expected_responses):
+                    expected = expected_responses[next_expected_idx]
+                    if expected in line:
+                        matched_expectations.append(expected)
+                        next_expected_idx += 1
+                        matched = True
 
-            # Step 4. Initialize matching state
+                if matched or not expected_responses:
+                    # Log and consume: this line belongs to the current step
+                    self.write_to_log(f"[{now_ts}] {line}")
+                    raw_response.append(line)
+                else:
+                    # Preserve for the next step (don't log yet)
+                    remaining_pending.append((ts, data))
+
+            # Put unmatched pending data back at the front of pending_rx_buffer
+            if remaining_pending:
+                with self.lock:
+                    # reversed + appendleft = restore original order
+                    for ts, data in reversed(remaining_pending):
+                        self.pending_rx_buffer.appendleft((ts, data))
+
+            if next_expected_idx >= len(expected_responses):
+                matched_all = True
+
+            # Step 4. Initialize buffer for new serial data.
+            #         matched_all/matched_expectations/next_expected_idx are already
+            #         populated from Step 3c's pending-data matching.
             buffer = bytearray()  # Only new data from serial goes here
-            matched_all = False
-            matched_expectations: list[str] = []
-            expected_responses = expected_responses or []
-            next_expected_idx = 0
-
-            # Pre-check pending data against expected responses
-            if raw_response and expected_responses:
-                for data in raw_response:
-                    if next_expected_idx < len(expected_responses):
-                        expected = expected_responses[next_expected_idx]
-                        if expected in data:
-                            matched_expectations.append(expected)
-                            next_expected_idx += 1
-                if next_expected_idx >= len(expected_responses):
-                    matched_all = True
 
             max_timeout = timeout
             check_interval = 0.01  # 10ms check interval
