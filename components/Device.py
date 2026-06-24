@@ -144,8 +144,8 @@ class Device:
                 time.sleep(0.1)
 
         # Process any remaining data before shutdown
-        if buffer:
-            self._process_log_line(bytes(buffer))
+        if self._logging_chunk_buffer:
+            self._process_log_line(bytes(self._logging_chunk_buffer))
 
     def _process_log_line(self, data_bytes):
         """Process and log a line of data from the serial device.
