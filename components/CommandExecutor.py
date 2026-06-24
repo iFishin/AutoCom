@@ -339,6 +339,15 @@ class CommandExecutor:
         # 等待延迟命令执行完成
         self._wait_for_deferred_commands()
 
+        # 标记本轮执行结果到设备日志
+        if self.current_iteration is not None:
+            for device_name, device in self.command_device_dict.devices.items():
+                device.end_iteration(
+                    self.current_iteration,
+                    success=result,
+                    total_iterations=self.total_iterations,
+                )
+
         return result
 
     # ── 以下为旧系统保留方法 ──

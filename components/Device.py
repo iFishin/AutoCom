@@ -550,7 +550,10 @@ class Device:
                 self.log_file.flush()
 
     def mark_iteration(self, iteration_num, total_iterations=None):
-        """Mark the end of previous iteration and beginning of a new iteration in the log file
+        """Mark the beginning of a new iteration in the log file.
+
+        The previous iteration's result is written by end_iteration(),
+        so this only writes the 'Started' header.
 
         Args:
             iteration_num: Current iteration number (1-based)
@@ -558,29 +561,39 @@ class Device:
         """
         separator = "=" * 80
 
-        # Write separator
         self.write_to_log(separator)
 
-        # If this is not the first iteration, print the result of the previous iteration
-        if iteration_num > 1 and self.last_iteration_success is not None:
-            previous_num = iteration_num - 1
-            status = "Passed" if self.last_iteration_success else "Failed"
-            if total_iterations:
-                previous_marker = f"{'─' * 30} Iteration {previous_num}/{total_iterations} {status} {'─' * 30}"
-            else:
-                previous_marker = (
-                    f"{'─' * 30} Iteration {previous_num} {status} {'─' * 30}"
-                )
-            self.write_to_log(previous_marker)
-
-        # Print current iteration marker
         if total_iterations:
-            current_marker = f"{'─' * 30} Iteration {iteration_num}/{total_iterations} Started {'─' * 30}"
+            marker = f"{'─' * 30} Iteration {iteration_num}/{total_iterations} Started {'─' * 30}"
         else:
-            current_marker = f"{'─' * 30} Iteration {iteration_num} Started {'─' * 30}"
-        self.write_to_log(current_marker)
+            marker = f"{'─' * 30} Iteration {iteration_num} Started {'─' * 30}"
+        self.write_to_log(marker)
 
-        # Write separator
+        self.write_to_log(separator)
+
+    def end_iteration(self, iteration_num, success, total_iterations=None):
+        """Mark the end of an iteration with its pass/fail result.
+
+        Writes a summary line to the device log so each iteration's
+        outcome is visible immediately after its steps.
+
+        Args:
+            iteration_num: Iteration number (1-based)
+            success: True if the iteration passed, False otherwise
+            total_iterations: Total number of iterations (optional)
+        """
+        self.set_iteration_result(success)
+        separator = "=" * 80
+
+        self.write_to_log(separator)
+
+        status = "Passed" if success else "Failed"
+        if total_iterations:
+            marker = f"{'─' * 30} Iteration {iteration_num}/{total_iterations} {status} {'─' * 30}"
+        else:
+            marker = f"{'─' * 30} Iteration {iteration_num} {status} {'─' * 30}"
+        self.write_to_log(marker)
+
         self.write_to_log(separator)
 
     def set_iteration_result(self, success):
