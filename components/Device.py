@@ -303,24 +303,12 @@ class Device:
             self.response_buffer.clear()
             self.command_in_progress.set()
 
-            # Step 3. Extract pending entries with timestamps and write to log
-            #         in CHRONOLOGICAL order (original arrival timestamps) BEFORE
-            #         writing the command marker. This ensures the device log
-            #         correctly reflects real-world serial output order.
-            raw_response: list[str] = []
-            pending_bytes = bytearray()  # Raw bytes for matching
+            # Step 3. Extract pending entries (DON'T log yet — will log after command marker
+            #         so the log shows: step marker first, then pending data, then new data).
+            pending_entries: list[tuple[str, bytes]] = []
             with self.lock:
                 while self.pending_rx_buffer:
-                    ts, data = self.pending_rx_buffer.popleft()
-                    decoded = CommonUtils.force_decode(data)
-                    self.write_to_log(f"[{ts}] {decoded.strip()}")
-                    pending_bytes.extend(data)
-
-            # Parse pending data into decoded lines for matching
-            while b"\n" in pending_bytes:
-                line, pending_bytes = pending_bytes.split(b"\n", 1)
-                if line.strip():
-                    raw_response.append(CommonUtils.force_decode(line.strip()))
+                    pending_entries.append(self.pending_rx_buffer.popleft())
 
             # Step 3b. Send command (or log empty command marker)
             with self.lock:
@@ -344,6 +332,22 @@ class Device:
                     timestamp = self._get_timestamp()
                     log_line = f"({timestamp})---> <EMPTY COMMAND>"
                     self.write_to_log(log_line)
+
+            # Step 3c. Write buffered pending data to log (after command marker),
+            #         with current timestamp so it belongs visually to this step.
+            raw_response: list[str] = []
+            pending_bytes = bytearray()  # Raw bytes for matching
+            for ts, data in pending_entries:
+                decoded = CommonUtils.force_decode(data)
+                now_ts = self._get_timestamp()
+                self.write_to_log(f"[{now_ts}] {decoded.strip()}")
+                pending_bytes.extend(data)
+
+            # Parse pending data into decoded lines for matching
+            while b"\n" in pending_bytes:
+                line, pending_bytes = pending_bytes.split(b"\n", 1)
+                if line.strip():
+                    raw_response.append(CommonUtils.force_decode(line.strip()))
 
             # Step 4. Initialize matching state
             buffer = bytearray()  # Only new data from serial goes here
