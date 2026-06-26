@@ -293,21 +293,18 @@ function render(){
     h+='<div class="sc-bd'+(openId==s.id?' open':'')+'" data-idx="'+i+'">'+bodyHTML(s,i)+'</div></div>';
     return h;
   }).join('')+'<div class="conn"><i class="fa-regular fa-flag"></i> 结束</div>';
-  // Sortable — individual card drag reorder
+  // Sortable — only .dg grip icon initiates drag
   if(sortable)sortable.destroy();
   sortable=new Sortable(el,{
-    filter:'.conn,.empty,.ck,.del,.en,.chev',
-    animation:200,handle:'.sc-hdr',draggable:'.sc',
-    scroll:false,
+    filter:'.conn,.empty,.ck',animation:200,handle:'.dg',draggable:'.sc',scroll:false,
     onEnd:function(evt){
       if(evt.oldIndex===evt.newIndex)return;
       var m=steps.splice(evt.oldIndex,1);steps.splice(evt.newIndex,0,m[0]);save();
-      // Update data-idx attributes in-place without full re-render
+      // Update data-idx attributes in-place without full DOM rebuild
       var cards=el.querySelectorAll('.sc');
       cards.forEach(function(c,j){
-        c.querySelectorAll('[data-idx]').forEach(function(el){el.dataset.idx=j});
-        var sn=c.querySelector('.snum');
-        if(sn)sn.textContent='#'+(j+1);
+        c.querySelectorAll('[data-idx]').forEach(function(e){e.dataset.idx=j});
+        var sn=c.querySelector('.snum');if(sn)sn.textContent='#'+(j+1);
       });
     }
   });
@@ -407,8 +404,11 @@ $('slist').addEventListener('click',function(e){
   if(t.closest('.ck')){var ci=parseInt(t.closest('.ck').dataset.idx),id=steps[ci]&&steps[ci].id;if(id){selected[id]=t.closest('.ck').checked;if(!selected[id])delete selected[id];render();}return;}
   // Delete
   if(t.closest('.del')){var i=parseInt(t.closest('.del').dataset.idx);if(!isNaN(i)&&steps[i]&&confirm('删除?')){var id=steps[i].id;delete selected[id];if(openId==id)openId=null;steps.splice(i,1);render();save();toast('已删除');}return;}
-  // Toggle card via chevron
-  if(t.closest('.chev')){var ci=parseInt(t.closest('.chev').dataset.idx);if(steps[ci]){openId=openId==steps[ci].id?null:steps[ci].id;render();}return;}
+  // Toggle card (click header, excluding controls)
+  var hdr=t.closest('.sc-hdr');
+  if(hdr&&!t.closest('.del')&&!t.closest('.dg')&&!t.closest('.ck')){
+    var idx=parseInt(hdr.dataset.idx);openId=openId==(steps[idx]&&steps[idx].id)?null:(steps[idx]&&steps[idx].id);render();
+  }
 });
 $('slist').addEventListener('contextmenu',function(e){
   var hdr=e.target.closest('.sc-hdr');
