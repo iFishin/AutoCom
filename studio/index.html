@@ -289,13 +289,13 @@ function render(){
     h+='<span class="badge" style="background:'+t.c+'22;color:'+t.c+'" title="'+tip+'"><i class="type-ico fa-solid fa-'+t.i+'"></i> '+t.l+'</span>';
     h+='<span class="sid" title="步骤标识符: '+esc(s.id)+'">'+s.id+'</span><span class="ssum" title="步骤摘要">'+(off?'已禁用 · ':'')+esc(summary(s))+'</span><span class="snum" title="执行顺序 #'+(i+1)+'">#'+(i+1)+'</span>';
     h+='<button type="button" class="del" data-idx="'+i+'" title="删除此步骤"><i class="fa-regular fa-trash-can"></i></button>';
-    h+='<span class="chev'+(openId==s.id?' open':'')+'" title="'+(openId==s.id?'折叠':'展开')+'详情"><i class="fa-solid fa-chevron-down"></i></span></div>';
+    h+='<span class="chev'+(openId==s.id?' open':'')+'" data-idx="'+i+'" title="'+(openId==s.id?'折叠':'展开')+'详情"><i class="fa-solid fa-chevron-down"></i></span></div>';
     h+='<div class="sc-bd'+(openId==s.id?' open':'')+'" data-idx="'+i+'">'+bodyHTML(s,i)+'</div></div>';
     return h;
   }).join('')+'<div class="conn"><i class="fa-regular fa-flag"></i> 结束</div>';
   // Sortable
   if(sortable)sortable.destroy();
-  sortable=new Sortable(el,{filter:'.conn,.empty,.ck',animation:200,handle:'.dg',onEnd:function(evt){var m=steps.splice(evt.oldIndex,1);steps.splice(evt.newIndex,0,m[0]);render();save()}});
+  sortable=new Sortable(el,{filter:'.conn,.empty,.ck,.del,.en,.chev',animation:200,handle:'.sc-hdr',onEnd:function(evt){var m=steps.splice(evt.oldIndex,1);steps.splice(evt.newIndex,0,m[0]);render();save()}});
   setBulkUI();
 }
 
@@ -392,11 +392,8 @@ $('slist').addEventListener('click',function(e){
   if(t.closest('.ck')){var ci=parseInt(t.closest('.ck').dataset.idx),id=steps[ci]&&steps[ci].id;if(id){selected[id]=t.closest('.ck').checked;if(!selected[id])delete selected[id];render();}return;}
   // Delete
   if(t.closest('.del')){var i=parseInt(t.closest('.del').dataset.idx);if(!isNaN(i)&&steps[i]&&confirm('删除?')){var id=steps[i].id;delete selected[id];if(openId==id)openId=null;steps.splice(i,1);render();save();toast('已删除');}return;}
-  // Toggle card
-  var hdr=t.closest('.sc-hdr');
-  if(hdr&&!t.closest('.del')&&!t.closest('.dg')&&!t.closest('.ck')){
-    var idx=parseInt(hdr.dataset.idx);openId=openId==(steps[idx]&&steps[idx].id)?null:(steps[idx]&&steps[idx].id);render();
-  }
+  // Toggle card via chevron
+  if(t.closest('.chev')){var ci=parseInt(t.closest('.chev').dataset.idx);if(steps[ci]){openId=openId==steps[ci].id?null:steps[ci].id;render();}return;}
 });
 $('slist').addEventListener('contextmenu',function(e){
   var hdr=e.target.closest('.sc-hdr');
