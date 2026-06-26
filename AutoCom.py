@@ -315,7 +315,7 @@ def resolve_execution_config(
         )
 
 
-def execute_with_loop(dict_path: str, loop_count: int = None, infinite_loop=False, config=None):
+def execute_with_loop(dict_path: str, loop_count: int | None = None, infinite_loop=False, config=None):
     # Load the dictionary file
     dict_data = load_commands_from_file(dict_path)
 
