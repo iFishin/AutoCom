@@ -293,9 +293,24 @@ function render(){
     h+='<div class="sc-bd'+(openId==s.id?' open':'')+'" data-idx="'+i+'">'+bodyHTML(s,i)+'</div></div>';
     return h;
   }).join('')+'<div class="conn"><i class="fa-regular fa-flag"></i> 结束</div>';
-  // Sortable
+  // Sortable — individual card drag reorder
   if(sortable)sortable.destroy();
-  sortable=new Sortable(el,{filter:'.conn,.empty,.ck,.del,.en,.chev',animation:200,handle:'.sc-hdr',onEnd:function(evt){var m=steps.splice(evt.oldIndex,1);steps.splice(evt.newIndex,0,m[0]);render();save()}});
+  sortable=new Sortable(el,{
+    filter:'.conn,.empty,.ck,.del,.en,.chev',
+    animation:200,handle:'.sc-hdr',draggable:'.sc',
+    scroll:false,
+    onEnd:function(evt){
+      if(evt.oldIndex===evt.newIndex)return;
+      var m=steps.splice(evt.oldIndex,1);steps.splice(evt.newIndex,0,m[0]);save();
+      // Update data-idx attributes in-place without full re-render
+      var cards=el.querySelectorAll('.sc');
+      cards.forEach(function(c,j){
+        c.querySelectorAll('[data-idx]').forEach(function(el){el.dataset.idx=j});
+        var sn=c.querySelector('.snum');
+        if(sn)sn.textContent='#'+(j+1);
+      });
+    }
+  });
   setBulkUI();
 }
 
