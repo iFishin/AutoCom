@@ -164,6 +164,9 @@ temps/
 device_logs/
 *.log
 
+# Claude 配置目录
+.claude/
+
 # 临时文件
 TEMP_DATA.json
 processed_files.json
