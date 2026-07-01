@@ -39,8 +39,9 @@ autocom = "cli:main"
 autocom-dev = "scripts.dev:main"
 
 [tool.setuptools]
-packages = ["components", "components.steps", "utils"]
+packages = ["components", "components.steps", "utils", "studio"]
 py-modules = ["AutoCom", "cli", "version", "__init__"]
+include-package-data = true
 
 [tool.setuptools.dynamic]
 version = { attr = "version.__version__" }

@@ -13,6 +13,10 @@ include __init__.py
 recursive-include components *.py
 recursive-include utils *.py
 
+# Include Studio web UI files
+recursive-include studio *.html *.css *.js
+recursive-include studio/js *.js
+
 # Include all JSON configuration files (optional, for reference)
 # Users should use 'autocom --init' to create their own configs
 # recursive-include configs *.json
