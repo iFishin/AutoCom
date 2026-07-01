@@ -679,6 +679,143 @@ class AutoComMCPServer:
             }, result, (time.time() - t0) * 1000)
             return result
 
+        # ======================== 流水线配置管理 ========================
+
+        @mcp.tool()
+        async def pipeline_list(base_dir: Optional[str] = None) -> dict:
+            """列出指定目录下所有可用的流水线配置文件（YAML/JSON）"""
+            logger.log_info("MCP: pipeline_list called")
+            t0 = time.time()
+            result = await AutoComMCPServer._pipeline_list(base_dir=base_dir)
+            self._audit_log_tool("pipeline_list", {"base_dir": base_dir or "(default)"}, result, (time.time() - t0) * 1000)
+            return result
+
+        # ======================== 执行历史与分析 ========================
+
+        @mcp.tool()
+        async def execution_list(limit: int = 20) -> dict:
+            """列出最近执行会话（从 device_logs/ 读取）"""
+            logger.log_info("MCP: execution_list called")
+            t0 = time.time()
+            result = await AutoComMCPServer._execution_list(limit=limit)
+            self._audit_log_tool("execution_list", {"limit": limit}, result, (time.time() - t0) * 1000)
+            return result
+
+        @mcp.tool()
+        async def execution_report(session_id: str) -> dict:
+            """解析指定执行会话的日志和结果"""
+            logger.log_info(f"MCP: execution_report {session_id}")
+            t0 = time.time()
+            result = await AutoComMCPServer._execution_report(session_id=session_id)
+            self._audit_log_tool("execution_report", {"session_id": session_id}, result, (time.time() - t0) * 1000)
+            return result
+
+        @mcp.tool()
+        async def session_log_query(session_id: str, keyword: str, max_results: int = 50) -> dict:
+            """在指定执行会话的设备日志中搜索关键词"""
+            logger.log_info(f"MCP: session_log_query {session_id} keyword={keyword}")
+            t0 = time.time()
+            result = await AutoComMCPServer._session_log_query(
+                session_id=session_id, keyword=keyword, max_results=max_results,
+            )
+            self._audit_log_tool("session_log_query", {
+                "session_id": session_id, "keyword": keyword,
+            }, result, (time.time() - t0) * 1000)
+            return result
+
+        # ======================== 串口调试增强 ========================
+
+        @mcp.tool()
+        async def serial_baud_scan(port: str, test_command: str = "AT", expected_response: str = "OK") -> dict:
+            """自动尝试常用波特率（9600~921600），找到能收到期望响应的那个。
+            排查"连不上"问题时的第一选择。
+            """
+            logger.log_info(f"MCP: serial_baud_scan {port} test={test_command}")
+            t0 = time.time()
+            result = await AutoComMCPServer._serial_baud_scan(
+                port=port, test_command=test_command, expected_response=expected_response,
+            )
+            self._audit_log_tool("serial_baud_scan", {"port": port}, result, (time.time() - t0) * 1000)
+            return result
+
+        @mcp.tool()
+        async def serial_hex_dump(port: str, baud_rate: int = 115200,
+                                    bytes_to_read: int = 256, timeout: float = 3.0) -> dict:
+            """以 hex + ASCII 格式读取串口数据，排查乱码和不可见字符问题"""
+            logger.log_info(f"MCP: serial_hex_dump {port} baud={baud_rate}")
+            t0 = time.time()
+            result = await AutoComMCPServer._serial_hex_dump(
+                port=port, baud_rate=baud_rate, bytes_to_read=bytes_to_read, timeout=timeout,
+            )
+            self._audit_log_tool("serial_hex_dump", {"port": port, "baud_rate": baud_rate}, result, (time.time() - t0) * 1000)
+            return result
+
+        # ======================== 设备参数管理 ========================
+
+        @mcp.tool()
+        async def device_profile_list() -> dict:
+            """列出所有已保存的设备串口配置"""
+            logger.log_info("MCP: device_profile_list called")
+            t0 = time.time()
+            result = await AutoComMCPServer._device_profile_list()
+            self._audit_log_tool("device_profile_list", {}, result, (time.time() - t0) * 1000)
+            return result
+
+        @mcp.tool()
+        async def device_profile_save(
+            name: str, port: str, baud_rate: int = 115200,
+            data_bits: int = 8, stop_bits: int = 1,
+            parity: str = "none", flow_control: bool = False,
+            timeout: float = 5.0, label: str = "",
+        ) -> dict:
+            """保存设备串口配置。之后可通过 profile=NAME 快速打开会话"""
+            logger.log_info(f"MCP: device_profile_save {name} -> {port}")
+            t0 = time.time()
+            result = await AutoComMCPServer._device_profile_save(
+                name=name, port=port, baud_rate=baud_rate,
+                data_bits=data_bits, stop_bits=stop_bits,
+                parity=parity, flow_control=flow_control,
+                timeout=timeout, label=label,
+            )
+            self._audit_log_tool("device_profile_save", {"name": name, "port": port}, result, (time.time() - t0) * 1000)
+            return result
+
+        @mcp.tool()
+        async def device_profile_delete(name: str) -> dict:
+            """删除已保存的设备串口配置"""
+            logger.log_info(f"MCP: device_profile_delete {name}")
+            t0 = time.time()
+            result = await AutoComMCPServer._device_profile_delete(name=name)
+            self._audit_log_tool("device_profile_delete", {"name": name}, result, (time.time() - t0) * 1000)
+            return result
+
+        # ======================== 单步调试 ========================
+
+        @mcp.tool()
+        async def pipeline_step_debug(file_path: str, step_id: str,
+                                        config_overrides: Optional[dict] = None) -> dict:
+            """只执行流水线中的某一个步骤，方便单独调试某条指令"""
+            logger.log_info(f"MCP: pipeline_step_debug {file_path} step={step_id}")
+            t0 = time.time()
+            result = await AutoComMCPServer._pipeline_step_debug(
+                file_path=file_path, step_id=step_id, config_overrides=config_overrides,
+            )
+            self._audit_log_tool("pipeline_step_debug", {
+                "file_path": file_path, "step_id": step_id,
+            }, result, (time.time() - t0) * 1000)
+            return result
+
+        @mcp.tool()
+        async def pipeline_dry_run(file_path: str, config_overrides: Optional[dict] = None) -> dict:
+            """对流水线做干运行：解析变量、追踪控制流，但不执行实际 I/O"""
+            logger.log_info(f"MCP: pipeline_dry_run {file_path}")
+            t0 = time.time()
+            result = await AutoComMCPServer._pipeline_dry_run(
+                file_path=file_path, config_overrides=config_overrides,
+            )
+            self._audit_log_tool("pipeline_dry_run", {"file_path": file_path}, result, (time.time() - t0) * 1000)
+            return result
+
     # ------------------------- 工具实现 -------------------------
 
     @staticmethod
@@ -1668,6 +1805,521 @@ class AutoComMCPServer:
                     ser.close()
                 except Exception:
                     pass
+
+    # ======================== 流水线配置管理 ========================
+
+    @staticmethod
+    async def _pipeline_list(base_dir: Optional[str] = None) -> dict:
+        """列出指定目录下所有可用的流水线配置文件。"""
+        from pathlib import Path
+
+        search_dirs = []
+        if base_dir:
+            search_dirs.append(Path(base_dir))
+        else:
+            for d in ("dicts", "configs"):
+                p = Path(d)
+                if p.is_dir():
+                    search_dirs.append(p)
+
+        pipelines = []
+        seen = set()
+        for sd in search_dirs:
+            for ext in ("*.yaml", "*.yml", "*.json"):
+                for f in sorted(sd.rglob(ext)):
+                    if f.name.startswith("."):
+                        continue
+                    abspath = str(f.resolve())
+                    if abspath in seen:
+                        continue
+                    seen.add(abspath)
+                    try:
+                        stat = f.stat()
+                    except Exception:
+                        stat = None
+                    pipelines.append({
+                        "file_path": abspath,
+                        "file_name": f.name,
+                        "relative_path": str(f.relative_to(Path.cwd())),
+                        "size_bytes": stat.st_size if stat else 0,
+                        "modified": stat.st_mtime if stat else 0,
+                        "directory": str(f.parent),
+                    })
+        return {"success": True, "total": len(pipelines), "pipelines": pipelines}
+
+    # ======================== 执行历史与分析 ========================
+
+    @staticmethod
+    async def _execution_list(limit: int = 20) -> dict:
+        """列出最近的执行会话。"""
+        from pathlib import Path
+
+        base = Path("device_logs")
+        if not base.is_dir():
+            return {"success": True, "total": 0, "sessions": []}
+
+        sessions = []
+        for entry in sorted(base.iterdir(), key=lambda e: e.name, reverse=True):
+            if not entry.is_dir():
+                continue
+            has_log = (entry / "EXECUTION.log").is_file()
+            has_json = (entry / "EXECUTION.json").is_file()
+            device_logs = sorted(f.name for f in entry.iterdir()
+                                 if f.suffix == ".log" and f.name != "EXECUTION.log")
+            sessions.append({
+                "session_id": entry.name,
+                "path": str(entry.resolve()),
+                "has_log": has_log,
+                "has_json": has_json,
+                "device_logs": device_logs,
+                "device_count": len(device_logs),
+            })
+            if len(sessions) >= limit:
+                break
+
+        return {"success": True, "total": len(sessions), "sessions": sessions}
+
+    @staticmethod
+    async def _execution_report(session_id: str) -> dict:
+        """解析指定执行会话的日志和结果。"""
+        from pathlib import Path
+
+        session_dir = Path("device_logs") / session_id
+        if not session_dir.is_dir():
+            return {"success": False, "error": f"Session '{session_id}' not found in device_logs/"}
+
+        result = {
+            "success": True,
+            "session_id": session_id,
+            "path": str(session_dir.resolve()),
+            "execution_log": None,
+            "device_logs": {},
+            "summary": {},
+        }
+
+        # 读取 EXECUTION.log
+        exec_log = session_dir / "EXECUTION.log"
+        if exec_log.is_file():
+            try:
+                lines = exec_log.read_text("utf-8", errors="replace").splitlines()
+                result["execution_log"] = {
+                    "line_count": len(lines),
+                    "content": lines[:500],  # 限制返回行数
+                    "truncated": len(lines) > 500,
+                }
+                # 提取摘要
+                summary = {"iterations": 0, "passed": 0, "failed": 0, "errors": [], "total_time": ""}
+                for line in lines:
+                    if "iteration" in line.lower() and "failed" in line.lower():
+                        summary["failed"] += 1
+                    if "iteration" in line.lower() and "pass" in line.lower():
+                        summary["passed"] += 1
+                    if "Summary:" in line:
+                        summary["iterations"] = summary.get("iterations", 0) + 1
+                    if "Total execution time" in line:
+                        summary["total_time"] = line
+                    if "ERROR" in line or "FATAL" in line:
+                        summary["errors"].append(line)
+                result["summary"] = summary
+            except Exception as e:
+                result["execution_log"] = {"error": str(e)}
+
+        # 读取设备日志
+        for f in sorted(session_dir.iterdir()):
+            if f.suffix == ".log" and f.name != "EXECUTION.log":
+                try:
+                    dev_lines = f.read_text("utf-8", errors="replace").splitlines()
+                    result["device_logs"][f.name] = {
+                        "line_count": len(dev_lines),
+                        "content": dev_lines[:200],
+                        "truncated": len(dev_lines) > 200,
+                    }
+                except Exception as e:
+                    result["device_logs"][f.name] = {"error": str(e)}
+
+        return result
+
+    @staticmethod
+    async def _session_log_query(session_id: str, keyword: str, max_results: int = 50) -> dict:
+        """在指定会话的日志中搜索关键词。"""
+        from pathlib import Path
+
+        session_dir = Path("device_logs") / session_id
+        if not session_dir.is_dir():
+            return {"success": False, "error": f"Session '{session_id}' not found"}
+
+        matches = []
+        for f in sorted(session_dir.iterdir()):
+            if f.suffix != ".log":
+                continue
+            try:
+                for lineno, line in enumerate(f.read_text("utf-8", errors="replace").splitlines(), 1):
+                    if keyword.lower() in line.lower():
+                        matches.append({
+                            "file": f.name,
+                            "line": lineno,
+                            "text": line.strip(),
+                        })
+                        if len(matches) >= max_results:
+                            break
+            except Exception:
+                pass
+            if len(matches) >= max_results:
+                break
+
+        return {
+            "success": True,
+            "session_id": session_id,
+            "keyword": keyword,
+            "total_matches": len(matches),
+            "matches": matches,
+        }
+
+    # ======================== 串口调试增强 ========================
+
+    BAUD_RATES_TO_TRY = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600]
+
+    @staticmethod
+    async def _serial_baud_scan(port: str, test_command: str = "AT", expected_response: str = "OK") -> dict:
+        """自动尝试常用波特率，找到能收到期望响应的那个。"""
+        import serial
+
+        results = []
+        for baud in AutoComMCPServer.BAUD_RATES_TO_TRY:
+            ser = None
+            t0 = time.time()
+            try:
+                ser = serial.Serial(
+                    port=port,
+                    baudrate=baud,
+                    bytesize=serial.EIGHTBITS,
+                    parity=serial.PARITY_NONE,
+                    stopbits=serial.STOPBITS_ONE,
+                    timeout=2.0,
+                )
+                time.sleep(0.1)  # wait for port to settle
+                ser.write((test_command + "\r\n").encode("utf-8"))
+                resp = ser.read(1024).decode("utf-8", errors="replace")
+                elapsed = round((time.time() - t0) * 1000, 1)
+                matched = expected_response in resp
+                results.append({
+                    "baud_rate": baud,
+                    "success": matched,
+                    "response": resp.strip() if resp else "(no response)",
+                    "elapsed_ms": elapsed,
+                })
+            except Exception as e:
+                results.append({
+                    "baud_rate": baud,
+                    "success": False,
+                    "error": str(e),
+                })
+            finally:
+                if ser is not None:
+                    try:
+                        ser.close()
+                    except Exception:
+                        pass
+
+        working = [r for r in results if r.get("success")]
+        return {
+            "success": True,
+            "port": port,
+            "test_command": test_command,
+            "expected_response": expected_response,
+            "total_tried": len(results),
+            "working_count": len(working),
+            "working_rates": [r["baud_rate"] for r in working],
+            "results": results,
+        }
+
+    @staticmethod
+    async def _serial_hex_dump(port: str, baud_rate: int = 115200, bytes_to_read: int = 256,
+                                timeout: float = 3.0) -> dict:
+        """以 hex + ASCII 格式读取串口数据，排查乱码问题。"""
+        import serial
+
+        ser = None
+        try:
+            ser = serial.Serial(
+                port=port,
+                baudrate=baud_rate,
+                bytesize=serial.EIGHTBITS,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE,
+                timeout=timeout,
+            )
+            raw = ser.read(bytes_to_read)
+            if not raw:
+                return {"success": True, "port": port, "baud_rate": baud_rate,
+                        "bytes_read": 0, "hex_dump": [], "text": "(no data)"}
+
+            # 格式化 hex dump
+            hex_lines = []
+            for i in range(0, len(raw), 16):
+                chunk = raw[i:i + 16]
+                hex_part = " ".join(f"{b:02x}" for b in chunk)
+                # 补齐空格
+                hex_part = hex_part.ljust(16 * 3 - 1)
+                ascii_part = "".join(chr(b) if 32 <= b < 127 else "." for b in chunk)
+                hex_lines.append(f"{i:08x}  {hex_part}  |{ascii_part}|")
+
+            return {
+                "success": True,
+                "port": port,
+                "baud_rate": baud_rate,
+                "bytes_read": len(raw),
+                "hex_dump": hex_lines,
+                "text": raw.decode("utf-8", errors="replace"),
+            }
+        except Exception as e:
+            return {"success": False, "port": port, "error": str(e)}
+        finally:
+            if ser is not None:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
+
+    # ======================== 设备参数管理 ========================
+
+    @staticmethod
+    def _profiles_path() -> Path:
+        return Path("data") / "device_profiles.json"
+
+    @staticmethod
+    async def _device_profile_list() -> dict:
+        """列出所有已保存的设备配置。"""
+        profiles_path = AutoComMCPServer._profiles_path()
+        if not profiles_path.is_file():
+            return {"success": True, "total": 0, "profiles": []}
+        try:
+            profiles = json.loads(profiles_path.read_text("utf-8"))
+            if not isinstance(profiles, list):
+                profiles = []
+            return {"success": True, "total": len(profiles), "profiles": profiles}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @staticmethod
+    async def _device_profile_save(name: str, port: str, baud_rate: int = 115200,
+                                    data_bits: int = 8, stop_bits: int = 1,
+                                    parity: str = "none", flow_control: bool = False,
+                                    timeout: float = 5.0, label: str = "") -> dict:
+        """保存设备配置。"""
+        profile = {
+            "name": name,
+            "port": port,
+            "baud_rate": baud_rate,
+            "data_bits": data_bits,
+            "stop_bits": stop_bits,
+            "parity": parity,
+            "flow_control": flow_control,
+            "timeout": timeout,
+            "label": label or name,
+            "created": time.time(),
+        }
+
+        profiles_path = AutoComMCPServer._profiles_path()
+        profiles_path.parent.mkdir(parents=True, exist_ok=True)
+
+        profiles = []
+        if profiles_path.is_file():
+            try:
+                profiles = json.loads(profiles_path.read_text("utf-8"))
+            except Exception:
+                profiles = []
+
+        # 同名更新
+        for i, p in enumerate(profiles):
+            if p.get("name") == name:
+                profile["created"] = p.get("created", time.time())
+                profiles[i] = profile
+                break
+        else:
+            profiles.append(profile)
+
+        profiles_path.write_text(json.dumps(profiles, indent=2, ensure_ascii=False), "utf-8")
+        return {"success": True, "profile": profile, "total": len(profiles)}
+
+    @staticmethod
+    async def _device_profile_delete(name: str) -> dict:
+        """删除已保存的设备配置。"""
+        profiles_path = AutoComMCPServer._profiles_path()
+        if not profiles_path.is_file():
+            return {"success": False, "error": f"Profile '{name}' not found"}
+
+        try:
+            profiles = json.loads(profiles_path.read_text("utf-8"))
+            before = len(profiles)
+            profiles = [p for p in profiles if p.get("name") != name]
+            if len(profiles) == before:
+                return {"success": False, "error": f"Profile '{name}' not found"}
+            profiles_path.write_text(json.dumps(profiles, indent=2, ensure_ascii=False), "utf-8")
+            return {"success": True, "deleted": name, "total": len(profiles)}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    # ======================== 单步调试 ========================
+
+    @staticmethod
+    async def _pipeline_step_debug(file_path: str, step_id: str,
+                                    config_overrides: Optional[dict] = None) -> dict:
+        """只执行流水线中的某一个步骤，方便单独调试。"""
+        from components.PipelineScheduler import PipelineScheduler
+        from pathlib import Path
+
+        fpath = Path(file_path)
+        if not fpath.is_file():
+            return {"success": False, "error": f"File not found: {file_path}"}
+
+        try:
+            # 加载配置
+            import yaml
+            raw = fpath.read_text("utf-8")
+            data = yaml.safe_load(raw)
+            if not isinstance(data, dict):
+                return {"success": False, "error": "Config root must be an object"}
+
+            # 应用覆盖
+            if config_overrides:
+                from copy import deepcopy
+                data = deepcopy(data)
+                for key, val in config_overrides.items():
+                    data[key] = val
+
+            # 找到目标步骤
+            steps = data.get("Steps", [])
+            target_step = None
+            for s in steps:
+                if s.get("id") == step_id:
+                    target_step = s
+                    break
+            if target_step is None:
+                return {"success": False, "error": f"Step '{step_id}' not found in Steps"}
+
+            # 构建临时 PipelineScheduler 并执行单步
+            scheduler = PipelineScheduler(data)
+            result = await scheduler.execute_single_step(target_step)
+            return {
+                "success": True,
+                "file_path": file_path,
+                "step_id": step_id,
+                "step_type": target_step.get("type"),
+                "result": result,
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @staticmethod
+    async def _pipeline_dry_run(file_path: str, config_overrides: Optional[dict] = None) -> dict:
+        """对流水线做干运行：解析变量、追踪控制流，但不执行实际 I/O。"""
+        from pathlib import Path
+
+        fpath = Path(file_path)
+        if not fpath.is_file():
+            return {"success": False, "error": f"File not found: {file_path}"}
+
+        try:
+            import yaml
+            raw = fpath.read_text("utf-8")
+            data = yaml.safe_load(raw)
+            if not isinstance(data, dict):
+                return {"success": False, "error": "Config root must be an object"}
+
+            if config_overrides:
+                from copy import deepcopy
+                data = deepcopy(data)
+                for key, val in config_overrides.items():
+                    data[key] = val
+
+            devices = data.get("Devices", [])
+            steps = data.get("Steps", [])
+            constants = data.get("Constants", {})
+            config_block = data.get("Config", {})
+            loop_shorthand = data.get("loop")
+
+            # 解析执行模式
+            mode = "single"
+            iterations = 1
+            if isinstance(config_block, dict):
+                mode = config_block.get("mode", "single")
+                loop_cfg = config_block.get("loop", {})
+                if isinstance(loop_cfg, dict):
+                    iterations = loop_cfg.get("iterations", 1)
+            if loop_shorthand is not None:
+                mode = "loop"
+                iterations = loop_shorthand if isinstance(loop_shorthand, int) else 1
+
+            # 步骤列表
+            step_analysis = []
+            for s in steps:
+                sid = s.get("id", "?")
+                stype = s.get("type", "?")
+                deps = []
+                # 检查变量引用
+                for field in ("send", "command", "url"):
+                    val = s.get(field, "")
+                    if isinstance(val, str):
+                        import re
+                        for m in re.finditer(r"\{([A-Za-z_]\w*)\}", val):
+                            k = m.group(1)
+                            if k not in constants:
+                                deps.append(f"undefined constant: {{{k}}}")
+                        for m in re.finditer(r"\{\{\s*steps\.(\w+)\.capture\.(\w+)\s*\}\}", val):
+                            sid_ref = m.group(1)
+                            if sid_ref not in {x.get("id") for x in steps}:
+                                deps.append(f"undefined step ref: {sid_ref}")
+
+                step_analysis.append({
+                    "id": sid,
+                    "type": stype,
+                    "device": s.get("device", ""),
+                    "has_expect": "expect" in s,
+                    "has_capture": "capture" in s,
+                    "timeout": s.get("timeout"),
+                    "on_error": s.get("on_error"),
+                    "on_success": s.get("on_success"),
+                    "condition": s.get("if") or s.get("unless"),
+                    "issues": deps,
+                })
+
+            # 控制流追踪
+            flow_trace = []
+            ids = {s["id"] for s in step_analysis}
+            for s in step_analysis:
+                if s["type"] == "goto":
+                    target = None
+                    for st in steps:
+                        if st.get("id") == s["id"]:
+                            target = st.get("target")
+                    if target and target not in ids:
+                        flow_trace.append(f"goto '{s['id']}' -> target '{target}' not found")
+                    elif target:
+                        flow_trace.append(f"goto '{s['id']}' -> '{target}'")
+                on_err = s.get("on_error", "")
+                if isinstance(on_err, str) and "goto(" in on_err:
+                    import re
+                    m = re.search(r"goto\((.+?)\)", on_err)
+                    if m and m.group(1) not in ids:
+                        flow_trace.append(f"on_error goto in '{s['id']}' -> '{m.group(1)}' not found")
+
+            return {
+                "success": True,
+                "file_path": file_path,
+                "config": {
+                    "mode": mode,
+                    "iterations": iterations,
+                },
+                "devices": [{"name": d.get("name"), "port": d.get("port")} for d in devices if isinstance(d, dict)],
+                "constants": list(constants.keys()) if isinstance(constants, dict) else [],
+                "steps": step_analysis,
+                "flow_issues": flow_trace,
+                "total_steps": len(steps),
+                "has_issues": len(flow_trace) > 0 or any(s["issues"] for s in step_analysis),
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
 
 def _create_auth_middleware(auth_key: str):

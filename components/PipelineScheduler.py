@@ -929,6 +929,50 @@ class PipelineScheduler:
                 if step_id:
                     self.ctx.set(f"_goto_count.{step_id}", 1)
 
+    async def execute_single_step(self, step: dict) -> dict:
+        """执行单个步骤（用于 MCP pipeline_step_debug），返回结果字典。"""
+        step_id = step.get("id", "?")
+        step_type = step.get("type", "serial")
+
+        # 1. 变量替换
+        resolved = self._resolve_step(step)
+
+        # 2. 元步骤处理
+        if step_type == "goto":
+            result = self._handle_goto_step(resolved, step_id)
+        elif step_type == "loop":
+            result = self._handle_loop(resolved)
+        elif step_type == "choose":
+            result = self._handle_choose(resolved)
+        elif step_type == "parallel":
+            result = self._handle_parallel(resolved)
+        else:
+            # 3. 路由到 Handler
+            handler = self._handlers.get(step_type)
+            if handler is None:
+                result = StepResult.from_error(step_id, f"Unknown step type: '{step_type}'")
+            else:
+                result = handler.execute(resolved)
+
+        # 4. 记录
+        self._record(step_id, step_type, result, step=resolved)
+
+        # 5. 返回结构化结果
+        out = {
+            "step_id": step_id,
+            "step_type": step_type,
+            "passed": result.ok,
+            "output": result.output,
+            "captures": result.captures or {},
+            "error": result.error,
+            "execution_time_ms": result.execution_time_ms,
+        }
+        if result.skipped:
+            out["skipped"] = True
+        if result.error:
+            out["error"] = str(result.error)
+        return out
+
     # ── 兼容旧 Commands → Steps 转换 ──
 
     @classmethod
