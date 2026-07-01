@@ -3,7 +3,29 @@
 AutoCom MCP Server - FastMCP 重构实现
 
 使用 FastMCP 暴露 AutoCom 的串口操作能力，支持 stdio、SSE、Streamable HTTP 三种运行模式。
-保留原有工具实现（扫描串口、执行指令、批量执行、加载执行配置文件、监听串口），并将它们注册为 FastMCP 工具。
+
+工具分类：
+  流水线工具：
+    - run_pipeline: 执行 Steps 配置文件，支持 loop/duration 控制
+    - validate_pipeline: 校验 Steps YAML/JSON 配置
+    - load_pipeline: 加载并解析配置文件（支持配置合并）
+
+  基础串口工具：
+    - list_serial_ports: 列出可用串口设备
+    - execute_serial_command: 底层单条指令执行
+    - monitor_serial_port: 监听串口输出
+
+  持久会话工具（多轮交互，避免反复开闭串口）：
+    - serial_session_open: 开启持久串口会话
+    - serial_session_send: 在会话中发送指令
+    - serial_session_read: 读取会话积累数据
+    - serial_session_close: 关闭会话
+
+  硬件调试工具：
+    - serial_pin_status: 读取 CTS/DSR/DCD/RI 信号线状态
+    - serial_pin_set: 设置 DTR/RTS 输出电平
+    - serial_loopback_test: TX/RX 回环测试
+    - serial_latency_bench: 串口收发延迟基准测试
 """
 
 from __future__ import annotations
@@ -14,9 +36,13 @@ import time
 import inspect
 import contextlib
 import io
-from collections import deque
-import serial
 import sys
+import threading
+import uuid
+import socket
+import serial
+from pathlib import Path
+from collections import deque
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from typing import Any, Optional, List
@@ -25,7 +51,7 @@ try:
     from fastmcp import FastMCP, Context
     from fastmcp.server.dependencies import get_context
     _FASTMCP_AVAILABLE = True
-except Exception:  # pragma: no cover
+except Exception:
     FastMCP = None
     Context = Any
     get_context = None
@@ -40,12 +66,9 @@ def _is_graceful_shutdown_exception(exc: BaseException) -> bool:
     graceful_types = (KeyboardInterrupt, asyncio.CancelledError, BrokenPipeError, EOFError)
     if isinstance(exc, graceful_types):
         return True
-
-    # Python 3.11+：ExceptionGroup 可能包装取消/中断异常
     with contextlib.suppress(Exception):
-        if isinstance(exc, BaseExceptionGroup):  # type: ignore[name-defined]
+        if isinstance(exc, BaseExceptionGroup):
             return all(_is_graceful_shutdown_exception(e) for e in exc.exceptions)
-
     return False
 
 
@@ -78,7 +101,6 @@ def _run_coroutine_with_graceful_shutdown(coro, on_interrupt=None, suppress_stde
             if callable(on_interrupt):
                 on_interrupt()
             return None
-
         if stderr_buffer is not None:
             buffered = stderr_buffer.getvalue()
             if buffered:
@@ -91,6 +113,23 @@ def _run_coroutine_with_graceful_shutdown(coro, on_interrupt=None, suppress_stde
             stderr_buffer.close()
 
 
+def _get_reachable_host(bind_host: str) -> str:
+    """将 bind 地址（如 0.0.0.0）解析为首个非回环 IPv4 地址；否则原样返回。"""
+    if bind_host != "0.0.0.0":
+        return bind_host
+    try:
+        hostname = socket.gethostname()
+        for addr in socket.getaddrinfo(hostname, None):
+            family, type_, proto, canonname, sockaddr = addr
+            if family == socket.AF_INET:  # IPv4
+                ip = sockaddr[0]
+                if not ip.startswith("127."):
+                    return ip
+        return socket.gethostbyname(hostname)
+    except Exception:
+        return "127.0.0.1"
+
+
 class AutoComMCPServer:
     """基于 FastMCP 的 MCP Server，工具以装饰器方式注册到 `self.mcp`。"""
 
@@ -99,22 +138,115 @@ class AutoComMCPServer:
             raise RuntimeError("fastmcp 未安装。请运行: pip install fastmcp")
 
         self.auth_key = auth_key
+        self.server_name = server_name
         if FastMCP is None:
             raise RuntimeError("FastMCP 类不可用，可能是 fastmcp 版本不兼容。请升级 fastmcp 或检查其文档。")
         self.mcp = FastMCP()
+        # 操作审计日志
+        from utils.dirs import get_dirs
+        self._audit_dir = get_dirs().log_dir / "mcp_audit"
+        self._audit_dir.mkdir(parents=True, exist_ok=True)
+        self._audit_lock = threading.Lock()
+        self._audit_date: Optional[str] = None
+        self._audit_fh: Optional[io.TextIOWrapper] = None
+        # 持久会话管理
+        self._sessions: dict[str, dict] = {}
+        self._session_lock = threading.Lock()
+        self._session_idle_timeout = 300.0  # 5 分钟无操作自动关闭
+        self._session_cleanup_interval = 30.0  # 每 30s 扫描一次
+        self._cleanup_thread = threading.Thread(target=self._session_cleanup_worker, daemon=True)
+        self._cleanup_thread.start()
         self._register_tools()
+
+    # ======================== 操作审计日志 ========================
+
+    _AUDIT_SENSITIVE_KEYS = frozenset({"password", "pwd", "passwd", "auth_key", "api_key", "secret", "token"})
+
+    def _sanitize_params(self, params: dict) -> dict:
+        """脱敏：递归过滤敏感字段。"""
+        if not isinstance(params, dict):
+            return params
+        result = {}
+        for k, v in params.items():
+            if isinstance(k, str) and k.lower() in self._AUDIT_SENSITIVE_KEYS:
+                result[k] = "***"
+            elif isinstance(v, dict):
+                result[k] = self._sanitize_params(v)
+            else:
+                result[k] = v
+        return result
+
+    def _audit_log(self, entry: dict) -> None:
+        """写入审计日志（线程安全、按日轮转）。"""
+        import datetime as dt
+
+        now = dt.datetime.now()
+        date_str = now.strftime("%Y-%m-%d")
+        entry["@timestamp"] = now.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + now.strftime("%z")
+
+        with self._audit_lock:
+            # 按日轮转
+            if date_str != self._audit_date:
+                if self._audit_fh is not None:
+                    try:
+                        self._audit_fh.close()
+                    except Exception:
+                        pass
+                log_path = self._audit_dir / f"{date_str}.jsonl"
+                try:
+                    fh = open(log_path, "a", encoding="utf-8")
+                    self._audit_fh = fh
+                    self._audit_date = date_str
+                except Exception as e:
+                    logger.log_error(f"Cannot open audit log file {log_path}: {e}")
+                    return
+            fh = self._audit_fh
+            if fh is None:
+                return
+            try:
+                line = json.dumps(entry, ensure_ascii=False, default=str)
+                fh.write(line + "\n")
+                fh.flush()
+            except Exception as e:
+                logger.log_error(f"Failed to write audit log: {e}")
+
+    def _audit_log_tool(self, tool_name: str, params: dict, result: dict, elapsed_ms: float = 0) -> None:
+        """便捷包装：从工具调用中记录审计日志。"""
+        audit_entry = {
+            "type": "tool_call",
+            "tool": tool_name,
+            "params": self._sanitize_params(params),
+            "result_status": "success" if result.get("success") else "failed",
+            "elapsed_ms": round(elapsed_ms, 1),
+        }
+        # 提取公共字段方便查询
+        for key in ("port", "session_id", "file_path", "mode", "command"):
+            if key in params:
+                audit_entry[key] = params[key]
+        result_error = result.get("error")
+        if result_error:
+            audit_entry["error"] = str(result_error)
+        self._audit_log(audit_entry)
+
+    @property
+    def audit_log_path(self) -> str:
+        """审计日志目录路径，用户可查阅。"""
+        return str(self._audit_dir)
 
     def _register_tools(self) -> None:
         mcp = self.mcp
 
         @mcp.tool()
-        async def list_devices() -> dict:
+        async def list_serial_ports() -> dict:
             """列出当前可用的串口设备及其信息"""
-            logger.log_info("MCP: list_devices called")
-            return await AutoComMCPServer._list_devices()
+            logger.log_info("MCP: list_serial_ports called")
+            t0 = time.time()
+            result = await AutoComMCPServer._list_serial_ports()
+            self._audit_log_tool("list_serial_ports", {}, result, (time.time() - t0) * 1000)
+            return result
 
         @mcp.tool()
-        async def execute_command(
+        async def execute_serial_command(
             port: str,
             command: str,
             baud_rate: int = 115200,
@@ -126,9 +258,10 @@ class AutoComMCPServer:
             completion_rules: Optional[dict] = None,
             priority: int = 0,
         ) -> dict:
-            """向指定串口设备发送单条指令并返回响应"""
-            logger.log_info(f"MCP: execute_command on {port}")
-            return await AutoComMCPServer._execute_command(
+            """向指定串口设备发送单条指令并返回响应（底层调试用）"""
+            logger.log_info(f"MCP: execute_serial_command on {port}")
+            t0 = time.time()
+            result = await AutoComMCPServer._execute_serial_command(
                 port=port,
                 command=command,
                 baud_rate=baud_rate,
@@ -140,56 +273,17 @@ class AutoComMCPServer:
                 completion_rules=completion_rules,
                 priority=priority,
             )
+            self._audit_log_tool("execute_serial_command", {
+                "port": port, "command": command, "baud_rate": baud_rate,
+                "timeout": timeout, "device_name": device_name,
+            }, result, result.get("elapsed_ms", 0))
+            return result
 
         @mcp.tool()
-        async def execute_commands(
-            port: str,
-            commands: List[str],
-            baud_rate: int = 115200,
-            parallel: bool = False,
-            timeout: float = 5.0,
-            device_name: Optional[str] = None,
-            expected_responses: Optional[List[str]] = None,
-            completion_rules: Optional[dict] = None,
-            priority: int = 0,
-        ) -> dict:
-            """批量执行多条指令（支持串行/并行），返回所有结果"""
-            logger.log_info(f"MCP: execute_commands on {port} count={len(commands)} parallel={parallel}")
-            return await AutoComMCPServer._execute_commands(
-                port=port,
-                commands=commands,
-                baud_rate=baud_rate,
-                parallel=parallel,
-                timeout=timeout,
-                device_name=device_name,
-                expected_responses=expected_responses,
-                completion_rules=completion_rules,
-                priority=priority,
-            )
-
-        @mcp.tool()
-        async def load_dict(file_path: str, config_path: Optional[str] = None) -> dict:
-            """加载并解析 AutoCom 执行配置文件（JSON/YAML），返回设备与指令配置"""
-            logger.log_info(f"MCP: load_dict {file_path}")
-            return await AutoComMCPServer._load_dict(file_path=file_path, config_path=config_path)
-
-        @mcp.tool()
-        async def validate_dict(file_path: str, config_path: Optional[str] = None) -> dict:
-            """校验 AutoCom 执行配置文件（JSON/YAML），返回错误与告警"""
-            logger.log_info(f"MCP: validate_dict {file_path}")
-            return await AutoComMCPServer._validate_dict(file_path=file_path, config_path=config_path)
-
-        @mcp.tool()
-        async def monitor_port(port: str, baud_rate: int = 115200, duration: float = 10.0) -> dict:
-            """监听串口设备输出（持续读取），返回一段时间内的输出内容"""
-            logger.log_info(f"MCP: monitor_port {port} duration={duration}")
-            return await AutoComMCPServer._monitor_port(port=port, baud_rate=baud_rate, duration=duration)
-
-        @mcp.tool()
-        async def monitor_port_stream(
+        async def monitor_serial_port(
             port: str,
             baud_rate: int = 115200,
-            duration: float = 30.0,
+            duration: float = 10.0,
             heartbeat_interval: float = 0.3,
         ) -> dict:
             """实时监听串口并通过 MCP progress 通知持续推送数据。
@@ -197,9 +291,7 @@ class AutoComMCPServer:
             注意：FastMCP 对工具返回的 async generator 会先整体物化，因此不能用于真正逐条实时回传。
             本方法改为在工具执行过程中通过 progress message 持续发送数据，最后返回一次汇总。
             """
-            logger.log_info(
-                f"MCP: monitor_port_stream {port} duration={duration} heartbeat={heartbeat_interval}"
-            )
+            logger.log_info(f"MCP: monitor_serial_port {port} duration={duration} heartbeat={heartbeat_interval}")
 
             progress_token = None
             ctx: Optional[Any] = None
@@ -211,12 +303,15 @@ class AutoComMCPServer:
                 progress_token = None
 
             progress_enabled = progress_token is not None
+            _audit_params = {"port": port, "baud_rate": baud_rate, "duration": duration}
             if duration <= 0 and not progress_enabled:
-                return {
+                result = {
                     "success": False,
                     "port": port,
-                    "error": "当前客户端未启用 progressToken，duration<=0 会导致无返回。请传入 duration>0，或使用支持 progress callback 的 MCP 客户端。",
+                    "error": "Client does not support progressToken and duration<=0 would hang. Pass duration>0 or use a progress-capable MCP client.",
                 }
+                self._audit_log_tool("monitor_serial_port", _audit_params, result)
+                return result
 
             ser = None
             outputs = deque(maxlen=200)
@@ -256,7 +351,9 @@ class AutoComMCPServer:
                     timeout=0,
                 )
             except Exception as e:
-                return {"success": False, "port": port, "error": str(e)}
+                result = {"success": False, "port": port, "error": str(e)}
+                self._audit_log_tool("monitor_serial_port", _audit_params, result)
+                return result
 
             try:
                 await _emit("connected")
@@ -302,7 +399,7 @@ class AutoComMCPServer:
                     await asyncio.sleep(0.03)
 
                 await _emit("completed")
-                return {
+                result = {
                     "success": True,
                     "port": port,
                     "duration_seconds": round(time.time() - start_time, 3),
@@ -311,9 +408,11 @@ class AutoComMCPServer:
                     "total_bytes": byte_count,
                     "tail_chunks": list(outputs),
                 }
+                self._audit_log_tool("monitor_serial_port", _audit_params, result, result["duration_seconds"] * 1000)
+                return result
             except (KeyboardInterrupt, asyncio.CancelledError):
                 await _emit("cancelled")
-                return {
+                result = {
                     "success": True,
                     "port": port,
                     "cancelled": True,
@@ -323,6 +422,8 @@ class AutoComMCPServer:
                     "total_bytes": byte_count,
                     "tail_chunks": list(outputs),
                 }
+                self._audit_log_tool("monitor_serial_port", _audit_params, result, result["duration_seconds"] * 1000)
+                return result
             finally:
                 if ser is not None:
                     try:
@@ -330,9 +431,258 @@ class AutoComMCPServer:
                     except Exception:
                         pass
 
-    # ------------------------- 工具实现（复用原有实现） -------------------------
+        @mcp.tool()
+        async def load_pipeline(
+            file_path: str,
+            config_path: Optional[str] = None,
+            config_overrides: Optional[dict] = None,
+        ) -> dict:
+            """加载并解析 AutoCom Steps 配置文件（YAML/JSON），支持配置合并与覆盖。
+
+            返回设备列表、步骤列表、常量、配置摘要等信息。
+            """
+            logger.log_info(f"MCP: load_pipeline {file_path}")
+            t0 = time.time()
+            result = await AutoComMCPServer._load_pipeline(
+                file_path=file_path,
+                config_path=config_path,
+                config_overrides=config_overrides,
+            )
+            self._audit_log_tool("load_pipeline", {"file_path": file_path, "config_path": config_path}, result, (time.time() - t0) * 1000)
+            return result
+
+        @mcp.tool()
+        async def validate_pipeline(
+            file_path: str,
+            config_path: Optional[str] = None,
+            config_overrides: Optional[dict] = None,
+        ) -> dict:
+            """校验 AutoCom Steps 配置文件（YAML/JSON），返回错误与告警列表。"""
+            logger.log_info(f"MCP: validate_pipeline {file_path}")
+            t0 = time.time()
+            result = await AutoComMCPServer._validate_pipeline(
+                file_path=file_path,
+                config_path=config_path,
+                config_overrides=config_overrides,
+            )
+            self._audit_log_tool("validate_pipeline", {"file_path": file_path}, result, (time.time() - t0) * 1000)
+            return result
+
+        @mcp.tool()
+        async def run_pipeline(
+            file_path: str,
+            config_path: Optional[str] = None,
+            config_overrides: Optional[dict] = None,
+            loop_count: Optional[int] = None,
+            duration: Optional[str] = None,
+            infinite: bool = False,
+            stop_on_failure: Optional[bool] = None,
+            max_failures: Optional[int] = None,
+            interval_ms: Optional[int] = None,
+        ) -> dict:
+            """执行 AutoCom Steps 配置文件（完整流水线执行）。
+
+            参数对齐当前 AutoCom 执行配置：
+            - loop_count: 循环轮数（对应 -n/--count）
+            - duration: 限时执行时长，如 "30s", "5m", "1h"（对应 --duration）
+            - infinite: 无限循环（对应 --infinite）
+            - stop_on_failure: 失败即停止
+            - max_failures: 最大失败次数
+            - interval_ms: 轮次间隔毫秒数
+            """
+            logger.log_info(
+                f"MCP: run_pipeline {file_path} loop={loop_count} duration={duration} infinite={infinite}"
+            )
+            t0 = time.time()
+            result = await AutoComMCPServer._run_pipeline(
+                file_path=file_path,
+                config_path=config_path,
+                config_overrides=config_overrides,
+                loop_count=loop_count,
+                duration=duration,
+                infinite=infinite,
+                stop_on_failure=stop_on_failure,
+                max_failures=max_failures,
+                interval_ms=interval_ms,
+            )
+            self._audit_log_tool("run_pipeline", {
+                "file_path": file_path, "loop_count": loop_count,
+                "duration": duration, "infinite": infinite,
+            }, result, result.get("elapsed_seconds", 0) * 1000)
+            return result
+
+    # ======================== 持久会话工具 ========================
+
+        @mcp.tool()
+        async def serial_session_open(
+            port: str,
+            baud_rate: int = 115200,
+            data_bits: int = 8,
+            stop_bits: int = 1,
+            parity: str = "none",
+            timeout: float = 5.0,
+            flow_control: bool = False,
+            label: Optional[str] = None,
+            monitor: bool = False,
+        ) -> dict:
+            """开启一个持久串口会话，返回 session_id。
+            后续可通过 session_id 复用此连接，避免反复打开/关闭串口。
+            设置 monitor=True 可让后台持续接收串口数据，通过 serial_session_read 随时读取。
+            """
+            logger.log_info(f"MCP: serial_session_open {port} @ {baud_rate}")
+            t0 = time.time()
+            result = await self._serial_session_open(
+                port=port, baud_rate=baud_rate,
+                data_bits=data_bits, stop_bits=stop_bits,
+                parity=parity, timeout=timeout,
+                flow_control=flow_control, label=label or port,
+                monitor=monitor,
+            )
+            self._audit_log_tool("serial_session_open", {
+                "port": port, "baud_rate": baud_rate, "label": label,
+            }, result, (time.time() - t0) * 1000)
+            return result
+
+        @mcp.tool()
+        async def serial_session_send(
+            session_id: str,
+            command: str,
+            timeout: Optional[float] = None,
+            line_ending: str = "0d0a",
+            hex_mode: bool = False,
+            expected_responses: Optional[List[str]] = None,
+        ) -> dict:
+            """在持久会话中发送指令，等待响应后返回。"""
+            logger.log_info(f"MCP: serial_session_send {session_id}")
+            t0 = time.time()
+            result = await self._serial_session_send(
+                session_id=session_id, command=command,
+                timeout=timeout, line_ending=line_ending,
+                hex_mode=hex_mode, expected_responses=expected_responses,
+            )
+            self._audit_log_tool("serial_session_send", {
+                "session_id": session_id, "command": command,
+            }, result, result.get("elapsed_ms", 0))
+            return result
+
+        @mcp.tool()
+        async def serial_session_read(
+            session_id: str,
+            timeout: Optional[float] = None,
+            max_bytes: Optional[int] = None,
+        ) -> dict:
+            """读取持久会话中积累的缓冲区数据。"""
+            logger.log_info(f"MCP: serial_session_read {session_id}")
+            t0 = time.time()
+            result = await self._serial_session_read(
+                session_id=session_id, timeout=timeout, max_bytes=max_bytes,
+            )
+            self._audit_log_tool("serial_session_read", {
+                "session_id": session_id,
+            }, result, (time.time() - t0) * 1000)
+            return result
+
+        @mcp.tool()
+        async def serial_session_close(session_id: str) -> dict:
+            """关闭并清理持久串口会话。"""
+            logger.log_info(f"MCP: serial_session_close {session_id}")
+            t0 = time.time()
+            result = await self._serial_session_close(session_id=session_id)
+            self._audit_log_tool("serial_session_close", {"session_id": session_id}, result, (time.time() - t0) * 1000)
+            return result
+
+        @mcp.tool()
+        async def serial_session_list() -> dict:
+            """列出当前所有活跃的持久串口会话及其统计信息。"""
+            logger.log_info("MCP: serial_session_list called")
+            t0 = time.time()
+            result = await self._serial_session_list()
+            self._audit_log_tool("serial_session_list", {}, result, (time.time() - t0) * 1000)
+            return result
+
+    # ======================== 硬件调试工具 ========================
+
+        @mcp.tool()
+        async def serial_pin_status(port: str, baud_rate: int = 115200) -> dict:
+            """读取串口信号线状态：CTS/DSR/DCD/RI。
+            可用于排查设备连接是否正常（如 DSR 低电平可能表示设备未就绪）。
+            """
+            logger.log_info(f"MCP: serial_pin_status {port}")
+            t0 = time.time()
+            result = await AutoComMCPServer._serial_pin_status(port=port, baud_rate=baud_rate)
+            self._audit_log_tool("serial_pin_status", {"port": port}, result, (time.time() - t0) * 1000)
+            return result
+
+        @mcp.tool()
+        async def serial_pin_set(
+            port: str,
+            dtr: Optional[bool] = None,
+            rts: Optional[bool] = None,
+            baud_rate: int = 115200,
+        ) -> dict:
+            """设置串口 DTR/RTS 输出电平。
+            可用于硬件复位（如 DTR 低→高触发 MCU 重启）或流控测试。
+            """
+            logger.log_info(f"MCP: serial_pin_set {port}")
+            t0 = time.time()
+            result = await AutoComMCPServer._serial_pin_set(
+                port=port, dtr=dtr, rts=rts, baud_rate=baud_rate,
+            )
+            self._audit_log_tool("serial_pin_set", {"port": port, "dtr": dtr, "rts": rts}, result, (time.time() - t0) * 1000)
+            return result
+
+        @mcp.tool()
+        async def serial_loopback_test(
+            port: str,
+            baud_rate: int = 115200,
+            mode: str = "hardware",
+            test_data: Optional[str] = None,
+            probe_command: str = "AT",
+            probe_expected: str = "OK",
+            timeout: float = 3.0,
+        ) -> dict:
+            """串口回环测试。
+            mode=hardware: 发 test_data 然后读回，需物理短接 TX→RX。
+            mode=echo: 发 probe_command 检查是否收到 probe_expected。
+            """
+            logger.log_info(f"MCP: serial_loopback_test {port} mode={mode}")
+            t0 = time.time()
+            result = await AutoComMCPServer._serial_loopback_test(
+                port=port, baud_rate=baud_rate, mode=mode,
+                test_data=test_data, probe_command=probe_command,
+                probe_expected=probe_expected, timeout=timeout,
+            )
+            self._audit_log_tool("serial_loopback_test", {
+                "port": port, "mode": mode,
+            }, result, result.get("elapsed_ms", (time.time() - t0) * 1000))
+            return result
+
+        @mcp.tool()
+        async def serial_latency_bench(
+            port: str,
+            baud_rate: int = 115200,
+            rounds: int = 10,
+            test_data: str = "AT",
+            timeout: float = 5.0,
+        ) -> dict:
+            """串口收发延迟基准测试。
+            多次发送指令并测量：发送耗时、首字节到达耗时、完整往返耗时。
+            """
+            logger.log_info(f"MCP: serial_latency_bench {port} rounds={rounds}")
+            t0 = time.time()
+            result = await AutoComMCPServer._serial_latency_bench(
+                port=port, baud_rate=baud_rate, rounds=rounds,
+                test_data=test_data, timeout=timeout,
+            )
+            self._audit_log_tool("serial_latency_bench", {
+                "port": port, "rounds": rounds,
+            }, result, (time.time() - t0) * 1000)
+            return result
+
+    # ------------------------- 工具实现 -------------------------
+
     @staticmethod
-    async def _list_devices() -> dict:
+    async def _list_serial_ports() -> dict:
         import serial.tools.list_ports
 
         devices = []
@@ -346,10 +696,10 @@ class AutoComMCPServer:
                 "serial_number": getattr(p, "serial_number", None),
                 "manufacturer": getattr(p, "manufacturer", None),
             })
-        return {"total": len(devices), "devices": devices}
+        return {"success": True, "total": len(devices), "devices": devices}
 
     @staticmethod
-    async def _execute_command(
+    async def _execute_serial_command(
         port: str,
         command: str,
         baud_rate: int = 115200,
@@ -361,19 +711,20 @@ class AutoComMCPServer:
         completion_rules: Optional[dict] = None,
         priority: int = 0,
     ) -> dict:
+        """执行单条串口指令，复用 AutoCom 的命令执行逻辑。"""
+        import serial
 
-        start_time = time.time()
-        response_data = ""
-        expected_responses = expected_responses or []
-        completion_rules = completion_rules or {}
-        matched: List[str] = []
-        finish_reason = "timeout"
+        # 解析换行符
+        line_ending_bytes = bytes.fromhex(line_ending) if line_ending else b"\r\n"
 
-        idle_timeout = float(completion_rules.get("idle_timeout", min(timeout / 3, 2.0)))
-        settle_after_terminal = float(completion_rules.get("settle_after_terminal", 0.05))
-        expected_required = bool(completion_rules.get("expected_required", False))
-        terminal_patterns = completion_rules.get("terminal_patterns", ["OK", "ERROR"])
-        complete_patterns = completion_rules.get("complete_patterns", [])
+        # 处理十六进制发送
+        if hex_mode:
+            try:
+                send_bytes = bytes.fromhex(command.replace(" ", ""))
+            except ValueError as e:
+                return {"success": False, "port": port, "error": f"Invalid hex command: {e}"}
+        else:
+            send_bytes = command.encode("utf-8")
 
         ser = None
         try:
@@ -383,89 +734,83 @@ class AutoComMCPServer:
                 bytesize=serial.EIGHTBITS,
                 parity=serial.PARITY_NONE,
                 stopbits=serial.STOPBITS_ONE,
-                timeout=0,
+                timeout=timeout,
             )
 
-            if isinstance(line_ending, str):
-                try:
-                    le_bytes = bytes.fromhex(line_ending.replace(" ", ""))
-                except Exception:
-                    le_bytes = line_ending.encode()
-            else:
-                le_bytes = line_ending
+            # 发送指令
+            ser.write(send_bytes + line_ending_bytes)
+            ser.flush()
 
-            if hex_mode:
-                cmd_bytes = bytes.fromhex(command.replace(" ", ""))
-            else:
-                cmd_bytes = command.encode() + le_bytes
+            # 读取响应
+            start_time = time.time()
+            response = b""
+            expected = expected_responses or []
+            complete_patterns = completion_rules.get("complete", []) if completion_rules else []
+            terminal_patterns = completion_rules.get("terminal", ["OK", "ERROR"]) if completion_rules else ["OK", "ERROR"]
 
-            ser.write(cmd_bytes)
+            while time.time() - start_time < timeout:
+                avail = ser.in_waiting
+                if avail > 0:
+                    chunk = ser.read(avail)
+                    response += chunk
+                    text = response.decode("utf-8", errors="replace")
 
-            last_data_time = time.time()
-            terminal_seen_time = None
-            chunks: List[str] = []
+                    # 检查完成条件
+                    if complete_patterns:
+                        for pat in complete_patterns:
+                            if pat in text:
+                                return {
+                                    "success": True,
+                                    "port": port,
+                                    "command": command,
+                                    "response": text,
+                                    "matched_pattern": pat,
+                                    "elapsed_ms": int((time.time() - start_time) * 1000),
+                                }
 
-            while (time.time() - start_time) < timeout:
-                data = ser.read_all()
-                if data:
-                    last_data_time = time.time()
-                    try:
-                        text = data.decode("utf-8", errors="replace")
-                    except Exception:
-                        text = data.hex(" ")
-                    chunks.append(text)
-                    response_data = "".join(chunks)
+                    # 检查预期响应
+                    if expected:
+                        for exp in expected:
+                            if exp in text:
+                                return {
+                                    "success": True,
+                                    "port": port,
+                                    "command": command,
+                                    "response": text,
+                                    "matched_expected": exp,
+                                    "elapsed_ms": int((time.time() - start_time) * 1000),
+                                }
 
-                    matched = AutoComMCPServer._match_expected_responses(
-                        response_data, expected_responses
-                    )
-                    should_finish, finish_reason, terminal_seen_time = AutoComMCPServer._should_finish_response(
-                        response_text=response_data,
-                        expected_responses=expected_responses,
-                        completion_rules=completion_rules,
-                        terminal_patterns=terminal_patterns,
-                        complete_patterns=complete_patterns,
-                        expected_required=expected_required,
-                        terminal_seen_time=terminal_seen_time,
-                        now=time.time(),
-                        settle_after_terminal=settle_after_terminal,
-                    )
-                    if should_finish:
-                        break
+                    # 检查终止条件
+                    if terminal_patterns:
+                        for pat in terminal_patterns:
+                            if pat in text:
+                                return {
+                                    "success": True,
+                                    "port": port,
+                                    "command": command,
+                                    "response": text,
+                                    "matched_terminal": pat,
+                                    "elapsed_ms": int((time.time() - start_time) * 1000),
+                                }
 
-                if response_data and (time.time() - last_data_time) >= idle_timeout:
-                    finish_reason = "idle-timeout"
-                    break
+                await asyncio.sleep(0.02)
 
-                await asyncio.sleep(0.03)
-
-            elapsed_ms = (time.time() - start_time) * 1000
+            # 超时返回已收到的数据
+            text = response.decode("utf-8", errors="replace")
             return {
-                "success": True,
+                "success": len(response) > 0,
                 "port": port,
                 "command": command,
-                "response": response_data.strip(),
-                "matched": matched,
-                "priority": priority,
-                "finish_reason": finish_reason,
-                "elapsed_ms": round(elapsed_ms, 2),
+                "response": text,
+                "elapsed_ms": int((time.time() - start_time) * 1000),
+                "timeout": True,
             }
+
         except serial.SerialException as e:
-            return {
-                "success": False,
-                "port": port,
-                "command": command,
-                "error": f"串口错误: {e}",
-                "elapsed_ms": round((time.time() - start_time) * 1000, 2),
-            }
+            return {"success": False, "port": port, "error": f"Serial error: {e}"}
         except Exception as e:
-            return {
-                "success": False,
-                "port": port,
-                "command": command,
-                "error": str(e),
-                "elapsed_ms": round((time.time() - start_time) * 1000, 2),
-            }
+            return {"success": False, "port": port, "error": str(e)}
         finally:
             if ser is not None:
                 try:
@@ -474,326 +819,847 @@ class AutoComMCPServer:
                     pass
 
     @staticmethod
-    async def _execute_commands(
-        port: str,
-        commands: List[str],
-        baud_rate: int = 115200,
-        parallel: bool = False,
-        timeout: float = 5.0,
-        device_name: Optional[str] = None,
-        expected_responses: Optional[List[str]] = None,
-        completion_rules: Optional[dict] = None,
-        priority: int = 0,
+    async def _load_pipeline(
+        file_path: str,
+        config_path: Optional[str] = None,
+        config_overrides: Optional[dict] = None,
     ) -> dict:
-        results = []
-        if parallel:
-            import concurrent.futures
+        """加载并解析 Steps 配置文件，支持配置文件合并与覆盖。"""
+        from AutoCom import load_commands_from_file, merge_config
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(commands), 10)) as executor:
-                fut_to_cmd = {
-                    executor.submit(
-                        AutoComMCPServer._execute_command_sync,
-                        port=port,
-                        command=cmd,
-                        baud_rate=baud_rate,
-                        timeout=timeout,
-                        expected_responses=expected_responses,
-                        completion_rules=completion_rules,
-                        priority=priority,
-                    ): cmd
-                    for cmd in commands
-                }
-                for future in concurrent.futures.as_completed(fut_to_cmd):
-                    cmd = fut_to_cmd[future]
-                    try:
-                        results.append(future.result())
-                    except Exception as e:
-                        results.append({"success": False, "command": cmd, "error": str(e)})
-        else:
-            for cmd in commands:
-                result = await AutoComMCPServer._execute_command(
-                    port=port,
-                    command=cmd,
-                    baud_rate=baud_rate,
-                    timeout=timeout,
-                    device_name=device_name,
-                    expected_responses=expected_responses,
-                    completion_rules=completion_rules,
-                    priority=priority,
-                )
-                results.append(result)
-
-        return {
-            "port": port,
-            "total": len(commands),
-            "parallel": parallel,
-            "success_count": sum(1 for r in results if r.get("success")),
-            "fail_count": sum(1 for r in results if not r.get("success")),
-            "results": results,
-        }
-
-    @staticmethod
-    def _execute_command_sync(
-        port: str,
-        command: str,
-        baud_rate: int = 115200,
-        timeout: float = 5.0,
-        expected_responses: Optional[List[str]] = None,
-        completion_rules: Optional[dict] = None,
-        priority: int = 0,
-    ) -> dict:
-        import asyncio
-
-        return asyncio.run(
-            AutoComMCPServer._execute_command(
-                port=port,
-                command=command,
-                baud_rate=baud_rate,
-                timeout=timeout,
-                expected_responses=expected_responses,
-                completion_rules=completion_rules,
-                priority=priority,
-            )
-        )
-
-    @staticmethod
-    def _match_patterns(response_text: str, patterns: Optional[List[str]]) -> bool:
-        if not patterns:
-            return False
-        return any(p in response_text for p in patterns)
-
-    @staticmethod
-    def _match_expected_responses(response_text: str, expected_responses: Optional[List[str]]) -> List[str]:
-        if not expected_responses:
-            return []
-        return [p for p in expected_responses if p in response_text]
-
-    @staticmethod
-    def _should_finish_response(
-        response_text: str,
-        expected_responses: Optional[List[str]],
-        completion_rules: dict,
-        terminal_patterns: List[str],
-        complete_patterns: List[str],
-        expected_required: bool,
-        terminal_seen_time: Optional[float],
-        now: float,
-        settle_after_terminal: float,
-    ) -> tuple[bool, str, Optional[float]]:
-        if not response_text:
-            return False, "waiting", terminal_seen_time
-
-        matched_expected = AutoComMCPServer._match_expected_responses(
-            response_text, expected_responses
-        )
-        if matched_expected:
-            return True, "expected-matched", terminal_seen_time
-
-        if AutoComMCPServer._match_patterns(response_text, complete_patterns):
-            return True, "custom-pattern-matched", terminal_seen_time
-
-        if AutoComMCPServer._match_patterns(response_text, terminal_patterns):
-            if expected_required:
-                return False, "terminal-seen-awaiting-expected", terminal_seen_time
-            if terminal_seen_time is None:
-                terminal_seen_time = now
-            if (now - terminal_seen_time) >= settle_after_terminal:
-                return True, "terminal-pattern-matched", terminal_seen_time
-
-        return False, "waiting", terminal_seen_time
-
-    @staticmethod
-    async def _load_dict(file_path: str, config_path: Optional[str] = None) -> dict:
-        import os
-        import json
-
-        path = file_path
-        if not os.path.isabs(path):
-            path = os.path.join(os.getcwd(), path)
-
-        if not os.path.exists(path):
-            return {"success": False, "error": f"文件不存在: {path}"}
+        path = Path(file_path)
+        if not path.exists():
+            return {"success": False, "error": f"File not found: {file_path}"}
 
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                text = f.read()
+            # 加载主配置
+            pipeline_data = load_commands_from_file(path)
 
-            dict_data = None
-            lower = path.lower()
-            if lower.endswith(".json"):
-                try:
-                    dict_data = json.loads(text)
-                except json.JSONDecodeError as e:
-                    return {"success": False, "error": f"JSON 格式错误: {e}"}
-            elif lower.endswith((".yaml", ".yml")):
-                try:
-                    import yaml
+            # 加载并合并额外配置文件
+            if config_path:
+                config_file = Path(config_path)
+                if config_file.exists():
+                    extra_config = load_commands_from_file(config_file)
+                    pipeline_data = merge_config(pipeline_data, extra_config)
 
-                    dict_data = yaml.safe_load(text)
-                except ImportError:
-                    return {"success": False, "error": "缺少 pyyaml 依赖: pip install pyyaml"}
-                except Exception as e:
-                    return {"success": False, "error": f"YAML 格式错误: {e}"}
-            else:
-                try:
-                    dict_data = json.loads(text)
-                except json.JSONDecodeError:
-                    try:
-                        import yaml
+            # 应用内联覆盖
+            if config_overrides:
+                pipeline_data = merge_config(pipeline_data, config_overrides)
 
-                        dict_data = yaml.safe_load(text)
-                    except ImportError:
-                        return {"success": False, "error": "文件不是有效 JSON，且未安装 pyyaml。请安装 pyyaml 或提供 JSON 文件。"}
-                    except Exception as e:
-                        return {"success": False, "error": f"YAML 格式错误: {e}"}
+            # 生成摘要
+            summary = {
+                "file_path": str(path.resolve()),
+                "config_merged": config_path is not None,
+                "steps_count": len(pipeline_data.get("Steps", [])),
+                "devices_count": len(pipeline_data.get("Devices", [])),
+                "constants_count": len(pipeline_data.get("Constants", {})),
+                "config_mode": pipeline_data.get("Config", {}).get("mode", "single"),
+                "description": pipeline_data.get("Config", {}).get("description", ""),
+            }
+
+            return {
+                "success": True,
+                "file_path": str(path.resolve()),
+                "config_merged": config_path is not None,
+                "summary": summary,
+                "data": pipeline_data,
+            }
         except Exception as e:
-            return {"success": False, "error": f"文件读取失败: {e}"}
-
-        config = None
-        if config_path:
-            config_p = config_path
-            if not os.path.isabs(config_p):
-                config_p = os.path.join(os.getcwd(), config_p)
-            if os.path.exists(config_p):
-                try:
-                    with open(config_p, "r", encoding="utf-8") as f:
-                        config_text = f.read()
-                    if config_p.lower().endswith(".json"):
-                        try:
-                            config = json.loads(config_text)
-                        except Exception:
-                            config = None
-                    else:
-                        try:
-                            import yaml
-
-                            config = yaml.safe_load(config_text)
-                        except Exception:
-                            config = None
-                except Exception:
-                    config = None
-
-        return {"success": True, "file_path": path, "config_merged": config is not None, "summary": AutoComMCPServer._summarize_dict(dict_data), "data": dict_data}
+            logger.log_error(f"Error loading pipeline: {e}")
+            return {"success": False, "file_path": file_path, "error": str(e)}
 
     @staticmethod
-    async def _validate_dict(file_path: str, config_path: Optional[str] = None) -> dict:
-        loaded = await AutoComMCPServer._load_dict(file_path=file_path, config_path=config_path)
-        if not loaded.get("success"):
-            return loaded
+    async def _validate_pipeline(
+        file_path: str,
+        config_path: Optional[str] = None,
+        config_overrides: Optional[dict] = None,
+    ) -> dict:
+        """校验 Steps 配置文件。"""
+        from AutoCom import load_commands_from_file, merge_config
 
-        dict_data = loaded.get("data") or {}
-        issues: List[dict] = []
-        warnings: List[dict] = []
+        path = Path(file_path)
+        if not path.exists():
+            return {"success": False, "error": f"File not found: {file_path}"}
 
-        if not isinstance(dict_data, dict):
-            issues.append({"path": "$", "message": "配置根节点必须是对象(dict)"})
-        else:
-            devices = dict_data.get("Devices") or dict_data.get("devices") or []
-            commands = dict_data.get("Commands") or dict_data.get("commands") or []
+        try:
+            pipeline_data = load_commands_from_file(path)
 
-            if not devices:
-                issues.append({"path": "Devices", "message": "Devices 不能为空"})
-            if not commands:
-                issues.append({"path": "Commands", "message": "Commands 不能为空"})
+            if config_path:
+                config_file = Path(config_path)
+                if config_file.exists():
+                    extra_config = load_commands_from_file(config_file)
+                    pipeline_data = merge_config(pipeline_data, extra_config)
 
-            enabled_names = set()
-            if isinstance(devices, list):
-                for idx, dev in enumerate(devices):
-                    if not isinstance(dev, dict):
-                        issues.append({"path": f"Devices[{idx}]", "message": "设备项必须是对象"})
-                        continue
-                    name = dev.get("name")
-                    if not name:
-                        issues.append({"path": f"Devices[{idx}].name", "message": "设备必须配置 name"})
-                    if dev.get("status", "enabled") != "disabled" and name:
-                        enabled_names.add(name)
+            if config_overrides:
+                pipeline_data = merge_config(pipeline_data, config_overrides)
 
-            if isinstance(commands, list):
-                for idx, cmd in enumerate(commands):
-                    if not isinstance(cmd, dict):
-                        issues.append({"path": f"Commands[{idx}]", "message": "命令项必须是对象"})
-                        continue
-                    dev_name = cmd.get("device")
-                    if not dev_name:
-                        issues.append({"path": f"Commands[{idx}].device", "message": "命令必须指定 device"})
-                    elif enabled_names and dev_name not in enabled_names:
-                        warnings.append({
-                            "path": f"Commands[{idx}].device",
-                            "message": f"命令引用的设备 '{dev_name}' 未在已启用 Devices 中找到",
-                        })
+            issues: List[dict] = []
+            warnings: List[dict] = []
 
-                    timeout = cmd.get("timeout")
-                    if timeout is not None:
-                        try:
-                            timeout_val = float(timeout)
-                            if timeout_val <= 0:
-                                issues.append({"path": f"Commands[{idx}].timeout", "message": "timeout 必须大于 0"})
-                        except Exception:
-                            issues.append({"path": f"Commands[{idx}].timeout", "message": "timeout 必须是数值"})
+            if not isinstance(pipeline_data, dict):
+                issues.append({"path": "$", "message": "Config root must be a dict"})
+            else:
+                devices = pipeline_data.get("Devices") or []
+                steps = pipeline_data.get("Steps") or []
 
-        return {
-            "success": len(issues) == 0,
-            "file_path": loaded.get("file_path"),
-            "summary": loaded.get("summary"),
-            "issue_count": len(issues),
-            "warning_count": len(warnings),
-            "issues": issues,
-            "warnings": warnings,
+                if not devices:
+                    issues.append({"path": "Devices", "message": "Devices must not be empty"})
+                if not steps:
+                    issues.append({"path": "Steps", "message": "Steps must not be empty"})
+
+                # 检查设备
+                enabled_names = set()
+                if isinstance(devices, list):
+                    for idx, dev in enumerate(devices):
+                        if not isinstance(dev, dict):
+                            issues.append({"path": f"Devices[{idx}]", "message": "Device entry must be an object"})
+                            continue
+                        name = dev.get("name")
+                        if not name:
+                            issues.append({"path": f"Devices[{idx}].name", "message": "Device must have a 'name' field"})
+                        if dev.get("status", "enabled") != "disabled" and name:
+                            enabled_names.add(name)
+
+                # 检查步骤
+                if isinstance(steps, list):
+                    for idx, step in enumerate(steps):
+                        if not isinstance(step, dict):
+                            issues.append({"path": f"Steps[{idx}]", "message": "Step entry must be an object"})
+                            continue
+
+                        step_id = step.get("id", f"steps[{idx}]")
+                        step_type = step.get("type")
+
+                        if not step_type:
+                            issues.append({"path": f"Steps[{idx}].type", "message": f"Step '{step_id}' missing 'type' field"})
+
+                        dev_name = step.get("device")
+                        if dev_name:
+                            if enabled_names and dev_name not in enabled_names:
+                                warnings.append({
+                                    "path": f"Steps[{idx}].device",
+                                    "message": f"Step '{step_id}' references unknown device '{dev_name}'",
+                                })
+
+                        timeout = step.get("timeout")
+                        if timeout is not None:
+                            try:
+                                tv = float(timeout)
+                                if tv <= 0:
+                                    issues.append({"path": f"Steps[{idx}].timeout", "message": "timeout must be > 0"})
+                            except Exception:
+                                issues.append({"path": f"Steps[{idx}].timeout", "message": "timeout must be numeric"})
+
+            return {
+                "success": len(issues) == 0,
+                "file_path": str(path.resolve()),
+                "issue_count": len(issues),
+                "warning_count": len(warnings),
+                "errors": issues,
+                "warnings": warnings,
+            }
+        except Exception as e:
+            logger.log_error(f"Error validating pipeline: {e}")
+            return {"success": False, "file_path": file_path, "error": str(e)}
+
+    @staticmethod
+    async def _run_pipeline(
+        file_path: str,
+        config_path: Optional[str] = None,
+        config_overrides: Optional[dict] = None,
+        loop_count: Optional[int] = None,
+        duration: Optional[str] = None,
+        infinite: bool = False,
+        stop_on_failure: Optional[bool] = None,
+        max_failures: Optional[int] = None,
+        interval_ms: Optional[int] = None,
+    ) -> dict:
+        """执行完整的 Steps 流水线。"""
+        from AutoCom import execute_with_loop, resolve_execution_config, load_commands_from_file, merge_config
+
+        path = Path(file_path)
+        if not path.exists():
+            return {"success": False, "error": f"File not found: {file_path}"}
+
+        try:
+            # 加载配置
+            dict_data = load_commands_from_file(str(path))
+
+            if config_path:
+                config_file = Path(config_path)
+                if config_file.exists():
+                    extra_config = load_commands_from_file(str(config_file))
+                    dict_data = merge_config(dict_data, extra_config)
+
+            if config_overrides:
+                dict_data = merge_config(dict_data, config_overrides)
+
+            # 解析执行配置（CLI 参数优先）
+            exec_cfg = resolve_execution_config(
+                dict_data,
+                cli_loop=loop_count,
+                cli_infinite=infinite,
+            )
+
+            # 应用额外覆盖
+            if stop_on_failure is not None:
+                exec_cfg.stop_on_failure = stop_on_failure
+            if max_failures is not None:
+                exec_cfg.max_failures = max_failures
+            if interval_ms is not None:
+                exec_cfg.interval_ms = interval_ms
+            if duration:
+                from AutoCom import parse_duration
+                exec_cfg.duration_seconds = parse_duration(duration)
+
+            # 执行
+            start_time = time.time()
+            execute_with_loop(str(path), config=dict_data)
+            elapsed = time.time() - start_time
+
+            return {
+                "success": True,
+                "file_path": str(path.resolve()),
+                "executed_iterations": exec_cfg.iterations,
+                "mode": exec_cfg.mode,
+                "elapsed_seconds": round(elapsed, 3),
+            }
+        except Exception as e:
+            logger.log_error(f"Error running pipeline: {e}")
+            return {"success": False, "file_path": file_path, "error": str(e)}
+
+    # ======================== 持久会话实现 ========================
+
+    async def _serial_session_open(
+        self,
+        port: str,
+        baud_rate: int = 115200,
+        data_bits: int = 8,
+        stop_bits: int = 1,
+        parity: str = "none",
+        timeout: float = 5.0,
+        flow_control: bool = False,
+        label: str = "",
+        monitor: bool = False,
+    ) -> dict:
+        """开启持久串口会话。"""
+        _parity_map = {
+            "none": serial.PARITY_NONE,
+            "even": serial.PARITY_EVEN,
+            "odd": serial.PARITY_ODD,
+            "mark": serial.PARITY_MARK,
+            "space": serial.PARITY_SPACE,
         }
+        _stopbits_map = {1: serial.STOPBITS_ONE, 1.5: serial.STOPBITS_ONE_POINT_FIVE, 2: serial.STOPBITS_TWO}
+        _bytesize_map = {5: serial.FIVEBITS, 6: serial.SIXBITS, 7: serial.SEVENBITS, 8: serial.EIGHTBITS}
 
-    @staticmethod
-    def _summarize_dict(dict_data: dict) -> dict:
-        devices = dict_data.get("devices", []) if isinstance(dict_data, dict) else []
-        commands = dict_data.get("commands", []) if isinstance(dict_data, dict) else []
-        constants = dict_data.get("constants", {}) if isinstance(dict_data, dict) else {}
-        config_for_device = dict_data.get("config_for_device", {}) if isinstance(dict_data, dict) else {}
-        config_for_commands = dict_data.get("config_for_commands", {}) if isinstance(dict_data, dict) else {}
-
-        return {
-            "device_count": len(devices),
-            "device_names": [d.get("name", d.get("port", "unknown")) for d in devices],
-            "command_count": len(commands),
-            "command_names": [c.get("name", c.get("command", f"cmd_{i}"))[:50] for i, c in enumerate(commands)],
-            "has_constants": len(constants) > 0,
-            "constant_keys": list(constants.keys()),
-            "has_config_for_device": len(config_for_device) > 0,
-            "has_config_for_commands": len(config_for_commands) > 0,
-        }
-
-    @staticmethod
-    async def _monitor_port(port: str, baud_rate: int = 115200, duration: float = 10.0) -> dict:
-
-        outputs = []
-        start_time = time.time()
-        ser = None
         try:
             ser = serial.Serial(
                 port=port,
                 baudrate=baud_rate,
-                bytesize=serial.EIGHTBITS,
-                parity=serial.PARITY_NONE,
-                stopbits=serial.STOPBITS_ONE,
-                timeout=0.5
+                bytesize=_bytesize_map.get(data_bits, serial.EIGHTBITS),
+                parity=_parity_map.get(parity.lower(), serial.PARITY_NONE),
+                stopbits=_stopbits_map.get(stop_bits, serial.STOPBITS_ONE),
+                timeout=timeout,
+                rtscts=flow_control,
             )
-            while time.time() - start_time < duration:
-                data = ser.read_all()
-                if data:
+        except Exception as e:
+            return {"success": False, "port": port, "error": str(e)}
+
+        session_id = uuid.uuid4().hex[:12]
+        now = time.time()
+        session_info = {
+            "serial": ser,
+            "port": port,
+            "baud_rate": baud_rate,
+            "label": label,
+            "created_at": now,
+            "last_activity": now,
+            "closing": False,
+            "bytes_sent": 0,
+            "bytes_received": 0,
+            "monitor": monitor,
+            "monitor_thread": None,
+            "monitor_buffer": deque(maxlen=5000),
+            "monitor_started": 0.0,
+            "monitor_bytes": 0,
+        }
+        with self._session_lock:
+            self._sessions[session_id] = session_info
+
+        if monitor:
+            session_info["monitor_started"] = time.time()
+            self._start_background_monitor(session_id, session_info)
+
+        return {
+            "success": True,
+            "session_id": session_id,
+            "port": port,
+            "baud_rate": baud_rate,
+            "label": label,
+            "monitor": monitor,
+        }
+
+    def _start_background_monitor(self, session_id: str, session: dict) -> None:
+        """为 session 启动后台串口读取守护线程（monitor 模式）。"""
+        def _read_loop():
+            ser = session["serial"]
+            while not session.get("closing"):
+                try:
+                    avail = ser.in_waiting
+                    if avail > 0:
+                        data = ser.read(avail)
+                        if data:
+                            session["monitor_buffer"].append(data)
+                            session["monitor_bytes"] += len(data)
+                            session["bytes_received"] += len(data)
+                            session["last_activity"] = time.time()
+                    else:
+                        time.sleep(0.01)
+                except Exception:
+                    if not session.get("closing"):
+                        time.sleep(0.05)
+
+        thread = threading.Thread(target=_read_loop, daemon=True, name=f"mon-{session_id}")
+        thread.start()
+        session["monitor_thread"] = thread
+
+    async def _serial_session_send(
+        self,
+        session_id: str,
+        command: str,
+        timeout: Optional[float] = None,
+        line_ending: str = "0d0a",
+        hex_mode: bool = False,
+        expected_responses: Optional[List[str]] = None,
+    ) -> dict:
+        """在持久会话中发送指令。"""
+        with self._session_lock:
+            session = self._sessions.get(session_id)
+        if not session:
+            return {"success": False, "error": f"Session not found: {session_id}"}
+        if session.get("closing"):
+            return {"success": False, "error": f"Session {session_id} is closing"}
+
+        ser: serial.Serial = session["serial"]
+        effective_timeout = timeout if timeout is not None else ser.timeout or 5.0
+
+        # 解析换行符
+        le_bytes = bytes.fromhex(line_ending.replace(" ", "")) if line_ending else b"\r\n"
+
+        # 指令编码
+        if hex_mode:
+            try:
+                cmd_bytes = bytes.fromhex(command.replace(" ", ""))
+            except ValueError as e:
+                return {"success": False, "error": f"Invalid hex command: {e}"}
+        else:
+            cmd_bytes = command.encode("utf-8")
+
+        send_bytes = cmd_bytes + le_bytes
+        start_time = time.time()
+
+        try:
+            ser.write(send_bytes)
+            ser.flush()
+            session["bytes_sent"] += len(send_bytes)
+        except Exception as e:
+            return {"success": False, "error": f"Write failed: {e}", "session_id": session_id}
+
+        # 读取响应
+        response = b""
+        expected = expected_responses or []
+
+        while time.time() - start_time < effective_timeout:
+            if session.get("closing"):
+                break
+            try:
+                avail = ser.in_waiting
+            except Exception:
+                avail = 0
+            if avail > 0:
+                try:
+                    chunk = ser.read(avail)
+                except Exception:
+                    break
+                response += chunk
+                session["bytes_received"] += len(chunk)
+                session["last_activity"] = time.time()
+
+                # 检查预期响应
+                text = response.decode("utf-8", errors="replace")
+                matched = [p for p in expected if p in text] if expected else []
+                if matched:
+                    return {
+                        "success": True,
+                        "session_id": session_id,
+                        "port": session["port"],
+                        "command": command,
+                        "response": text,
+                        "matched": matched,
+                        "elapsed_ms": int((time.time() - start_time) * 1000),
+                    }
+
+            await asyncio.sleep(0.02)
+
+        text = response.decode("utf-8", errors="replace")
+        elapsed = int((time.time() - start_time) * 1000)
+        return {
+            "success": len(response) > 0 or not expected_responses,
+            "session_id": session_id,
+            "port": session["port"],
+            "command": command,
+            "response": text,
+            "matched": [],
+            "elapsed_ms": elapsed,
+            "timeout": elapsed >= effective_timeout * 1000,
+        }
+
+    async def _serial_session_read(
+        self,
+        session_id: str,
+        timeout: Optional[float] = None,
+        max_bytes: Optional[int] = None,
+    ) -> dict:
+        """读取持久会话中积累的缓冲区数据。"""
+        with self._session_lock:
+            session = self._sessions.get(session_id)
+        if not session:
+            return {"success": False, "error": f"Session not found: {session_id}"}
+        if session.get("closing"):
+            return {"success": False, "error": f"Session {session_id} is closing"}
+
+        # monitor 模式：直接读取缓冲区
+        if session.get("monitor"):
+            response = b""
+            with self._session_lock:
+                while session["monitor_buffer"]:
+                    chunk = session["monitor_buffer"].popleft()
+                    response += chunk
+                    if max_bytes and len(response) >= max_bytes:
+                        response = response[:max_bytes]
+                        break
+            text = response.decode("utf-8", errors="replace")
+            return {
+                "success": True,
+                "session_id": session_id,
+                "port": session["port"],
+                "data_text": text,
+                "data_hex": response.hex(" "),
+                "bytes": len(response),
+                "elapsed_ms": 0,
+                "from_buffer": True,
+            }
+
+        # 非 monitor 模式：直接读取串口
+        ser: serial.Serial = session["serial"]
+        effective_timeout = timeout if timeout is not None else 0.5
+        start_time = time.time()
+        response = b""
+
+        while time.time() - start_time < effective_timeout:
+            if session.get("closing"):
+                break
+            try:
+                avail = ser.in_waiting
+            except Exception:
+                avail = 0
+            if avail > 0:
+                try:
+                    chunk = ser.read(avail)
+                except Exception:
+                    break
+                response += chunk
+                session["bytes_received"] += len(chunk)
+                session["last_activity"] = time.time()
+                if max_bytes and len(response) >= max_bytes:
+                    response = response[:max_bytes]
+                    break
+            else:
+                if response:
+                    break
+            await asyncio.sleep(0.02)
+
+        text = response.decode("utf-8", errors="replace")
+        return {
+            "success": True,
+            "session_id": session_id,
+            "port": session["port"],
+            "data_text": text,
+            "data_hex": response.hex(" "),
+            "bytes": len(response),
+            "elapsed_ms": int((time.time() - start_time) * 1000),
+        }
+
+    async def _serial_session_close(self, session_id: str) -> dict:
+        """关闭持久会话。"""
+        # 先标记 closing，阻止 send/read 访问
+        with self._session_lock:
+            session = self._sessions.get(session_id)
+            if session:
+                session["closing"] = True
+
+        if not session:
+            return {"success": False, "error": f"Session not found: {session_id}"}
+
+        # mark closing to block send/read, then wait for monitor thread
+        monitor_thread = session.get("monitor_thread")
+        if monitor_thread and monitor_thread.is_alive():
+            monitor_thread.join(timeout=2)
+
+        # 从字典中移除
+        with self._session_lock:
+            self._sessions.pop(session_id, None)
+
+        ser: serial.Serial = session["serial"]
+        try:
+            ser.close()
+        except Exception as e:
+            return {"success": False, "session_id": session_id, "error": str(e)}
+
+        return {
+            "success": True,
+            "session_id": session_id,
+            "port": session["port"],
+            "duration_seconds": round(time.time() - session["created_at"], 1),
+            "bytes_sent": session["bytes_sent"],
+            "bytes_received": session["bytes_received"],
+        }
+
+    async def _serial_session_list(self) -> dict:
+        """列出所有活跃的持久会话。"""
+        sessions = []
+        with self._session_lock:
+            for sid, session in self._sessions.items():
+                entry = {
+                    "session_id": sid,
+                    "port": session["port"],
+                    "baud_rate": session["baud_rate"],
+                    "label": session.get("label", ""),
+                    "created_at": round(session["created_at"], 1),
+                    "idle_seconds": round(time.time() - session["last_activity"], 1),
+                    "bytes_sent": session["bytes_sent"],
+                    "bytes_received": session["bytes_received"],
+                }
+                if session.get("monitor"):
+                    entry["monitor"] = True
+                    entry["monitor_bytes"] = session["monitor_bytes"]
+                    entry["monitor_duration_seconds"] = round(
+                        time.time() - session["monitor_started"], 1
+                    )
+                sessions.append(entry)
+        return {
+            "success": True,
+            "total": len(sessions),
+            "sessions": sessions,
+        }
+
+    def _session_cleanup_worker(self) -> None:
+        """后台守护线程：定期清理超时空闲会话。"""
+        while True:
+            time.sleep(self._session_cleanup_interval)
+            now = time.time()
+            stale_ids = []
+            with self._session_lock:
+                for sid, session in list(self._sessions.items()):
+                    if session.get("closing"):
+                        # 已在关闭中的会话，由 close() 负责移除
+                        continue
+                    idle = now - session.get("last_activity", session["created_at"])
+                    if idle > self._session_idle_timeout:
+                        stale_ids.append(sid)
+                        session["closing"] = True
+            for sid in stale_ids:
+                with self._session_lock:
+                    session = self._sessions.pop(sid, None)
+                if session:
                     try:
-                        text = data.decode("utf-8", errors="replace")
+                        session["serial"].close()
+                        logger.log_info(
+                            f"Session {sid} ({session['port']}) auto-closed after "
+                            f"{self._session_idle_timeout:.0f}s idle"
+                        )
                     except Exception:
-                        text = data.hex(" ")
-                    outputs.append({"timestamp": round((time.time() - start_time) * 1000, 1), "data": text})
-                await asyncio.sleep(0.05)
+                        pass
+
+    def _close_all_sessions(self) -> None:
+        """关闭所有活跃会话（用于退出清理）。"""
+        ids = []
+        with self._session_lock:
+            ids = list(self._sessions.keys())
+            for sid in ids:
+                if sid in self._sessions:
+                    self._sessions[sid]["closing"] = True
+        for sid in ids:
+            with self._session_lock:
+                session = self._sessions.pop(sid, None)
+            if session:
+                try:
+                    session["serial"].close()
+                except Exception:
+                    pass
+
+    # ======================== 硬件调试实现 ========================
+
+    @staticmethod
+    async def _serial_pin_status(port: str, baud_rate: int = 115200) -> dict:
+        """读取串口信号线状态。"""
+        ser = None
+        try:
+            ser = serial.Serial(port=port, baudrate=baud_rate, timeout=0.5)
             return {
                 "success": True,
                 "port": port,
-                "duration_seconds": duration,
-                "total_chunks": len(outputs),
-                "output": "".join(o["data"] for o in outputs),
-                "chunks": outputs,
+                "pins": {
+                    "cts": ser.cts,
+                    "dsr": ser.dsr,
+                    "dcd": ser.cd,
+                    "ri": ser.ri,
+                },
+                "descriptions": {
+                    "cts": "Clear To Send — 对方可以接收",
+                    "dsr": "Data Set Ready — 设备就绪",
+                    "dcd": "Data Carrier Detect — 载波检测",
+                    "ri": "Ring Indicator — 振铃指示",
+                },
             }
-        except serial.SerialException as e:
-            return {"success": False, "port": port, "error": f"串口错误: {e}"}
+        except Exception as e:
+            return {"success": False, "port": port, "error": str(e)}
+        finally:
+            if ser is not None:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
+
+    @staticmethod
+    async def _serial_pin_set(
+        port: str,
+        dtr: Optional[bool] = None,
+        rts: Optional[bool] = None,
+        baud_rate: int = 115200,
+    ) -> dict:
+        """设置串口 DTR/RTS 信号电平。"""
+        ser = None
+        try:
+            ser = serial.Serial(port=port, baudrate=baud_rate, timeout=0.5)
+            changes = {}
+            if dtr is not None:
+                ser.dtr = dtr
+                changes["dtr"] = dtr
+            if rts is not None:
+                ser.rts = rts
+                changes["rts"] = rts
+            return {
+                "success": True,
+                "port": port,
+                "changes": changes,
+            }
+        except Exception as e:
+            return {"success": False, "port": port, "error": str(e)}
+        finally:
+            if ser is not None:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
+
+    @staticmethod
+    async def _serial_loopback_test(
+        port: str,
+        baud_rate: int = 115200,
+        mode: str = "hardware",
+        test_data: Optional[str] = None,
+        probe_command: str = "AT",
+        probe_expected: str = "OK",
+        timeout: float = 3.0,
+    ) -> dict:
+        """串口回环测试。"""
+        ser = None
+        try:
+            ser = serial.Serial(
+                port=port, baudrate=baud_rate,
+                timeout=timeout, write_timeout=timeout,
+            )
+
+            if mode == "hardware":
+                payload = test_data or "AutoCom_Loopback_Test_0123456789"
+                send_bytes = payload.encode("utf-8")
+                start = time.perf_counter()
+                ser.write(send_bytes)
+                ser.flush()
+
+                received = b""
+                deadline = time.time() + timeout
+                while time.time() < deadline:
+                    try:
+                        chunk = ser.read(ser.in_waiting or 1)
+                    except Exception:
+                        break
+                    if chunk:
+                        received += chunk
+                        if len(received) >= len(send_bytes):
+                            break
+
+                elapsed_ms = (time.perf_counter() - start) * 1000
+                match = received == send_bytes
+                match_ratio = (
+                    sum(1 for a, b in zip(received, send_bytes) if a == b) / len(send_bytes)
+                    if send_bytes else 0
+                ) if not match else 1.0
+
+                return {
+                    "success": match,
+                    "port": port,
+                    "mode": "hardware",
+                    "test_data_hex": send_bytes.hex(" "),
+                    "received_hex": received.hex(" "),
+                    "received_text": received.decode("utf-8", errors="replace"),
+                    "match": match,
+                    "match_ratio": round(match_ratio, 4),
+                    "sent_bytes": len(send_bytes),
+                    "received_bytes": len(received),
+                    "elapsed_ms": round(elapsed_ms, 2),
+                }
+
+            elif mode == "echo":
+                cmd_bytes = probe_command.encode("utf-8") + b"\r\n"
+                start = time.perf_counter()
+                ser.write(cmd_bytes)
+                ser.flush()
+
+                received = b""
+                deadline = time.time() + timeout
+                while time.time() < deadline:
+                    try:
+                        chunk = ser.read(ser.in_waiting or 1)
+                    except Exception:
+                        break
+                    if chunk:
+                        received += chunk
+
+                elapsed_ms = (time.perf_counter() - start) * 1000
+                text = received.decode("utf-8", errors="replace")
+                found = probe_expected in text
+
+                return {
+                    "success": found,
+                    "port": port,
+                    "mode": "echo",
+                    "command": probe_command,
+                    "expected": probe_expected,
+                    "response": text,
+                    "matched": found,
+                    "elapsed_ms": round(elapsed_ms, 2),
+                }
+            else:
+                return {"success": False, "error": f"Unknown mode: {mode}, options: hardware, echo"}
+
+        except Exception as e:
+            return {"success": False, "port": port, "error": str(e)}
+        finally:
+            if ser is not None:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
+
+    @staticmethod
+    async def _serial_latency_bench(
+        port: str,
+        baud_rate: int = 115200,
+        rounds: int = 10,
+        test_data: str = "AT",
+        timeout: float = 5.0,
+    ) -> dict:
+        """串口收发延迟基准测试。"""
+        ser = None
+        try:
+            ser = serial.Serial(
+                port=port, baudrate=baud_rate,
+                timeout=timeout, write_timeout=timeout,
+            )
+
+            send_bytes = test_data.encode("utf-8") + b"\r\n"
+            tx_latencies = []
+            rtt_latencies = []
+            first_byte_latencies = []
+            errors = 0
+
+            for i in range(rounds):
+                # TX 延迟：write() 返回耗时
+                t0 = time.perf_counter()
+                ser.write(send_bytes)
+                ser.flush()
+                tx_done = time.perf_counter()
+                tx_lat = (tx_done - t0) * 1000
+
+                # 等待并读取响应
+                received = b""
+                first_byte_time = None
+                deadline = time.time() + timeout
+
+                while time.time() < deadline:
+                    try:
+                        chunk = ser.read(ser.in_waiting or 1)
+                    except Exception:
+                        break
+                    if chunk:
+                        if first_byte_time is None:
+                            first_byte_time = time.perf_counter()
+                            fbl = (first_byte_time - t0) * 1000
+                            first_byte_latencies.append(fbl)
+                        received += chunk
+                    else:
+                        if received:
+                            break
+
+                rx_done = time.perf_counter()
+                rtt = (rx_done - t0) * 1000
+
+                if received:
+                    tx_latencies.append(tx_lat)
+                    rtt_latencies.append(rtt)
+                else:
+                    errors += 1
+
+                # 间隔 50ms 避免数据残留
+                if i < rounds - 1:
+                    await asyncio.sleep(0.05)
+
+            result = {
+                "success": errors < rounds,
+                "port": port,
+                "baud_rate": baud_rate,
+                "test_data": test_data,
+                "rounds": rounds,
+                "errors": errors,
+            }
+
+            if tx_latencies:
+                result["tx_latency_ms"] = {
+                    "min": round(min(tx_latencies), 3),
+                    "max": round(max(tx_latencies), 3),
+                    "avg": round(sum(tx_latencies) / len(tx_latencies), 3),
+                }
+            if first_byte_latencies:
+                result["first_byte_latency_ms"] = {
+                    "min": round(min(first_byte_latencies), 3),
+                    "max": round(max(first_byte_latencies), 3),
+                    "avg": round(sum(first_byte_latencies) / len(first_byte_latencies), 3),
+                }
+            if rtt_latencies:
+                result["rtt_ms"] = {
+                    "min": round(min(rtt_latencies), 3),
+                    "max": round(max(rtt_latencies), 3),
+                    "avg": round(sum(rtt_latencies) / len(rtt_latencies), 3),
+                    "median": round(sorted(rtt_latencies)[len(rtt_latencies) // 2], 3),
+                }
+            if errors > 0:
+                result["note"] = f"{errors}/{rounds} rounds got no response — device may not be connected or may not reply"
+
+            return result
+
         except Exception as e:
             return {"success": False, "port": port, "error": str(e)}
         finally:
@@ -814,10 +1680,8 @@ def _create_auth_middleware(auth_key: str):
             self.auth_key = auth_key
 
         async def dispatch(self, request, call_next):
-            # 放行 OPTIONS 预检请求
             if request.method == "OPTIONS":
                 return await call_next(request)
-            # 放行健康检查路径
             if request.url.path in ("/health", "/"):
                 return await call_next(request)
 
@@ -830,7 +1694,7 @@ def _create_auth_middleware(auth_key: str):
             elif api_key_header:
                 token = api_key_header
 
-            if token != self.auth_key:
+            if token != auth_key:
                 return JSONResponse({"error": "Unauthorized"}, status_code=401)
             return await call_next(request)
 
@@ -841,8 +1705,9 @@ def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="AutoCom MCP Server (FastMCP)")
-    parser.add_argument("--sse", action="store_true", help="以 SSE (HTTP) 模式运行")
-    parser.add_argument("--streamable", action="store_true", help="以 Streamable HTTP 模式运行（长连接/双向通道）")
+    transport_group = parser.add_mutually_exclusive_group()
+    transport_group.add_argument("--sse", action="store_true", help="以 SSE (HTTP) 模式运行")
+    transport_group.add_argument("--streamable", action="store_true", help="以 Streamable HTTP 模式运行（长连接/双向通道）")
     parser.add_argument("--auth-key", type=str, default=None, help="为 HTTP 模式启用简单 API Key 鉴权")
     parser.add_argument("--port", type=int, default=8888, help="HTTP 模式监听端口（默认 8888）")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="HTTP 模式监听地址（默认 0.0.0.0）")
@@ -855,10 +1720,6 @@ def main() -> None:
     server = AutoComMCPServer(auth_key=args.auth_key)
 
     def _run_mcp_callable(obj, name: str, /, *a, **kw):
-        """检查 obj 是否有可调用的 name 属性并运行它（如果返回协程则使用 asyncio.run）。
-
-        如果不可用，会打印可用属性帮助排查版本兼容性问题并退出。
-        """
         fn = getattr(obj, name, None)
         if fn is None or not callable(fn):
             available = [n for n in dir(obj) if not n.startswith("_")]
@@ -881,32 +1742,14 @@ def main() -> None:
             logger.log_error(f"Error while running FastMCP.{name}: {e}")
             raise
 
-
-    def _safe_log_info(message: str) -> None:
-        """尝试使用 logger 输出信息，若底层流已关闭则回退到 stderr，避免抛出异常。"""
-        try:
-            logger.log_info(message)
-        except Exception:
-            try:
-                print(message, file=sys.stderr)
-            except Exception:
-                pass
-
-
     def _safe_stderr_message(message: str) -> None:
-        """仅写 stderr，避免 stdio 关闭后 logging handler 再次抛错。"""
         try:
             sys.stderr.write(message + "\n")
             sys.stderr.flush()
         except Exception:
             pass
 
-
     def _invoke_stdio_method(mcp_obj, auth_key=None):
-        """尝试多个可能的 stdio 运行方法名以兼容不同版本的 fastmcp。
-
-        会按候选列表依次尝试，若方法接受 `auth_key` 参数则传入。
-        """
         candidates = [
             "run_stdio_async",
             "run_stdio",
@@ -942,7 +1785,7 @@ def main() -> None:
                 if asyncio.iscoroutine(res):
                     return _run_coroutine_with_graceful_shutdown(
                         res,
-                        on_interrupt=lambda: _safe_stderr_message("MCP Server 收到中断信号，正在退出..."),
+                        on_interrupt=lambda: _safe_stderr_message("MCP Server received interrupt signal, shutting down..."),
                     )
                 return res
             except TypeError as e:
@@ -956,57 +1799,86 @@ def main() -> None:
 
         available = [n for n in dir(mcp_obj) if not n.startswith("_")]
         msg = (
-            f"No compatible stdio method found among {candidates}.",
-            f"Available attributes: {available}",
+            f"No compatible stdio method found among {candidates}.\n"
+            f"Available attributes: {available}"
         )
-        msg_text = " ".join(map(str, msg))
-        print(msg_text)
-        logger.log_error(msg_text)
+        print(msg)
+        logger.log_error(msg)
         raise SystemExit(1)
 
-    # 确定运行模式
-    if args.sse:
-        transport = "sse"
-        path = "/mcp/sse"
-    elif args.streamable:
-        transport = "streamable-http"
-        path = "/mcp/stream"
-    else:
-        # stdio 模式
-        try:
-            _invoke_stdio_method(server.mcp, auth_key=args.auth_key)
-        except (KeyboardInterrupt, asyncio.CancelledError):
-            _safe_stderr_message("MCP Server 收到中断信号，正在退出...")
-        return
+    # HTTP 备选方法名列表
+    _HTTP_METHOD_CANDIDATES = {
+        "sse": ["run_sse_async", "run_http_async"],
+        "streamable-http": ["run_streamable_async", "run_http_async"],
+    }
 
-    # 构建中间件列表
-    middleware = [
-        Middleware(
-            CORSMiddleware,
-            allow_origins=["*"],
-            allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-            allow_headers=["*"],
-            max_age=3600,
-        )
-    ]
-    if args.auth_key:
-        AuthMiddlewareClass = _create_auth_middleware(args.auth_key)
-        middleware.append(Middleware(AuthMiddlewareClass))
-
-    # 启动 HTTP 服务器
-    logger.log_info(f"启动 {transport} 服务器: http://{args.host}:{args.port}{path}")
     try:
+        if args.sse:
+            transport = "sse"
+            path = "/mcp/sse"
+            http_candidates = _HTTP_METHOD_CANDIDATES["sse"]
+        elif args.streamable:
+            transport = "streamable-http"
+            path = "/mcp/stream"
+            http_candidates = _HTTP_METHOD_CANDIDATES["streamable-http"]
+        else:
+            # stdio 模式
+            try:
+                _invoke_stdio_method(server.mcp, auth_key=args.auth_key)
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                _safe_stderr_message("MCP Server received interrupt signal, shutting down...")
+            finally:
+                server._close_all_sessions()
+            return
+
+        middleware = [
+            Middleware(
+                CORSMiddleware,
+                allow_origins=["*"],
+                allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+                allow_headers=["*"],
+                max_age=3600,
+            )
+        ]
+        if args.auth_key:
+            AuthMiddlewareClass = _create_auth_middleware(args.auth_key)
+            middleware.append(Middleware(AuthMiddlewareClass))
+
+        # 按优先级尝试 HTTP 运行方法
+        http_method_name = None
+        for candidate in http_candidates:
+            if hasattr(server.mcp, candidate):
+                http_method_name = candidate
+                break
+
+        if http_method_name is None:
+            available = [n for n in dir(server.mcp) if not n.startswith("_")]
+            msg = (
+                f"No compatible HTTP method found for '{transport}' mode.\n"
+                f"Searched: {http_candidates}\n"
+                f"Available attributes: {available}"
+            )
+            print(msg)
+            logger.log_error(msg)
+            raise SystemExit(1)
+
+        reachable = _get_reachable_host(args.host)
+        logger.log_info(f"Starting {transport} server: http://{reachable}:{args.port}{path}")
+        if args.host == "0.0.0.0":
+            logger.log_info(f"LAN: http://{reachable}:{args.port}{path}  |  Local: http://127.0.0.1:{args.port}{path}")
+        logger.log_info(f"Audit log directory: {server.audit_log_path}")
         _run_mcp_callable(
             server.mcp,
-            "run_http_async",
-            transport=transport,
+            http_method_name,
             host=args.host,
             port=args.port,
             path=path,
             middleware=middleware,
         )
     except (KeyboardInterrupt, asyncio.CancelledError):
-        _safe_log_info("MCP Server 收到中断信号，正在退出...")
+        _safe_stderr_message("MCP Server received interrupt signal, shutting down...")
+    finally:
+        server._close_all_sessions()
 
 
 if __name__ == "__main__":
