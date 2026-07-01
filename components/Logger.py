@@ -689,9 +689,9 @@ class AutoComLogger:
     def log_iteration_end(self, iteration: int, total: int, **kwargs) -> None:
         """Log iteration end summary"""
         if kwargs.get("result", False):
-            text = f"ℹ Finished iteration {iteration}/{total} - PASS"
+            text = f"ℹ Finished iteration {iteration}/{total} - PASS ✅"
         else:
-            text = f"ℹ Finished iteration {iteration}/{total}"
+            text = f"ℹ Finished iteration {iteration}/{total} - FAIL ❌"
 
         if self.cli_output_mode in ("table"):
             self.log_realtime_table_banner(text)

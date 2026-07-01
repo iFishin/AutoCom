@@ -665,62 +665,159 @@ class ActionHandler:
             "wifi_connect": {
                 "ssid": "SSID",
                 "password": "password",
-                "timeout": 10  # 可选参数，连接超时时间(秒)
+                "timeout": 10,          # 可选参数，每次尝试超时时间(秒)
+                "retry": 3,             # 可选参数，重试次数（含首次）
+                "retry_interval": 1.0,  # 可选参数，重试间隔(秒)
+                "iface_name": "Wi-Fi"  # 可选参数，指定网卡名
             }
         }
         """
-        import time
         import pywifi
         from pywifi import const
 
         ssid = self.handle_variables_from_str(config["ssid"])
-        password = self.handle_variables_from_str(config["password"])
-        timeout = int(config.get("timeout", 10))  # 默认10秒超时
+        password = self.handle_variables_from_str(config.get("password", ""))
+        timeout = max(1.0, float(config.get("timeout", 10)))
+        retry = max(1, int(config.get("retry", 3)))
+        retry_interval = max(0.0, float(config.get("retry_interval", 1.0)))
+        poll_interval = max(0.2, float(config.get("poll_interval", 0.5)))
+        disconnect_wait = max(0.2, float(config.get("disconnect_wait", 1.0)))
+        iface_name = self.handle_variables_from_str(config.get("iface_name", ""))
+        iface_index = int(config.get("iface_index", 0))
+        clear_profiles = bool(config.get("clear_profiles", True))
 
-        logger.log_step_info(f"Connecting to WiFi network: {ssid}")
+        if not ssid:
+            msg = "wifi_connect failed: ssid is empty"
+            context["_last_action_error"] = msg
+            logger.log_step_error(msg)
+            return False
+
+        def _status_text(status_code):
+            status_map = {
+                const.IFACE_DISCONNECTED: "DISCONNECTED",
+                const.IFACE_SCANNING: "SCANNING",
+                const.IFACE_INACTIVE: "INACTIVE",
+                const.IFACE_CONNECTING: "CONNECTING",
+                const.IFACE_CONNECTED: "CONNECTED",
+            }
+            return status_map.get(status_code, f"UNKNOWN({status_code})")
+
+        logger.log_step_info(
+            f"Connecting to WiFi network: {ssid} (timeout={timeout}s, retry={retry})"
+        )
 
         try:
-            # Initialize WiFi
             wifi = pywifi.PyWiFi()
+            interfaces = wifi.interfaces()
+            if not interfaces:
+                msg = "No wireless interface found"
+                context["_last_action_error"] = msg
+                logger.log_step_error(msg)
+                return False
 
-            # Get the first wireless interface
-            iface = wifi.interfaces()[0]
+            iface = None
+            if iface_name:
+                for cand in interfaces:
+                    try:
+                        if cand.name() == iface_name:
+                            iface = cand
+                            break
+                    except Exception:
+                        continue
+                if iface is None:
+                    msg = (
+                        f"WiFi interface '{iface_name}' not found, available: "
+                        + ", ".join(
+                            [
+                                i.name() if hasattr(i, "name") else "<unknown>"
+                                for i in interfaces
+                            ]
+                        )
+                    )
+                    context["_last_action_error"] = msg
+                    logger.log_step_error(msg)
+                    return False
+            else:
+                if iface_index < 0 or iface_index >= len(interfaces):
+                    msg = (
+                        f"Invalid iface_index={iface_index}, available range: "
+                        f"0..{len(interfaces) - 1}"
+                    )
+                    context["_last_action_error"] = msg
+                    logger.log_step_error(msg)
+                    return False
+                iface = interfaces[iface_index]
 
-            # Disconnect current connection
-            iface.disconnect()
-            time.sleep(1)
-
-            # Create WiFi connection profile
+            # Build WiFi profile once and reuse for each retry.
             profile = pywifi.Profile()
             profile.ssid = ssid
             profile.auth = const.AUTH_ALG_OPEN
-            profile.akm.append(const.AKM_TYPE_WPA2PSK)
-            profile.cipher = const.CIPHER_TYPE_CCMP
-            profile.key = password
 
-            # Remove all WiFi profiles
-            iface.remove_all_network_profiles()
+            if password:
+                profile.akm.append(const.AKM_TYPE_WPA2PSK)
+                profile.cipher = const.CIPHER_TYPE_CCMP
+                profile.key = password
+            else:
+                # Open network support.
+                profile.akm.append(const.AKM_TYPE_NONE)
+                profile.cipher = getattr(
+                    const, "CIPHER_TYPE_NONE", const.CIPHER_TYPE_CCMP
+                )
+                profile.key = None
 
-            # Add new profile
-            profile_added = iface.add_network_profile(profile)
+            last_error = None
+            last_status = None
 
-            # Connect to WiFi
-            logger.log_step_info("Attempting to connect...")
-            iface.connect(profile_added)
+            for attempt in range(1, retry + 1):
+                try:
+                    logger.log_step_info(f"WiFi connect attempt {attempt}/{retry}")
 
-            # Wait for connection success or timeout
-            start_time = time.time()
-            while time.time() - start_time < timeout:
-                status = iface.status()
-                if status == const.IFACE_CONNECTED:
-                    logger.log_step_info(
-                        f"Successfully connected to WiFi network: {ssid}"
+                    iface.disconnect()
+                    time.sleep(disconnect_wait)
+
+                    if clear_profiles:
+                        iface.remove_all_network_profiles()
+
+                    profile_added = iface.add_network_profile(profile)
+                    logger.log_step_info("Attempting to connect...")
+                    iface.connect(profile_added)
+
+                    start_time = time.time()
+                    current_status = None
+                    while time.time() - start_time < timeout:
+                        current_status = iface.status()
+                        if current_status != last_status:
+                            logger.log_step_info(
+                                f"WiFi status: {_status_text(current_status)}"
+                            )
+                            last_status = current_status
+
+                        if current_status == const.IFACE_CONNECTED:
+                            logger.log_step_info(
+                                f"Successfully connected to WiFi network: {ssid}"
+                            )
+                            return True
+                        time.sleep(poll_interval)
+
+                    logger.log_warning(
+                        f"WiFi connect attempt {attempt}/{retry} timed out after {timeout}s"
                     )
-                    return True
-                time.sleep(0.5)
+                    iface.disconnect()
 
-            # Timeout without connection
-            msg = "Connection to WiFi timed out, please check if the SSID and password are correct"
+                except Exception as attempt_error:
+                    last_error = str(attempt_error)
+                    logger.log_warning(
+                        f"WiFi connect attempt {attempt}/{retry} failed: {attempt_error}"
+                    )
+
+                if attempt < retry:
+                    time.sleep(retry_interval)
+
+            msg = (
+                "Connection to WiFi failed after "
+                f"{retry} attempt(s), last_status={_status_text(last_status)}, "
+                f"last_error={last_error or 'none'}"
+            )
             context["_last_action_error"] = msg
             logger.log_step_error(msg)
             return False
@@ -767,7 +864,7 @@ class ActionHandler:
 
     def handle_get_wifi_config_once(self, config, command, response, context):
         """
-        单次发送 WiFi 配置到指定设备 IP (通过 GET 请求)
+        发送 WiFi 配置到指定设备 IP (通过 GET 请求)，支持重复发送。
 
         用法:
         {
@@ -775,16 +872,24 @@ class ActionHandler:
                 "device_ip": "192.168.88.1",
                 "ssid": "MyWiFi",
                 "password": "MyPassword",
-                "timeout": 5
+                "timeout": 5,
+                "repeat": 3,           # 可选，发送次数，默认 1
+                "repeat_interval": 0.5  # 可选，每次发送间隔(秒)，默认 0.5
             }
         }
         """
         import requests
+        import time
 
         device_ip = self.handle_variables_from_str(config["device_ip"])
         ssid = self.handle_variables_from_str(config["ssid"])
         password = self.handle_variables_from_str(config["password"])
         timeout = float(self.handle_variables_from_str(config.get("timeout", 5)))
+        repeat = max(1, int(self.handle_variables_from_str(config.get("repeat", 1))))
+        repeat_interval = max(
+            0.0,
+            float(self.handle_variables_from_str(config.get("repeat_interval", 0.5))),
+        )
 
         config_url = f"http://{device_ip}/connect"
         config_headers = {"Connection": "close"}
@@ -793,24 +898,32 @@ class ActionHandler:
             requests.Request("GET", config_url, params=config_params).prepare().url
         )
 
-        logger.log_step_info(f"Sending WiFi configuration once to device {device_ip}")
-        logger.log_step_info(f"  Target URL: {target_url}")
-
-        try:
-            http_response = requests.get(
-                config_url,
-                params=config_params,
-                headers=config_headers,
-                timeout=timeout,
-            )
-            http_response.close()
-        except requests.exceptions.RequestException as e:
+        for attempt in range(1, repeat + 1):
             logger.log_step_info(
-                f"WiFi configuration GET request was sent, but the device closed the connection without response: {e}"
+                f"Sending WiFi configuration to {device_ip} (attempt {attempt}/{repeat})"
             )
-            return True
+            if attempt == 1:
+                logger.log_step_info(f"  Target URL: {target_url}")
 
-        logger.log_step_info("WiFi configuration GET request sent once.")
+            try:
+                http_response = requests.get(
+                    config_url,
+                    params=config_params,
+                    headers=config_headers,
+                    timeout=timeout,
+                )
+                http_response.close()
+            except requests.exceptions.RequestException as e:
+                logger.log_step_info(
+                    f"  Device closed connection without response (attempt {attempt}/{repeat}): {e}"
+                )
+
+            if attempt < repeat:
+                time.sleep(repeat_interval)
+
+        logger.log_step_info(
+            f"WiFi configuration GET request sent {repeat} time(s) to device {device_ip}."
+        )
         return True
 
     def handle_post_wifi_config(self, config, command, response, context):
@@ -853,7 +966,7 @@ class ActionHandler:
                 )
                 logger.log_step_info(f"WiFi configuration request sent successfully!")
             except Exception as e:
-                logger.log_step_info(f"Request encountered an error.")
+                logger.log_step_info(f"Request encountered an error: {e}")
                 logger.log_step_info(f"Proceeding to wait and retry...")
 
         except Exception as e:
@@ -864,7 +977,10 @@ class ActionHandler:
 
     def handle_post_wifi_config_once(self, config, command, response, context):
         """
-        单次发送 WiFi 配置到指定设备 IP (通过 POST 请求)
+        发送 WiFi 配置到指定设备 IP (通过 POST 请求)，支持重复发送。
+
+        由于服务端不返回 HTTP 响应，无法确认送达，故提供 repeat 参数
+        进行多次发送以提升成功率。
 
         用法:
         {
@@ -872,16 +988,21 @@ class ActionHandler:
                 "device_ip": "192.168.1.1",
                 "ssid": "MyWiFi",
                 "password": "MyPassword",
-                "timeout": 5
+                "timeout": 5,
+                "repeat": 3,           # 可选，发送次数，默认 1
+                "repeat_interval": 0.5  # 可选，每次发送间隔(秒)，默认 0.5
             }
         }
         """
         import requests
+        import time
 
         device_ip = self.handle_variables_from_str(config["device_ip"])
         ssid = self.handle_variables_from_str(config["ssid"])
         password = self.handle_variables_from_str(config["password"])
         timeout = float(self.handle_variables_from_str(config.get("timeout", 5)))
+        repeat = int(config.get("repeat", 1))
+        repeat_interval = float(config.get("repeat_interval", 0.5))
 
         config_url = f"http://{device_ip}/index.html"
         config_headers = {
@@ -890,24 +1011,32 @@ class ActionHandler:
         }
         config_data = {"ssid": ssid, "pwd": password}
 
-        logger.log_step_info(f"Sending WiFi configuration once to device {device_ip}")
-        logger.log_step_info(f"  Target URL: {config_url}")
-
-        try:
-            http_response = requests.post(
-                url=config_url,
-                headers=config_headers,
-                data=config_data,
-                timeout=timeout,
-            )
-            http_response.close()
-        except requests.exceptions.RequestException as e:
+        for attempt in range(1, repeat + 1):
             logger.log_step_info(
-                f"WiFi configuration POST request was sent, but the device closed the connection without response: {e}"
+                f"Sending WiFi configuration to {device_ip} (attempt {attempt}/{repeat})"
             )
-            return True
+            if attempt == 1:
+                logger.log_step_info(f"  Target URL: {config_url}")
 
-        logger.log_step_info("WiFi configuration POST request sent once.")
+            try:
+                http_response = requests.post(
+                    url=config_url,
+                    headers=config_headers,
+                    data=config_data,
+                    timeout=timeout,
+                )
+                http_response.close()
+            except requests.exceptions.RequestException as e:
+                logger.log_step_info(
+                    f"  Device closed connection without response (attempt {attempt}/{repeat}): {e}"
+                )
+
+            if attempt < repeat:
+                time.sleep(repeat_interval)
+
+        logger.log_step_info(
+            f"WiFi configuration sent {repeat} time(s) to device {device_ip}."
+        )
         return True
 
     def handle_get_network_page(self, config, command, response, context):

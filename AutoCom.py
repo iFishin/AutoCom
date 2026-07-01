@@ -241,6 +241,7 @@ class ExecutionConfig:
     mode: str = "single"             # single | loop | infinite
     iterations: int = 1              # loop 模式的循环次数
     interval_ms: int = 0             # 迭代间隔（毫秒）
+    max_duration_seconds: float = 0  # 最大执行时长（0=不限）
     stop_on_failure: bool = True     # 失败是否终止
     max_failures: int = 0            # 最大允许失败次数（0=不限）
     description: str = ""            # 配置文件描述
@@ -255,11 +256,38 @@ def _as_int(value, default=0):
         return default
 
 
+def _parse_duration(text: str | None) -> float:
+    """解析时长字符串为秒数。
+    支持格式: 30(纯数字=秒), 30s(秒), 5m(分), 1h(时)
+    返回 0 表示不限时。
+    """
+    if not text:
+        return 0.0
+    text = str(text).strip()
+    if not text:
+        return 0.0
+    try:
+        if text.endswith("h"):
+            return float(text[:-1]) * 3600
+        elif text.endswith("m"):
+            return float(text[:-1]) * 60
+        elif text.endswith("s"):
+            return float(text[:-1])
+        else:
+            return float(text)
+    except (ValueError, TypeError):
+        logger.log_session_error(
+            f"无法解析时长参数 '{text}'，支持格式: 30, 30s, 5m, 1h"
+        )
+        return 0.0
+
+
 def resolve_execution_config(
     dict_data: dict,
     cli_loop: int | None = None,
     cli_infinite: bool = False,
     cli_mode: str | None = None,
+    cli_duration: str | None = None,
 ) -> ExecutionConfig:
     """从配置文件的 Config 块 + CLI 参数合并执行配置。
 
@@ -294,10 +322,14 @@ def resolve_execution_config(
         )
         if mode == "single":
             iterations = 1
+        # duration：CLI 优先，其次 Config 块
+        duration_raw = cli_duration if cli_duration is not None else loop_cfg.get("duration", "")
+        max_duration = _parse_duration(duration_raw)
         return ExecutionConfig(
             mode=mode,
             iterations=_as_int(iterations, 1),
             interval_ms=_as_int(loop_cfg.get("interval_ms", 0), 0),
+            max_duration_seconds=max_duration,
             stop_on_failure=(
                 loop_cfg.get("stop_on_failure", False)
                 if not cli_infinite else False
@@ -309,13 +341,15 @@ def resolve_execution_config(
         # ── 旧格式：向后兼容，由 CLI 参数决定 ──
         mode = "infinite" if cli_infinite else "loop"
         iterations = cli_loop if cli_loop is not None else 3
+        max_duration = _parse_duration(cli_duration)
         return ExecutionConfig(
             mode=mode, iterations=iterations,
             interval_ms=0, stop_on_failure=False, max_failures=0,
+            max_duration_seconds=max_duration,
         )
 
 
-def execute_with_loop(dict_path: str, loop_count: int | None = None, infinite_loop=False, config=None):
+def execute_with_loop(dict_path: str, loop_count: int | None = None, infinite_loop=False, config=None, duration: str | None = None):
     # Load the dictionary file
     dict_data = load_commands_from_file(dict_path)
 
@@ -325,13 +359,14 @@ def execute_with_loop(dict_path: str, loop_count: int | None = None, infinite_lo
 
     # 解析执行配置
     exec_cfg = resolve_execution_config(
-        dict_data, cli_loop=loop_count, cli_infinite=infinite_loop,
+        dict_data, cli_loop=loop_count, cli_infinite=infinite_loop, cli_duration=duration,
     )
 
     logger.log_session_start(
         f"🚀 执行模式: {exec_cfg.mode}"
         + (f" × {exec_cfg.iterations}" if exec_cfg.mode == "loop" else "")
         + (f" — {exec_cfg.description}" if exec_cfg.description else "")
+        + (f" ⏱ {duration}" if duration else "")
     )
 
     # Initialize counters before try block to avoid UnboundLocalError in finally
@@ -389,14 +424,22 @@ def execute_with_loop(dict_path: str, loop_count: int | None = None, infinite_lo
         failure_count = 0
         executed_count = 0
         iteration = 0
+        start_time = time.time()
 
         while True:
             iteration += 1
 
-            # 终止条件
+            # 终止条件：轮数上限
             if exec_cfg.mode == "single" and iteration > 1:
                 break
             if exec_cfg.mode == "loop" and iteration > exec_cfg.iterations:
+                break
+            # 终止条件：时长上限
+            if (
+                exec_cfg.max_duration_seconds > 0
+                and (time.time() - start_time) >= exec_cfg.max_duration_seconds
+            ):
+                logger.log_session_info("⏹️ 达到目标执行时长，自动停止")
                 break
 
             current_iteration = executed_count + 1
@@ -455,6 +498,7 @@ def execute_with_loop(dict_path: str, loop_count: int | None = None, infinite_lo
             logger.log_iteration_end(
                 iteration=current_iteration,
                 total=total_iterations or 0,
+                result=result,
             )
 
             # 迭代间隔

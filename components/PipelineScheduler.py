@@ -16,6 +16,7 @@ from __future__ import annotations
 import time
 import re
 import json
+import threading
 from typing import Any, Optional
 
 from components.Context import Context
@@ -24,8 +25,21 @@ from utils.TemplateEngine import TemplateEngine
 from utils.dirs import get_dirs
 from components.Logger import get_logger
 
+LOGGABLE_STEP_TYPES = {
+    "serial",
+    "serial_wait",
+    "http",
+    "script",
+    "wait",
+    "action_batch",
+}
 
-LOGGABLE_STEP_TYPES = {"serial", "serial_wait", "http", "script", "wait", "action_batch"}
+logger = get_logger("AutoCom")
+
+
+def _step_display_name(step: dict, step_id: str) -> str:
+    """返回步骤的显示名称。"""
+    return step.get("name") or step.get("id") or step_id
 
 
 def _as_int(value: Any, default: int = 0) -> int:
@@ -61,8 +75,8 @@ class PipelineScheduler:
         self.step_map: dict[str, dict] = {
             s["id"]: s for s in self.ordered if s.get("id")
         }
-        self.pc = 0          # 程序计数器
-        self.pt = 0          # 兼容保留字段
+        self.pc = 0  # 程序计数器
+        self.pt = 0  # 兼容保留字段
         self._tick_count = 0  # 保护计数器（防止控制流死循环）
 
         # 运行时状态
@@ -77,6 +91,11 @@ class PipelineScheduler:
         # 重试/循环计数
         self._retry_count: dict[str, int] = {}
         self._loop_count: dict[str, int] = {}
+
+        # 并行执行线程安全
+        self._device_locks: dict[str, threading.Lock] = {}
+        self._device_locks_lock = threading.Lock()
+        self._context_lock = threading.Lock()
 
     # ── 公共入口 ──
 
@@ -121,47 +140,72 @@ class PipelineScheduler:
         # ── 0. 手动禁用检查 ──
         if self._is_disabled(step):
             result = StepResult.skipped(step_id)
-            self._record(step_id, step_type, result, step=step)
+            self._record(step_id, step_type, result, step=step,
+                         step_index=self.pc + 1, total_steps=len(self.ordered))
             self.pc += 1
             return result
 
         # ── 1. if 条件检查 ──
         if self._should_skip(step):
             result = StepResult.skipped(step_id)
-            self._record(step_id, step_type, result, step=step)
+            self._record(step_id, step_type, result, step=step,
+                         step_index=self.pc + 1, total_steps=len(self.ordered))
             self.pc += 1
             return result
 
         # ── 2. 变量替换 send 和 expect ──
         step = self._resolve_step(step)
 
+        # ── 2.25 打印步骤开始 ──
+        total = len(self.ordered)
+        name = _step_display_name(step, step_id)
+        logger.log_step_info(
+            f"  ⏳ Step [{self.pc + 1}/{total}] {name} ({step_type}) ..."
+        )
+
         # ── 2.5 元步骤处理：loop / choose / goto ──
         if step_type == "loop":
             result = self._handle_loop(step)
-            self._record(step_id, step_type, result, step=step)
+            self._record(step_id, step_type, result, step=step,
+                         step_index=self.pc + 1, total_steps=len(self.ordered))
             self.pc += 1
             return result
 
         if step_type == "choose":
             result = self._handle_choose(step)
-            self._record(step_id, step_type, result, step=step)
+            self._record(step_id, step_type, result, step=step,
+                         step_index=self.pc + 1, total_steps=len(self.ordered))
             self.pc += 1
             return result
 
         if step_type == "goto":
-            return self._handle_goto_step(step, step_id)
+            result = self._handle_goto_step(step, step_id)
+            self._log_step_console(
+                step_id, step_type, result, step,
+                step_index=self.pc + 1, total_steps=len(self.ordered),
+            )
+            return result
+
+        if step_type == "parallel":
+            result = self._handle_parallel(step)
+            self._record(step_id, step_type, result, step=step,
+                         step_index=self.pc + 1, total_steps=len(self.ordered))
+            self.pc += 1
+            return result
 
         # ── 3. 路由到 Handler ──
         handler = self._handlers.get(step_type)
         if handler is None:
-            result = StepResult.from_error(
-                step_id, f"Unknown step type: '{step_type}'")
+            result = StepResult.from_error(step_id, f"Unknown step type: '{step_type}'")
         else:
             result = handler.execute(step)
 
         # ── 4. 记录结果 ──
         self._run_response_actions(step, result)
-        self._record(step_id, step_type, result, step=step)
+        self._record(step_id, step_type, result, step=step,
+                     step_index=self.pc + 1, total_steps=len(self.ordered))
+        # logger.log_execution(result=result, exec_type=step_type)    
+    
 
         # ── 5. 执行 success / error actions ──
         if result.ok:
@@ -180,7 +224,11 @@ class PipelineScheduler:
         if enabled is False:
             return True
         if isinstance(enabled, str) and enabled.strip().lower() in (
-            "false", "0", "no", "disabled", "disable"
+            "false",
+            "0",
+            "no",
+            "disabled",
+            "disable",
         ):
             return True
         status = str(step.get("status", "")).strip().lower()
@@ -215,8 +263,15 @@ class PipelineScheduler:
 
     # ── 结果记录 ──
 
-    def _record(self, step_id: str, step_type: str, result: StepResult,
-                step: Optional[dict] = None):
+    def _record(
+        self,
+        step_id: str,
+        step_type: str,
+        result: StepResult,
+        step: Optional[dict] = None,
+        step_index: int = -1,
+        total_steps: int = 0,
+    ):
         self.ctx.record_step(
             step_id=step_id,
             step_type=step_type,
@@ -228,9 +283,49 @@ class PipelineScheduler:
             capture=result.capture,
         )
         self._write_step_log(step_id, step_type, result, step or {})
+        self._log_step_console(
+            step_id, step_type, result, step or {},
+            step_index, total_steps,
+        )
 
-    def _write_step_log(self, step_id: str, step_type: str, result: StepResult,
-                        step: dict):
+    def _log_step_console(
+        self,
+        step_id: str,
+        step_type: str,
+        result: StepResult,
+        step: dict,
+        step_index: int,
+        total_steps: int,
+    ) -> None:
+        """将单步执行结果打印到控制台。"""
+        name = _step_display_name(step, step_id)
+        if step_index > 0:
+            tag_prefix = f"[{step_index}/{total_steps}]"
+        else:
+            tag_prefix = "[inner]"
+
+        if result.status == "passed":
+            logger.log_info(
+                f"  ✅ Step {tag_prefix} {name} — PASS ({result.elapsed_ms}ms)"
+            )
+        elif result.status == "skipped":
+            logger.log_info(
+                f"  ⏭️ Step {tag_prefix} {name} — SKIP"
+            )
+        elif result.status == "error":
+            err = (result.error[:100] + "...") if result.error and len(result.error) > 100 else (result.error or "")
+            logger.log_info(
+                f"  ❌ Step {tag_prefix} {name} — ERROR: {err}"
+            )
+        else:  # failed
+            err = (result.error[:100] + "...") if result.error and len(result.error) > 100 else (result.error or "")
+            logger.log_info(
+                f"  ❌ Step {tag_prefix} {name} — FAIL: {err}"
+            )
+
+    def _write_step_log(
+        self, step_id: str, step_type: str, result: StepResult, step: dict
+    ):
         if step_type not in LOGGABLE_STEP_TYPES:
             return
 
@@ -260,7 +355,8 @@ class PipelineScheduler:
                 f.write("\n")
         except Exception as e:
             get_logger("AutoCom").log_session_warning(
-                f"Failed to write step log for {step_type}/{step_id}: {e}")
+                f"Failed to write step log for {step_type}/{step_id}: {e}"
+            )
 
     @staticmethod
     def _safe_log_name(value: str) -> str:
@@ -314,14 +410,26 @@ class PipelineScheduler:
                 inner_type = resolved.get("type", "serial")
                 handler = self._handlers.get(inner_type)
                 if handler is None:
-                    r = StepResult.from_error(resolved.get("id", ""),
-                                               f"Unknown type: '{inner_type}'")
+                    r = StepResult.from_error(
+                        resolved.get("id", ""), f"Unknown type: '{inner_type}'"
+                    )
                 else:
                     r = handler.execute(resolved)
 
+                # 子步骤的 response_actions / success_actions / error_actions
+                self._run_response_actions(resolved, r)
+                if r.ok:
+                    self._run_actions(resolved, r, "success_actions")
+                else:
+                    self._run_actions(resolved, r, "error_actions")
+
                 self._record(
-                    step_id=resolved.get("id", f"{step_id}_inner_{iteration}_{inner_type}"),
-                    step_type=inner_type, result=r, step=resolved,
+                    step_id=resolved.get(
+                        "id", f"{step_id}_inner_{iteration}_{inner_type}"
+                    ),
+                    step_type=inner_type,
+                    result=r,
+                    step=resolved,
                 )
 
                 if not r.ok and r.status != "skipped":
@@ -330,18 +438,23 @@ class PipelineScheduler:
             # 检查终止条件
             if until_expr and self._engine.evaluate(until_expr):
                 return StepResult(
-                    step_id=step_id, step_type="loop",
-                    status="passed", send=f"loop {iteration+1} iters",
+                    step_id=step_id,
+                    step_type="loop",
+                    status="passed",
+                    send=f"loop {iteration+1} iters",
                     capture={"iterations": iteration + 1},
                 )
 
             if interval > 0:
                 import time
+
                 time.sleep(interval)
 
         return StepResult(
-            step_id=step_id, step_type="loop",
-            status="passed", send=f"loop {max_iter} iters (max)",
+            step_id=step_id,
+            step_type="loop",
+            status="passed",
+            send=f"loop {max_iter} iters (max)",
             capture={"iterations": max_iter},
         )
 
@@ -374,8 +487,10 @@ class PipelineScheduler:
 
         if executed_branch is None:
             return StepResult(
-                step_id=step_id, step_type="choose",
-                status="skipped", send="no matching branch",
+                step_id=step_id,
+                step_type="choose",
+                status="skipped",
+                send="no matching branch",
             )
 
         # 执行选中分支的内层步骤
@@ -391,21 +506,32 @@ class PipelineScheduler:
             inner_type = resolved.get("type", "serial")
             handler = self._handlers.get(inner_type)
             if handler is None:
-                r = StepResult.from_error(resolved.get("id", ""),
-                                           f"Unknown type: '{inner_type}'")
+                r = StepResult.from_error(
+                    resolved.get("id", ""), f"Unknown type: '{inner_type}'"
+                )
             else:
                 r = handler.execute(resolved)
 
+            # 子步骤的 response_actions / success_actions / error_actions
+            self._run_response_actions(resolved, r)
+            if r.ok:
+                self._run_actions(resolved, r, "success_actions")
+            else:
+                self._run_actions(resolved, r, "error_actions")
+
             self._record(
                 step_id=resolved.get("id", f"{step_id}_{branch_id}"),
-                step_type=inner_type, result=r, step=resolved,
+                step_type=inner_type,
+                result=r,
+                step=resolved,
             )
 
             if not r.ok and r.status != "skipped":
                 all_passed = False
 
         return StepResult(
-            step_id=step_id, step_type="choose",
+            step_id=step_id,
+            step_type="choose",
             status="passed" if all_passed else "failed",
             send=f"branch: {branch_id}",
             capture={"branch": branch_id},
@@ -441,16 +567,20 @@ class PipelineScheduler:
         if max_n > 0 and count >= max_n:
             self.pc += 1
             return StepResult(
-                step_id=step_id, step_type="goto",
-                status="skipped", send=f"max {max_n} reached",
+                step_id=step_id,
+                step_type="goto",
+                status="skipped",
+                send=f"max {max_n} reached",
             )
 
         # if 条件（条件为 false 则跳过跳转，继续执行后续步骤）
         if self._should_skip(step):
             self.pc += 1
             return StepResult(
-                step_id=step_id, step_type="goto",
-                status="skipped", send="condition not met",
+                step_id=step_id,
+                step_type="goto",
+                status="skipped",
+                send="condition not met",
             )
 
         # 执行跳转
@@ -458,7 +588,8 @@ class PipelineScheduler:
         if idx is not None:
             self.pc = idx
             return StepResult(
-                step_id=step_id, step_type="goto",
+                step_id=step_id,
+                step_type="goto",
                 status="passed",
                 send=f"-> {target} (#{count + 1})",
                 capture={"goto_count": count + 1, "target": target},
@@ -467,8 +598,128 @@ class PipelineScheduler:
         # 目标不存在
         self.pc += 1
         return StepResult(
-            step_id=step_id, step_type="goto",
-            status="error", error=f"target '{target}' not found",
+            step_id=step_id,
+            step_type="goto",
+            status="error",
+            error=f"target '{target}' not found",
+        )
+
+    # ── 元步骤处理：parallel（并行执行）──
+
+    def _handle_parallel(self, step: dict) -> StepResult:
+        """处理 type: parallel 步骤。
+
+        并发执行子步骤，serial/serial_wait 步骤按 device 加锁串行化。
+        """
+        import concurrent.futures
+
+        step_id = step.get("id", "")
+        inner_steps = step.get("steps", [])
+        if not inner_steps:
+            return StepResult(step_id=step_id, step_type="parallel", status="passed")
+
+        timeout = step.get("timeout", 0)
+        stop_on_failure = step.get("stop_on_failure", False)
+
+        def _run_one(inner_step: dict) -> tuple[dict, StepResult]:
+            """在线程池中执行单步。"""
+            resolved = self._resolve_step(inner_step)
+            if self._should_skip(resolved):
+                return resolved, StepResult.skipped(resolved.get("id", ""))
+
+            inner_type = resolved.get("type", "serial")
+            handler = self._handlers.get(inner_type)
+            if handler is None:
+                return resolved, StepResult.from_error(
+                    resolved.get("id", ""), f"Unknown type: '{inner_type}'"
+                )
+
+            # Per-device lock for serial/serial_wait
+            device_name = resolved.get("device", "")
+            need_lock = device_name and inner_type in ("serial", "serial_wait")
+            if need_lock:
+                with self._device_locks_lock:
+                    if device_name not in self._device_locks:
+                        self._device_locks[device_name] = threading.Lock()
+                self._device_locks[device_name].acquire()
+            try:
+                r = handler.execute(resolved)
+            finally:
+                if need_lock:
+                    self._device_locks[device_name].release()
+            return resolved, r
+
+        # 提交到线程池
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(inner_steps)) as pool:
+            futures = [pool.submit(_run_one, s) for s in inner_steps]
+
+            if stop_on_failure:
+                # as_completed：任一失败立即取消其余
+                for f in concurrent.futures.as_completed(
+                    futures, timeout=timeout if timeout > 0 else None
+                ):
+                    try:
+                        _, r = f.result()
+                        if not r.ok and r.status != "skipped":
+                            for remaining in futures:
+                                if not remaining.done():
+                                    remaining.cancel()
+                            break
+                    except Exception:
+                        for remaining in futures:
+                            if not remaining.done():
+                                remaining.cancel()
+                        break
+            else:
+                # 等全部完成或超时
+                concurrent.futures.wait(
+                    futures,
+                    timeout=timeout if timeout > 0 else None,
+                )
+
+        # 收集结果：done / cancelled
+        timed_out: list[str | int] = []
+        all_passed = True
+        results: list[tuple[dict, StepResult]] = []
+        for idx, f in enumerate(futures):
+            if f.done():
+                try:
+                    resolved, r = f.result()
+                    results.append((resolved, r))
+                    if not r.ok and r.status != "skipped":
+                        all_passed = False
+                except Exception as e:
+                    results.append(({}, StepResult.from_error(step_id, str(e))))
+                    all_passed = False
+            else:
+                f.cancel()
+                s = inner_steps[idx]
+                r = StepResult.from_error(
+                    s.get("id", ""), "cancelled (timeout or stop_on_failure)",
+                )
+                results.append((dict(s), r))
+                all_passed = False
+                timed_out.append(s.get("id", idx))
+
+        # 记录结果（受 context_lock 保护）
+        for resolved, r in results:
+            sid = resolved.get("id", step_id)
+            stype = resolved.get("type", "parallel")
+            with self._context_lock:
+                self._run_response_actions(resolved, r)
+                if r.ok:
+                    self._run_actions(resolved, r, "success_actions")
+                else:
+                    self._run_actions(resolved, r, "error_actions")
+                self._record(sid, stype, r, step=resolved)
+
+        return StepResult(
+            step_id=step_id,
+            step_type="parallel",
+            status="passed" if all_passed else "failed",
+            send=f"{len(inner_steps)} steps in parallel"
+            + (f", {len(timed_out)} cancelled" if timed_out else ""),
+            capture={"parallel_steps": len(inner_steps), "cancelled": timed_out or None},
         )
 
     # ── Actions 执行 ──
@@ -497,13 +748,15 @@ class PipelineScheduler:
                 try:
                     matched = bool(re.search(pattern, response))
                 except re.error as e:
-                    triggered.append({
-                        "rule": idx,
-                        "type": match_type,
-                        "pattern": pattern,
-                        "status": "error",
-                        "detail": f"invalid regex: {e}",
-                    })
+                    triggered.append(
+                        {
+                            "rule": idx,
+                            "type": match_type,
+                            "pattern": pattern,
+                            "status": "error",
+                            "detail": f"invalid regex: {e}",
+                        }
+                    )
                     continue
 
             if not matched:
@@ -514,20 +767,25 @@ class PipelineScheduler:
                 "device": self.ctx.get(f"_runtime.devices.{step.get('device', '')}"),
                 "device_name": step.get("device", ""),
                 "cmd_str": result.send,
-                "expected_responses": step.get("expect", step.get("expected_responses", [])),
+                "expected_responses": step.get(
+                    "expect", step.get("expected_responses", [])
+                ),
                 "priority": step.get("priority", 0),
                 "completion_rules": step.get("completion_rules"),
                 "_action_results": [],
             }
             ok = self._action_handler.handle_actions(
-                {"actions": actions}, response, "actions", context)
-            triggered.append({
-                "rule": idx,
-                "type": match_type,
-                "pattern": pattern,
-                "status": "passed" if ok else "failed",
-                "actions": context.get("_action_results", []),
-            })
+                {"actions": actions}, response, "actions", context
+            )
+            triggered.append(
+                {
+                    "rule": idx,
+                    "type": match_type,
+                    "pattern": pattern,
+                    "status": "passed" if ok else "failed",
+                    "actions": context.get("_action_results", []),
+                }
+            )
 
         if triggered:
             capture = dict(result.capture or {})
@@ -546,11 +804,13 @@ class PipelineScheduler:
             context = {
                 "device_name": step.get("device", ""),
                 "cmd_str": result.send,
-                "expected_responses": step.get("expect", step.get("expected_responses", [])),
+                "expected_responses": step.get(
+                    "expect", step.get("expected_responses", [])
+                ),
             }
             self._action_handler.handle_actions(
-                {"temp_actions": actions}, result.response,
-                "temp_actions", context)
+                {"temp_actions": actions}, result.response, "temp_actions", context
+            )
 
     # ── 程序计数器 ──
 
@@ -672,9 +932,13 @@ class PipelineScheduler:
     # ── 兼容旧 Commands → Steps 转换 ──
 
     @classmethod
-    def from_old_commands(cls, commands: list[dict],
-                          ctx: Context, handlers: dict,
-                          action_handler: Any = None) -> "PipelineScheduler":
+    def from_old_commands(
+        cls,
+        commands: list[dict],
+        ctx: Context,
+        handlers: dict,
+        action_handler: Any = None,
+    ) -> "PipelineScheduler":
         """将旧格式 Commands[] 转为 Steps[] 并创建调度器。"""
         steps = cls._convert_commands(commands)
         return cls(steps, ctx, handlers, action_handler)

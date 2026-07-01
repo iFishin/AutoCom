@@ -82,7 +82,7 @@ def run_main():
         print()
         print("  🚀  执行流水线:")
         print(f"    autocom -p pipeline.yaml        {'执行流水线文件 (YAML/JSON)'}")
-        print(f"    autocom -p pipeline.yaml -l 5   {'覆盖循环次数'}")
+        print(f"    autocom -p pipeline.yaml -n 5   {'覆盖循环次数'}")
         print()
         print("  📂  批量执行:")
         print(f"    autocom -f dicts/               {'执行文件夹内所有配置文件'}")
@@ -110,7 +110,9 @@ def run_main():
 
   # 执行流水线（推荐新格式）
   autocom -p pipeline.yaml              # Config 块决定执行方式
-  autocom -p pipeline.yaml -l 5         # 覆盖执行次数
+  autocom -p pipeline.yaml -n 5         # 覆盖执行轮数
+  autocom -p pipeline.yaml --duration 10m   # 限时 10 分钟
+  autocom -p pipeline.yaml -n 100 --duration 30s  # 先到先停
 
   # 兼容旧格式
   autocom -d dict.yaml                  # 自动识别旧 Commands 格式
@@ -219,11 +221,26 @@ def run_main():
     )
 
     parser.add_argument(
-        "-l",
-        "--loop",
+        "-n",
+        "--iterations",
+        dest="loop",
         default=None,
         type=int,
-        help="覆盖循环执行次数（默认取 Config 块或旧格式 3 次）",
+        help="循环执行轮数（覆盖 Config 块设置）",
+    )
+    parser.add_argument(
+        "-l",
+        "--loop",
+        dest="loop",
+        default=None,
+        type=int,
+        help=argparse.SUPPRESS,  # 隐藏，旧别名保留兼容
+    )
+    parser.add_argument(
+        "--duration",
+        default=None,
+        type=str,
+        help="目标执行时长，到达后自动停止。格式: 30(秒), 30s, 5m(分), 1h(时)",
     )
     parser.add_argument(
         "-i",
@@ -367,7 +384,7 @@ def run_main():
 
         start_time = time.time()
         try:
-            execute_with_loop(str(dict_path), args.loop, args.infinite, config)
+            execute_with_loop(str(dict_path), args.loop, args.infinite, config, duration=args.duration)
         except KeyboardInterrupt:
             logger.log_session_info("Execution interrupted by user")
         except FileNotFoundError as e:

@@ -53,6 +53,11 @@
                             "minimum": 0,
                             "description": "最大允许失败次数（0=不限）",
                             "default": 0
+                        },
+                        "duration": {
+                            "type": "string",
+                            "description": "目标执行时长，到达后自动停止。格式: 30s(秒), 5m(分), 1h(时)",
+                            "default": ""
                         }
                     },
                     "additionalProperties": false
@@ -236,7 +241,7 @@
                     },
                     "type": {
                         "type": "string",
-                        "enum": ["serial", "http", "script", "wait", "action_batch"],
+                        "enum": ["serial", "serial_wait", "http", "script", "wait", "action_batch"],
                         "description": "步骤类型",
                         "default": "serial"
                     },
@@ -328,6 +333,26 @@
                                     "type": "string",
                                     "enum": ["ascii", "hex"],
                                     "description": "编码方式"
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "if": { "properties": { "type": { "const": "serial_wait" } } },
+                        "then": {
+                            "required": ["device", "expect"],
+                            "properties": {
+                                "device": { "type": "string", "description": "设备名称（须匹配 Devices 中的 name）" },
+                                "expect": {
+                                    "type": "array",
+                                    "description": "期望响应列表",
+                                    "items": { "type": "string" }
+                                },
+                                "timeout": {
+                                    "type": "integer",
+                                    "minimum": 100,
+                                    "maximum": 600000,
+                                    "description": "超时时间（毫秒）"
                                 }
                             }
                         }

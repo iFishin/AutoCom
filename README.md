@@ -36,8 +36,14 @@ pip install -e .
 # 单次执行（Config 块声明执行方式）
 autocom -p dicts/AutoCom2_Dicts/action_batch_demo.yaml
 
-# 指定循环次数
-autocom -p pipeline.yaml -l 5
+# 指定循环轮数
+autocom -p pipeline.yaml -n 5
+
+# 限时执行（30秒/5分钟/1小时，自动停止）
+autocom -p pipeline.yaml --duration 30s
+
+# 轮数与时长双重限制，先到先停
+autocom -p pipeline.yaml -n 100 --duration 10m
 
 # 批量执行文件夹
 autocom -f dicts/

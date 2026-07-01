@@ -33,13 +33,17 @@ class CommandExecutor:
     但内部用 PipelineScheduler + Step Handlers 驱动。
     """
 
-    def __init__(self, command_device_dict_or_dict, session_id=None,
-                 context: Optional[Context] = None):
+    def __init__(
+        self,
+        command_device_dict_or_dict,
+        session_id=None,
+        context: Optional[Context] = None,
+    ):
         self.lock = threading.Lock()
         self.context = context  # 可能为 None，在 _ensure_context() 中创建
 
         # ── 旧 DataStore 兼容层 ──
-        
+
         # 后台命令执行队列（旧系统保留）
         self.deferred_command_queue = Queue()
         self.deferred_execution_thread = None
@@ -78,10 +82,8 @@ class CommandExecutor:
         for name, dev in self.command_device_dict.devices.items():
             ctx.set(f"_runtime.devices.{name}", dev)
             # 同时记录设备元信息
-            ctx.set(f"devices.{name}.port",
-                    getattr(dev, "port", ""))
-            ctx.set(f"devices.{name}.baud_rate",
-                    getattr(dev, "baud_rate", 115200))
+            ctx.set(f"devices.{name}.port", getattr(dev, "port", ""))
+            ctx.set(f"devices.{name}.baud_rate", getattr(dev, "baud_rate", 115200))
 
         # ── 创建 ActionHandler ──
         self.action_handler = self._create_action_handler(dict_data)
@@ -119,8 +121,9 @@ class CommandExecutor:
 
     def _ensure_context(self) -> Context:
         """如果外部未传入 Context，自动创建一个（standalone 模式）。"""
-        if not hasattr(self, 'context') or self.context is None:
+        if not hasattr(self, "context") or self.context is None:
             from components.SessionStore import SessionStore
+
             store = SessionStore(get_dirs().db_path)
             sid = time.strftime("%Y-%m-%d_%H%M%S")
             store.create_session(sid, config_name="standalone")
@@ -138,7 +141,8 @@ class CommandExecutor:
         """兼容旧 ActionHandler 的 {VAR} 变量替换入口。"""
         if isinstance(param, str):
             return CommonUtils.process_variables(
-                param, self._compat_data_store(), device_name)
+                param, self._compat_data_store(), device_name
+            )
         return param
 
     # ── 常量处理 ──
@@ -165,11 +169,13 @@ class CommandExecutor:
                         if not val:
                             if attempt < 2:
                                 logger.log_session_start(
-                                    f"Value cannot be empty. Please try again ({attempt + 1}/3)")
+                                    f"Value cannot be empty. Please try again ({attempt + 1}/3)"
+                                )
                                 continue
                             else:
                                 logger.log_session_start(
-                                    f"No valid value provided for {key}")
+                                    f"No valid value provided for {key}"
+                                )
                                 sys.exit(1)
                         self._compat_data_store().store_data("Constants", key, val)
                         break
@@ -188,9 +194,13 @@ class CommandExecutor:
                     mod_path, cls_name = class_path.rsplit(".", 1)
                     module = __import__(mod_path, fromlist=[cls_name])
                     handler_class = getattr(module, cls_name)
-                    logger.log_session_start(f"Custom ActionHandler loaded: {class_path}")
+                    logger.log_session_start(
+                        f"Custom ActionHandler loaded: {class_path}"
+                    )
                 except (ImportError, AttributeError) as e:
-                    logger.log_session_start(f"Failed to load custom ActionHandler: {e}")
+                    logger.log_session_start(
+                        f"Failed to load custom ActionHandler: {e}"
+                    )
         return handler_class(self)
 
     # ── 旧 execute_command 保留（向后兼容） ──
@@ -209,7 +219,8 @@ class CommandExecutor:
         if "expected_responses" in command:
             for expected_response in command["expected_responses"]:
                 updated_expected_responses.append(
-                    handle_variables_from_str(expected_response, device_name))
+                    handle_variables_from_str(expected_response, device_name)
+                )
 
         if "command" in command:
             cmd_str = handle_variables_from_str(command["command"], device_name)
@@ -255,42 +266,73 @@ class CommandExecutor:
         if success and updated_expected_responses:
             logger.log_execution(
                 time_str=time.strftime("%Y-%m-%d_%H:%M:%S"),
-                result=True, device=device_name,
-                command=cmd_str, response=response_preview,
-                elapsed_ms=elapsed_time * 1000)
+                result=True,
+                device=device_name,
+                command=cmd_str,
+                response=response_preview,
+                elapsed_ms=elapsed_time * 1000,
+            )
             self.isAllPassed = True
             with self.lock:
-                is_ok = all([
-                    self.action_handler.handle_actions(command, response, "success_actions", context),
-                    self._handle_response_actions_with_defer(command, response, "success_response_actions", context),
-                    self.action_handler.handle_response_actions(command, response, "error_response_actions", context),
-                ])
+                is_ok = all(
+                    [
+                        self.action_handler.handle_actions(
+                            command, response, "success_actions", context
+                        ),
+                        self._handle_response_actions_with_defer(
+                            command, response, "success_response_actions", context
+                        ),
+                        self.action_handler.handle_response_actions(
+                            command, response, "error_response_actions", context
+                        ),
+                    ]
+                )
                 self.isAllPassed = self.isAllPassed and is_ok
         elif not updated_expected_responses:
             logger.log_execution(
                 time_str=time.strftime("%Y-%m-%d_%H:%M:%S"),
-                result=True, device=device_name,
-                command=cmd_str, response=response_preview,
-                elapsed_ms=elapsed_time * 1000)
+                result=True,
+                device=device_name,
+                command=cmd_str,
+                response=response_preview,
+                elapsed_ms=elapsed_time * 1000,
+            )
             self.isAllPassed = True
             with self.lock:
-                is_ok = all([
-                    self.action_handler.handle_actions(command, response, "success_actions", context),
-                    self._handle_response_actions_with_defer(command, response, "success_response_actions", context),
-                    self.action_handler.handle_response_actions(command, response, "error_response_actions", context),
-                ])
+                is_ok = all(
+                    [
+                        self.action_handler.handle_actions(
+                            command, response, "success_actions", context
+                        ),
+                        self._handle_response_actions_with_defer(
+                            command, response, "success_response_actions", context
+                        ),
+                        self.action_handler.handle_response_actions(
+                            command, response, "error_response_actions", context
+                        ),
+                    ]
+                )
                 self.isAllPassed = self.isAllPassed and is_ok
         else:
             logger.log_execution(
                 time_str=time.strftime("%Y-%m-%d_%H:%M:%S"),
-                result=False, device=device_name,
-                command=cmd_str, response=response_preview,
-                elapsed_ms=elapsed_time * 1000)
+                result=False,
+                device=device_name,
+                command=cmd_str,
+                response=response_preview,
+                elapsed_ms=elapsed_time * 1000,
+            )
             self.isAllPassed = False
             with self.lock:
-                self.action_handler.handle_actions(command, response, "error_actions", context)
-                self._handle_response_actions_with_defer(command, response, "success_response_actions", context)
-                self.action_handler.handle_response_actions(command, response, "error_response_actions", context)
+                self.action_handler.handle_actions(
+                    command, response, "error_actions", context
+                )
+                self._handle_response_actions_with_defer(
+                    command, response, "success_response_actions", context
+                )
+                self.action_handler.handle_response_actions(
+                    command, response, "error_response_actions", context
+                )
 
         return self.isAllPassed
 
@@ -302,7 +344,9 @@ class CommandExecutor:
 
         # Commands → Steps 自动转换
         if "Steps" not in dict_data and "Commands" in dict_data:
-            dict_data["Steps"] = PipelineScheduler._convert_commands(dict_data["Commands"])
+            dict_data["Steps"] = PipelineScheduler._convert_commands(
+                dict_data["Commands"]
+            )
 
         steps = dict_data.get("Steps", [])
         if not steps:
@@ -368,6 +412,7 @@ class CommandExecutor:
         raw_rules = command.get("completion_rules")
         if not raw_rules:
             return None
+
         def _resolve(value):
             if isinstance(value, str):
                 return self.handle_variables_from_str(value, device_name)
@@ -376,6 +421,7 @@ class CommandExecutor:
             if isinstance(value, dict):
                 return {k: _resolve(v) for k, v in value.items()}
             return value
+
         return _resolve(raw_rules)
 
     def set_iteration_info(self, current_iteration, total_iterations=None):
@@ -384,7 +430,8 @@ class CommandExecutor:
 
     def _start_deferred_execution_thread(self):
         self.deferred_execution_thread = threading.Thread(
-            target=self._deferred_execution_worker, daemon=False)
+            target=self._deferred_execution_worker, daemon=False
+        )
         self.deferred_execution_thread.start()
 
     def _deferred_execution_worker(self):
@@ -406,11 +453,17 @@ class CommandExecutor:
     def enqueue_deferred_command(self, command):
         self.deferred_command_queue.put(command)
 
-    def _handle_response_actions_with_defer(self, command, response, action_type, context):
+    def _handle_response_actions_with_defer(
+        self, command, response, action_type, context
+    ):
         if self.defer_response_actions:
-            self.deferred_response_actions.append((command, response, action_type, context))
+            self.deferred_response_actions.append(
+                (command, response, action_type, context)
+            )
             return True
-        return self.action_handler.handle_response_actions(command, response, action_type, context)
+        return self.action_handler.handle_response_actions(
+            command, response, action_type, context
+        )
 
     def _wait_for_deferred_commands(self):
         self.deferred_command_queue.join()
@@ -422,12 +475,16 @@ class CommandExecutor:
         self.deferred_response_actions.clear()
         for item in actions:
             try:
-                if isinstance(item, dict) and item.get("action_type") == "deferred_execute":
+                if (
+                    isinstance(item, dict)
+                    and item.get("action_type") == "deferred_execute"
+                ):
                     self.execute_command(item["command"])
                 else:
                     command, response, action_type, context = item
                     self.action_handler.handle_response_actions(
-                        command, response, action_type, context)
+                        command, response, action_type, context
+                    )
             except Exception as e:
                 logger.log_step_error(f"❌ Error processing deferred action: {e}")
 
