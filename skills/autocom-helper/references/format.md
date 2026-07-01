@@ -1,207 +1,353 @@
-# AutoCom 配置格式规范
+# AutoCom Steps 格式规范
 
 ## 顶层结构
 
 ```yaml
-ConfigForDevices: { ... }    # 设备公共配置（可选）
-Devices: [ ... ]             # 设备列表（必填，至少1个）
-ConfigForActions: { ... }    # Action 公共默认值（可选）
-ConfigForCommands: { ... }   # 指令公共默认值（可选）
-Commands: [ ... ]            # 指令序列（必填）
-Constants: { ... }            # 常量/变量（可选）
+Config: { ... }       # 执行配置（可选）
+Devices: [ ... ]       # 设备列表（必填，纯 HTTP/action 流程可至少 1 个）
+Constants: { ... }     # 共享变量（可选）
+Steps: [ ... ]         # 步骤列表（必填，至少 1 个）
 ```
 
 ---
 
-## Devices（设备定义）
+## Devices（设备）
 
-| 字段 | 类型 | 必填 | 说明 | 示例 |
-|------|------|------|------|------|
-| `name` | string | ✅ | 设备名称，Commands 中通过此名引用 | `"DUT_WiFi"` |
-| `status` | string | ✅ | `"enabled"` / `"disabled"` | `"enabled"` |
-| `port` | string | ✅ | 串口号 | `"COM66"` / `"/dev/ttyUSB0"` |
-| `baud_rate` | int | ✅ | 波特率 | `115200` |
-| `stop_bits` | int | ❌ | 停止位，默认 1 | `1` |
-| `parity` | string | ❌ | 校验位，默认 null（无校验） | `null` / `"N"` / `"E"` / `"O"` |
-| `data_bits` | int | ❌ | 数据位，默认 8 | `8` |
-| `flow_control` | object | ❌ | 流控制，默认全 false | 见下方 |
-| `dtr` | bool | ❌ | DTR 信号，默认 false | `false` |
-| `rts` | bool | ❌ | RTS 信号，默认 false | `false` |
+每个设备条目：
+
+| 字段 | 类型 | 必填 | 说明 |
+|-------|------|----------|-------------|
+| `name` | string | ✅ | 唯一设备名，被 Steps[*].device 引用 |
+| `port` | string | ✅ | 串口号（例如 COM16, /dev/ttyUSB0） |
+| `baud_rate` | int | ✅ | 波特率（例如 115200） |
+| `status` | string | ❌ | `"enabled"`（默认）或 `"disabled"` |
+| `stop_bits` | int | ❌ | 默认 1 |
+| `parity` | string | ❌ | `null`（无）、`"N"`、`"E"`、`"O"`、`"M"`、`"S"` |
+| `data_bits` | int | ❌ | 默认 8 |
+| `flow_control` | object | ❌ | 见下方，默认全部 false |
+| `dtr` | bool | ❌ | 默认 false |
+| `rts` | bool | ❌ | 默认 false |
+| `monitor` | bool | ❌ | 启用被动串口监视（捕获主动上报消息） |
 
 ### flow_control 默认值
 
 ```yaml
 flow_control:
-  xon_xoff: false   # 软件流控
-  rts_cts: false    # 硬件流控（RTS/CTS）
-  dsr_dtr: false    # 硬件流控（DSR/DTR）
+  xon_xoff: false
+  rts_cts: false
+  dsr_dtr: false
 ```
 
-### 常用波特率参考
-
-| 模组类型 | 常用波特率 |
-|----------|-----------|
-| WiFi / BLE 模组 | `115200`（默认）、`9600` |
-| Cat.1 模组 | `115200` |
-| 旧款 MCU | `9600`、`57600` |
-
 ---
 
-## Commands（指令序列）
-
-| 字段 | 类型 | 必填 | 说明 | 示例 |
-|------|------|------|------|------|
-| `command` | string | ✅ | AT 指令字符串 | `"AT+GMR"` |
-| `device` | string | ✅ | 引用 Devices 中的设备 name | `"DUT_WiFi"` |
-| `order` | int | ✅ | 执行顺序（数字越小越先执行） | `1` |
-| `status` | string | ✅ | `"enabled"` / `"disabled"` | `"enabled"` |
-| `expected_responses` | list[str] | ❌ | 期望响应关键词列表（满足任一即成功） | `["OK"]` |
-| `timeout` | int | ❌ | 超时时间（毫秒），默认 2000 | `3000` |
-| `concurrent_strategy` | string | ❌ | `"sequential"`（串行）/ `"parallel"`（并行），默认 sequential | `"sequential"` |
-| `success_actions` | list[object] | ❌ | 成功后执行的 Action 列表 | 见 Actions 章节 |
-| `error_actions` | list[object] | ❌ | 失败后执行的 Action 列表 | 见 Actions 章节 |
-
----
-
-## Actions 完整参考表
-
-| Action | 格式 | 说明 |
-|--------|------|------|
-| `test` | `{"test": "message"}` | 测试打印 |
-| `print` | `{"print": "消息内容"}` | 打印消息 |
-| `wait` | `{"wait": {"duration": 1000}}` | 等待（毫秒） |
-| `retry` | `{"retry": 3}` | 重试次数 |
-| `set_status` | `{"set_status": "disabled"}` | 设置当前指令状态 |
-| `set_status_by_order` | `{"set_status_by_order": {"order": 2, "status": "disabled"}}` | 按 order 设置其他指令状态 |
-| `execute_command` | `{"execute_command": {"command": "AT", "timeout": 1000}}` | 执行其他指令 |
-| `execute_command_by_order` | `{"execute_command_by_order": 3}` | 按 order 执行其他指令 |
-| `save` | `{"save": {"device": "DUT", "variable": "var1", "value": "123"}}` | 保存变量 |
-| `save_conditional` | `{"save_conditional": {"device": "DUT", "variable": "csq", "pattern": "CSQ: (\\d+)"}}` | 正则提取保存 |
-| `generate_random_str` | `{"generate_random_str": {"device": "DUT", "variable": "rnd", "length": 16}}` | 生成随机字符串 |
-| `calculate_length` | `{"calculate_length": {"device": "DUT", "variable": "len", "data": "..."}}` | 计算字符串长度 |
-| `calculate_crc` | `{"calculate_crc": {"device": "DUT", "variable": "crc", "raw_data": "..."}}` | 计算 CRC |
-| `replace_str` | `{"replace_str": {"device": "DUT", "variable": "out", "data": "...", "original_str": "...", "new_str": "..."}}` | 字符串替换 |
-| `wifi_connect` | `{"wifi_connect": {"ssid": "MyWiFi", "password": "Pass123", "timeout": 10}}` | 连接 WiFi |
-| `get_wifi_config` | `{"get_wifi_config": {"device_ip": "192.168.1.1", "ssid": "...", "password": "..."}}` | 获取 WiFi 配置 |
-| `post_wifi_config` | `{"post_wifi_config": {"device_ip": "192.168.1.1", "ssid": "...", "password": "..."}}` | 发送 WiFi 配置 |
-| `get_network_page` | `{"get_network_page": {"device_ip": "192.168.1.1", "url": "/"}}` | 获取网络页面 |
-| `send_file` | `{"send_file": "path/to/file.txt"}` | 发送文件到串口 |
-
-### send_file 扩展参数
+## Config（配置）
 
 ```yaml
-# 默认（LF 换行，UTF-8 编码）
-{"send_file": "certs/server.crt"}
-
-# 指定换行符
-{"send_file": {"path": "certs/server.crt", "line_ending": "crlf"}}
-{"send_file": {"path": "certs/server.crt", "line_ending": "cr"}}
-
-# 指定编码
-{"send_file": {"path": "config.txt", "encoding": "gbk"}}
-
-# 完整参数
-{"send_file": {"path": "config.txt", "line_ending": "crlf", "encoding": "utf-8"}}
+Config:
+  description: "My pipeline"        # 自由文本描述
+  mode: single                      # "single"（单次）或 "loop"（循环）
+  loop:
+    iterations: 100                 # 最大迭代次数（也可用 CLI -n）
+    duration: "30m"                 # 自动停止前的最大时长
+    interval_ms: 5000               # 迭代间隔毫秒数
+    stop_on_failure: false          # true = 首次失败即中止
 ```
 
-**line_ending 选项**：
-- `lf`：LF（`\n`），Unix/Linux/Mac 默认
-- `crlf`：CRLF（`\r\n`），Windows 默认
-- `cr`：CR（`\r`），旧 Mac
-- `none`：保持原样
-
----
-
-## ConfigForDevices（设备公共配置）
-
-所有设备共享的默认参数，设备自身可覆盖：
+### 简写形式
 
 ```yaml
-ConfigForDevices:
-  baud_rate: 115200
-  stop_bits: 1
-  data_bits: 8
-  parity: null
-  flow_control:
-    xon_xoff: false
-    rts_cts: false
-    dsr_dtr: false
-  dtr: false
-  rts: false
+# 等同于 Config: { mode: loop, loop: { iterations: 10 } }
+loop: 10
 ```
 
 ---
 
-## ConfigForCommands（指令公共配置）
+## Steps（步骤）
 
-所有指令共享的默认参数，指令自身可覆盖：
+流水线的核心。每个步骤执行一个动作。
+
+### 公共字段（所有类型）
+
+| 字段 | 类型 | 必填 | 说明 |
+|-------|------|----------|-------------|
+| `id` | string | ✅ | 唯一步骤标识符 |
+| `name` | string | ❌ | 人类可读的标签 |
+| `type` | string | ✅ | `serial`, `serial_wait`, `http`, `script`, `wait`, `action_batch`, `goto` |
+| `order` | int | ❌ | 执行顺序（数字越小越先执行）。省略时自动分配 |
+| `if` | string | ❌ | 条件表达式 — 如果为 false 则跳过该步骤 |
+| `unless` | string | ❌ | 条件表达式 — 如果为 true 则跳过该步骤 |
+| `on_error` | string/object | ❌ | 错误处理策略（见下方） |
+| `on_success` | string | ❌ | 成功处理：`continue`（默认）或 `goto(id)` |
+| `timeout` | int | ❌ | 步骤超时**秒数**（不同步骤类型有不同默认值） |
+
+### `on_error` 取值
+
+| 值 | 行为 |
+|-------|----------|
+| `retry(3)` | 失败后最多重试 3 次，然后继续 |
+| `goto(step_id)` | 失败后跳转到指定步骤 |
+| `skip` | 失败后静默跳过该步骤 |
+| `abort` | （默认）失败后中止整个流水线 |
+
+### `on_success` 取值
+
+| 值 | 行为 |
+|-------|----------|
+| （省略） | 继续执行下一步（默认） |
+| `goto(step_id)` | 成功后跳转到指定步骤 |
+
+---
+
+### 步骤类型：`serial`
+
+通过串口发送 AT 指令并匹配响应。
 
 ```yaml
-ConfigForCommands:
-  timeout: 3000
-  concurrent_strategy: sequential
+- id: check_fw
+  type: serial
+  device: DeviceA
+  send: "AT+QVERSION"
+  expect: ["OK"]
+  timeout: 5
+  capture:
+    version: "Version: (.+)"
 ```
 
----
+| 字段 | 类型 | 必填 | 说明 |
+|-------|------|----------|-------------|
+| `device` | string | ✅ | Devices 列表中的设备名 |
+| `send` | string | ✅ | 要发送的数据（AT 指令或原始文本） |
+| `expect` | list[string] | ❌ | 响应中包含**任意一个**即视为成功 |
+| `timeout` | int | ❌ | 等待响应的秒数（默认设备超时时间） |
+| `capture` | object | ❌ | 从响应中提取值的正则表达式 |
+| `hex_mode` | bool | ❌ | 以十六进制字节发送数据 |
 
-## ConfigForActions（Action 公共默认值）
+### 步骤类型：`serial_wait`
+
+被动监听设备的期望字符串（不发送数据）。
 
 ```yaml
-ConfigForActions:
-  retry:
-    times: 3
-  wait:
-    duration: 1000
+- id: wait_ap_connect
+  type: serial_wait
+  device: DeviceA
+  expect: ["AP_CONNECT"]
+  timeout: 10
 ```
+
+### 步骤类型：`http`
+
+发起 HTTP 请求。
+
+```yaml
+- id: check_ota
+  type: http
+  url: "{{ constants.API_BASE }}/status"
+  method: GET
+  headers:
+    Authorization: "Bearer token123"
+  expect:
+    status_code: 200
+    body_match: '"ok"'
+  capture:
+    version: '"version": "(.+?)"'
+  timeout: 10
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|-------|------|----------|-------------|
+| `url` | string | ✅ | 请求 URL（支持模板变量） |
+| `method` | string | ❌ | `GET`（默认）、`POST`、`PUT`、`DELETE` |
+| `headers` | object | ❌ | HTTP 请求头 |
+| `body` | any | ❌ | POST/PUT 的请求体 |
+| `expect.status_code` | int | ❌ | 期望的 HTTP 状态码 |
+| `expect.body_match` | string | ❌ | 响应体中期望的字符串片段 |
+| `capture` | object | ❌ | 从响应体中提取值的正则表达式 |
+| `timeout` | int | ❌ | 秒数（默认 10） |
+
+### 步骤类型：`script`
+
+运行本地进程。
+
+```yaml
+- id: run_diag
+  type: script
+  command: python tests/health_check.py --imei {{ steps.get_imei.capture.imei }}
+  shell: true
+  timeout: 30
+  capture:
+    result: '(PASS|FAIL): (.+)'
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|-------|------|----------|-------------|
+| `command` | string | ✅ | 要执行的命令 |
+| `shell` | bool | ❌ | 通过 shell 运行（默认 false） |
+| `timeout` | int | ❌ | 秒数（默认 30） |
+| `capture` | object | ❌ | 从 stdout 提取值的正则表达式 |
+
+### 步骤类型：`wait`
+
+纯延时。
+
+```yaml
+- id: settle
+  type: wait
+  duration: 2000     # 毫秒
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|-------|------|----------|-------------|
+| `duration` | int | ✅ | 等待的毫秒数 |
+
+### 步骤类型：`action_batch`
+
+执行一批动作（逻辑操作，无 I/O）。
+
+```yaml
+- id: process_results
+  type: action_batch
+  actions:
+    - print: "Power: {{ devices.DeviceA.power }}"
+    - save:
+        to: constants.test_count
+        value: 5
+    - save:
+        to: devices.DeviceA.ip
+        value: "192.168.1.100"
+```
+
+所有可用动作请参见 `references/actions-catalog.md`。
+
+### 步骤类型：`goto`
+
+无条件跳转到另一个步骤。
+
+```yaml
+- id: skip_to_end
+  type: goto
+  target: final_step
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|-------|------|----------|-------------|
+| `target` | string | ✅ | 要跳转到的步骤 ID |
+| `max_iterations` | int | ❌ | 防止无限循环的安全限制 |
 
 ---
 
-## Constants（常量/变量）
+## 常量与变量
+
+### 常量（静态值）
 
 ```yaml
 Constants:
-  SSID: "TestWiFi_5G"
-  PASSWORD: "TestPass123"
+  SSID: "MyWiFi"
+  PASSWORD: "pass123"
 ```
 
-引用方式：在 `command` 中使用 `$SSID`、`$PASSWORD`。
+在步骤字段中引用为 `{SSID}`, `{PASSWORD}`：
+
+```yaml
+send: 'AT+CWJAP="{SSID}","{PASSWORD}"'
+```
+
+### 步骤捕获（动态值）
+
+步骤结果通过 `capture` 在步骤间传递：
+
+```yaml
+- id: get_fw
+  type: serial
+  send: "AT+QVERSION"
+  expect: ["OK"]
+  capture:
+    version: "Version: (.+)"
+```
+
+在后继步骤中引用为 `{{ steps.get_fw.capture.version }}`：
+
+```yaml
+- id: check_ota
+  type: http
+  url: "http://ota.example.com/check?fw={{ steps.get_fw.capture.version }}"
+```
+
+### Action_batch 模板
+
+```yaml
+actions:
+  - print: "当前版本: {{ steps.get_fw.capture.version }}"
+  - save:
+      to: devices.DeviceA.fw_ver
+      value: "{{ steps.get_fw.capture.version }}"
+```
+
+### 模板变量作用域
+
+| 语法 | 作用域 | 示例 |
+|--------|-------|---------|
+| `{VAR}` | 常量 | `{SSID}` |
+| `{{ constants.VAR }}` | 常量（显式） | `{{ constants.SSID }}` |
+| `{{ steps.ID.capture.KEY }}` | 步骤捕获 | `{{ steps.get_fw.capture.version }}` |
+| `{{ devices.NAME.KEY }}` | 设备运行时数据 | `{{ devices.DeviceA.power }}` |
+| `{{ session.iteration }}` | 当前循环迭代次数 | `{{ session.iteration }}` |
+
+### 类似 Jinja 的过滤器
+
+```yaml
+if: "{{ steps.check.capture.rssi | int }} >= 20"
+```
+
+支持的过滤器：`int`, `float`, `str`, `len`, `lower`, `upper`。
 
 ---
 
-## 执行命令
+## CLI 参考
 
 ```bash
-# 单次执行
-autocom -d dicts/dict.yaml
+# 执行
+autocom -p dicts/pipeline.yaml          # 从文件运行
+autocom -f dicts/                        # 批量运行文件夹中所有 YAML
+autocom -m temps/                         # 监视文件夹，自动运行新文件
 
-# 循环 N 次
-autocom -d dicts/dict.yaml -l 3
+# 循环控制
+-n, --iterations N                       # 最大迭代次数（别名：--loop）
+--duration 30s                           # 时长限制（30s / 5m / 1h）
+--infinite                                # 无限运行直到 Ctrl+C
 
-# 无限循环（Ctrl+C 停止）
-autocom -d dicts/dict.yaml -i
+# MCP 服务器
+autocom mcp                               # stdio 模式（Claude Desktop）
+autocom mcp --sse --port 8888             # SSE HTTP 模式
+autocom mcp --streamable --port 8888      # Streamable HTTP 模式
+autocom mcp --sse --port 8888 --auth-key s3cr3t  # 带 API 密钥
 
-# 指定配置文件
-autocom -d dicts/dict.yaml -c configs/config.yaml
+# Studio UI
+autocom studio                            # 打开流水线编辑器
+autocom studio --port 8080                # 在 HTTP 上启动编辑器
 ```
 
 ---
 
 ## 输出文件
 
-| 文件名 | 内容 |
-|--------|------|
-| `{device_name}_dev_{port}_{baud_rate}.log` | 各设备串口输出日志 |
-| `EXECUTION_LOG.log` | 执行总概览 |
-| `*.json` | 保存的变量数据 |
+| 路径 | 内容 |
+|------|---------|
+| `device_logs/{timestamp}/{device}.log` | 每个设备的串口输出 |
+| `device_logs/{timestamp}/EXECUTION.log` | 流水线执行日志 |
+| `device_logs/{timestamp}/EXECUTION.json` | 结构化执行结果 |
+| `logs/mcp_audit/{date}.jsonl` | MCP 操作审计日志 |
+| `data/sessions.db` | SQLite 会话数据库 |
 
 ---
 
-## 常见错误排查
+## 常见错误快速排查
 
-| 症状 | 原因 | 解决方案 |
-|------|------|----------|
-| 超时无响应 | 波特率不对 / 串口占用 | 确认波特率，检查 COM 口是否被占用 |
-| 响应乱码 | 校验位/数据位配置错误 | 检查 `parity`、`data_bits` 是否匹配模组 |
-| `device not found` | Devices 中没有该设备名 | Commands 中 `device` 字段必须精确匹配 Devices 中 `name` |
-| 指令顺序乱 | 多个 `order` 相同 | 每个 Command 的 `order` 必须唯一 |
-| 重试无效 | `retry` 放在 `success_actions` | `retry` 应放在 `error_actions` |
+| 现象 | 可能原因 | 修复 |
+|---------|-------------|-----|
+| 超时/无响应 | 波特率或端口错误 | 验证 COM 口和波特率 |
+| 响应乱码 | 校验位/数据位不匹配 | 检查设备配置中的 `parity`、`data_bits` |
+| `expect` 始终不匹配 | 响应文本与期望不同 | 先手动发送指令捕获实际响应 |
+| `device not found` | 步骤引用了未定义的设备 | 检查 `Steps[*].device` 是否匹配 `Devices[*].name` |
+| `goto` 目标缺失 | 目标 id 拼写错误 | 确保步骤 ID 唯一且正确 |
+| `capture` 返回空 | 正则太严格或未双重转义 | 测试正则：YAML 中使用 `\\d+` 而非 `\d+` |
+| 循环不结束 | `stop_on_failure: false` 且无最大迭代次数 | 添加 `--duration` 或 `-n` 限制 |

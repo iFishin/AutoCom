@@ -1,42 +1,22 @@
-# 常见 AT 指令组合示例
-
-## 目录
-
-1. [基础通信测试](#1-基础通信测试)
-2. [WiFi 连接测试](#2-wifi-连接测试)
-3. [WiFi Scan 扫描测试](#3-wifi-scan-扫描测试)
-4. [BLE 广播与扫描](#4-ble-广播与扫描)
-5. [BLE 连接测试](#5-ble-连接测试)
-6. [网络通信测试](#6-网络通信测试)
-7. [MQTT 测试](#7-mqtt-测试)
-8. [OTA 升级测试](#8-ota-升级测试)
-9. [多设备并发](#9-多设备并发)
-10. [变量保存与引用](#10-变量保存与引用)
-
----
+# 常见流水线模式
 
 ## 1. 基础通信测试
-
-最简配置，仅验证串口通信是否正常。
 
 ```yaml
 Devices:
   - name: DUT
-    status: enabled
     port: COM66
     baud_rate: 115200
 
-Commands:
-  - command: "AT"
+Steps:
+  - id: basic_at
+    name: "验证 AT 通信"
+    type: serial
     device: DUT
-    order: 1
-    status: enabled
-    expected_responses: ["OK"]
-    timeout: 2000
-    success_actions:
-      - print: "✅ 通信正常"
-    error_actions:
-      - retry: 5
+    send: "AT"
+    expect: ["OK"]
+    timeout: 3
+    on_error: retry(3)
 ```
 
 ---
@@ -48,69 +28,75 @@ Constants:
   SSID: "TestWiFi"
   PASSWORD: "Pass123456"
 
-Commands:
-  # 设置为 Station 模式
-  - command: "AT+CWMODE=1"
-    device: DUT_WiFi
-    order: 1
-    expected_responses: ["OK"]
-    timeout: 3000
+Steps:
+  - id: set_mode
+    name: "设置为 Station 模式"
+    type: serial
+    device: DUT
+    send: "AT+CWMODE=1"
+    expect: ["OK"]
+    timeout: 5
 
-  # 等待模组就绪
-  - command: ""
-    device: DUT_WiFi
-    order: 2
-    timeout: 100
-    success_actions:
-      - wait:
-          duration: 2000
+  - id: wait_ready
+    name: "等待模组就绪"
+    type: wait
+    duration: 2000
 
-  # 连接 WiFi（使用变量）
-  - command: 'AT+CWJAP="$SSID","$PASSWORD"'
-    device: DUT_WiFi
-    order: 3
-    expected_responses: ["OK", "WIFI GOT IP"]
-    timeout: 15000
-    success_actions:
-      - print: "✅ WiFi 连接成功"
-    error_actions:
-      - retry: 3
+  - id: connect_wifi
+    name: "连接 WiFi"
+    type: serial
+    device: DUT
+    send: 'AT+CWJAP="{SSID}","{PASSWORD}"'
+    expect: ["OK", "WIFI GOT IP"]
+    timeout: 30
+    on_error: retry(3)
+    capture:
+      ip: 'GOT IP:? ?(\d+\.\d+\.\d+\.\d+)'
 
-  # 获取 IP
-  - command: "AT+CIFSR"
-    device: DUT_WiFi
-    order: 4
-    expected_responses: ["OK"]
-    timeout: 3000
-    success_actions:
-      - save_conditional:
-          device: DUT_WiFi
-          variable: local_ip
-          pattern: '\\+CIFSR:STAIP,"(.+?)"'
-      - print: "✅ WiFi 连接完成"
+  - id: get_ip
+    name: "获取 IP 地址"
+    type: serial
+    device: DUT
+    send: "AT+CIFSR"
+    expect: ["OK"]
+    timeout: 5
+    capture:
+      sta_ip: 'STAIP,"(.+?)"'
+
+  - id: print_result
+    name: "打印连接结果"
+    type: action_batch
+    actions:
+      - print: "IP: {{ steps.get_ip.capture.sta_ip }}"
 ```
 
 ---
 
-## 3. WiFi Scan 扫描测试
+## 3. WiFi 扫描
 
 ```yaml
-Commands:
-  - command: "AT+CWMODE=1"
-    device: DUT_WiFi
-    order: 1
-    expected_responses: ["OK"]
-    timeout: 3000
+Steps:
+  - id: set_mode
+    type: serial
+    device: DUT
+    send: "AT+CWMODE=1"
+    expect: ["OK"]
+    timeout: 5
 
-  - command: "AT+CWLAP"
-    device: DUT_WiFi
-    order: 2
-    expected_responses: ["OK"]
-    timeout: 10000
-    success_actions:
-      - print: "✅ WiFi 扫描完成"
-    error_actions:
-      - print: "⚠️ 扫描失败或无热点"
+  - id: scan
+    type: serial
+    device: DUT
+    send: "AT+CWLAP"
+    expect: ["OK"]
+    timeout: 15
+    capture:
+      aps: 'CWLAP:"(.+?)"'
+    on_error: skip
+
+  - id: print_scan
+    type: action_batch
+    actions:
+      - print: "APs: {{ steps.scan.capture.aps }}"
 ```
 
 ---
@@ -118,102 +104,96 @@ Commands:
 ## 4. BLE 广播与扫描
 
 ```yaml
-Commands:
-  # 设置广播模式
-  - command: "AT+BLEMODE=0"
-    device: DUT_BLE
-    order: 1
-    expected_responses: ["OK"]
-    timeout: 3000
+Constants:
+  BLE_NAME: "AutoCom_BLE"
 
-  # 设置广播名称
-  - command: 'AT+BLENAME="Quectel_BLE"'
-    device: DUT_BLE
-    order: 2
-    expected_responses: ["OK"]
-    timeout: 3000
+Steps:
+  - id: set_adv_name
+    name: "设置 BLE 名称"
+    type: serial
+    device: DUT
+    send: 'AT+BLENAME="{BLE_NAME}"'
+    expect: ["OK"]
+    timeout: 5
 
-  # 开启广播
-  - command: "AT+BLEADV=1"
-    device: DUT_BLE
-    order: 3
-    expected_responses: ["OK"]
-    timeout: 3000
-    success_actions:
-      - wait:
-          duration: 3000
-      - print: "✅ 广播已开启，等待主设备连接"
+  - id: start_adv
+    name: "启动广播"
+    type: serial
+    device: DUT
+    send: "AT+BLEADV=1"
+    expect: ["OK"]
+    timeout: 5
+
+  - id: wait_connection
+    name: "等待传入连接"
+    type: serial_wait
+    device: DUT
+    expect: ["CONNECTED", "_CONNECTED"]
+    timeout: 60
 ```
 
 ---
 
-## 5. BLE 连接测试
+## 5. BLE 连接
 
 ```yaml
 Constants:
   TARGET_MAC: "AA:BB:CC:DD:EE:FF"
 
-Commands:
-  # 设置为从机模式
-  - command: "AT+BLEMODE=0"
-    device: DUT_BLE
-    order: 1
-    expected_responses: ["OK"]
-    timeout: 3000
+Steps:
+  - id: set_mode
+    type: serial
+    device: DUT
+    send: "AT+BLEMODE=1"
+    expect: ["OK"]
+    timeout: 5
 
-  # 连接指定 MAC 地址
-  - command: 'AT+BLECONN=0,"$TARGET_MAC"'
-    device: DUT_BLE
-    order: 2
-    expected_responses: ["OK", "_CONNECTED"]
-    timeout: 10000
-    success_actions:
-      - print: "✅ BLE 连接成功"
-    error_actions:
-      - print: "❌ BLE 连接失败"
+  - id: scan_target
+    type: serial
+    device: DUT
+    send: 'AT+BLESCAN=10'
+    expect: ["OK"]
+    timeout: 15
 
-  # 查询连接状态
-  - command: "AT+BLECONN?"
-    device: DUT_BLE
-    order: 3
-    expected_responses: ["OK"]
-    timeout: 3000
-    success_actions:
-      - print: "✅ 连接状态查询成功"
+  - id: connect
+    type: serial
+    device: DUT
+    send: 'AT+BLECONN=0,"{TARGET_MAC}"'
+    expect: ["OK", "_CONNECTED"]
+    timeout: 15
+    on_error: retry(2)
 ```
 
 ---
 
-## 6. 网络通信测试
+## 6. HTTP 与 Ping
 
 ### 6.1 HTTP GET
 
 ```yaml
-Commands:
-  - command: 'AT+HTTPCLIENT=1,0,"http://httpbin.org/get","","",""'
-    device: DUT_WiFi
-    order: 1
-    expected_responses: ["OK", "+HTTPCLIENT"]
-    timeout: 15000
-    success_actions:
-      - print: "✅ HTTP GET 成功"
-    error_actions:
-      - print: "❌ HTTP 请求失败"
+Steps:
+  - id: http_get
+    type: http
+    url: "http://httpbin.org/get"
+    method: GET
+    expect:
+      status_code: 200
+    timeout: 15
+    capture:
+      origin: '"origin": "(.+?)"'
 ```
 
 ### 6.2 Ping 测试
 
 ```yaml
-Commands:
-  - command: 'AT+PING="www.baidu.com"'
-    device: DUT_WiFi
-    order: 1
-    expected_responses: ["OK", "+PING"]
-    timeout: 10000
-    success_actions:
-      - print: "✅ 网络连通性正常"
-    error_actions:
-      - print: "❌ 网络 Ping 不通"
+Steps:
+  - id: ping
+    type: serial
+    device: DUT
+    send: 'AT+PING="114.114.114.114"'
+    expect: ["OK", "+PING:"]
+    timeout: 15
+    on_error: skip
 ```
 
 ### 6.3 TCP 连接
@@ -221,19 +201,15 @@ Commands:
 ```yaml
 Constants:
   SERVER_IP: "192.168.1.100"
-  SERVER_PORT: "8080"
+  SERVER_PORT: 8080
 
-Commands:
-  # 建立 TCP 连接
-  - command: 'AT+SAVETRANSLINK=1,"$SERVER_IP","$SERVER_PORT","TCP"'
-    device: DUT_WiFi
-    order: 1
-    expected_responses: ["OK", "CONNECT"]
-    timeout: 10000
-    success_actions:
-      - print: "✅ TCP 连接已建立"
-    error_actions:
-      - print: "❌ TCP 连接失败"
+Steps:
+  - id: tcp_connect
+    type: serial
+    device: DUT
+    send: 'AT+SAVETRANSLINK=1,"{SERVER_IP}","{SERVER_PORT}","TCP"'
+    expect: ["OK", "CONNECT"]
+    timeout: 15
 ```
 
 ---
@@ -242,225 +218,195 @@ Commands:
 
 ```yaml
 Constants:
-  MQTT_BROKER: "mqtt://broker.emqx.io:1883"
-  CLIENT_ID: "QuectelClient_001"
-  TOPIC: "test/quectel"
+  BROKER: "mqtt://broker.emqx.io:1883"
+  CLIENT_ID: "TestClient_001"
+  TOPIC: "test/autocom"
 
-Commands:
-  # 配置 MQTT 参数
-  - command: 'AT+MQTTCONFIG="$MQTT_BROKER","$CLIENT_ID","","",0,0'
-    device: DUT_WiFi
-    order: 1
-    expected_responses: ["OK"]
-    timeout: 5000
+Steps:
+  - id: mqtt_config
+    type: serial
+    device: DUT
+    send: 'AT+MQTTCONFIG="{BROKER}","{CLIENT_ID}","","",0,0'
+    expect: ["OK"]
+    timeout: 5
 
-  # 连接 Broker
-  - command: "AT+MQTTCONN=0"
-    device: DUT_WiFi
-    order: 2
-    expected_responses: ["OK", "+MQTTCONN"]
-    timeout: 10000
-    success_actions:
-      - print: "✅ MQTT 连接成功"
-    error_actions:
-      - print: "❌ MQTT 连接失败"
+  - id: mqtt_connect
+    type: serial
+    device: DUT
+    send: "AT+MQTTCONN=0"
+    expect: ["OK", "+MQTTCONN"]
+    timeout: 15
 
-  # 订阅主题
-  - command: 'AT+MQTTSUB="$TOPIC",1'
-    device: DUT_WiFi
-    order: 3
-    expected_responses: ["OK"]
-    timeout: 5000
-    success_actions:
-      - print: "✅ 主题订阅成功"
+  - id: mqtt_sub
+    type: serial
+    device: DUT
+    send: 'AT+MQTTSUB="{TOPIC}",1'
+    expect: ["OK"]
+    timeout: 5
 
-  # 发布消息
-  - command: 'AT+MQTTPUB="$TOPIC","Hello from AutoCom",1,0'
-    device: DUT_WiFi
-    order: 4
-    expected_responses: ["OK"]
-    timeout: 5000
-    success_actions:
-      - print: "✅ 消息发布成功"
+  - id: mqtt_pub
+    type: serial
+    device: DUT
+    send: 'AT+MQTTPUB="{TOPIC}","Hello from AutoCom",1,0'
+    expect: ["OK"]
+    timeout: 5
 
-  # 断开连接
-  - command: "AT+MQTTDISCONN"
-    device: DUT_WiFi
-    order: 5
-    expected_responses: ["OK"]
-    timeout: 3000
-    success_actions:
-      - print: "✅ MQTT 已断开"
+  - id: mqtt_disconn
+    type: serial
+    device: DUT
+    send: "AT+MQTTDISCONN"
+    expect: ["OK"]
+    timeout: 5
 ```
 
 ---
 
-## 8. OTA 升级测试
+## 8. OTA 升级
 
 ```yaml
 Constants:
   OTA_URL: "http://192.168.1.100:8080/firmware.bin"
 
-Commands:
-  # 查询当前固件版本
-  - command: "AT+GMR"
-    device: DUT_WiFi
-    order: 1
-    expected_responses: ["OK"]
-    timeout: 3000
-    success_actions:
-      - print: "✅ 当前固件版本已记录"
-      - save_conditional:
-          device: DUT_WiFi
-          variable: old_version
-          pattern: "SDK version:(.+?)\r"
+Steps:
+  - id: get_version
+    type: serial
+    device: DUT
+    send: "AT+GMR"
+    expect: ["OK"]
+    timeout: 5
+    capture:
+      version: 'SDK version:(.+?)\r'
 
-  # 启动 OTA 升级
-  - command: 'AT+OTACONFIG="$OTA_URL",1'
-    device: DUT_WiFi
-    order: 2
-    expected_responses: ["OK", "+OTARESULT"]
-    timeout: 120000     # OTA 时间较长，适当延长超时
-    success_actions:
-      - print: "✅ OTA 升级成功，正在重启..."
-      - wait:
-          duration: 5000
-    error_actions:
-      - print: "❌ OTA 升级失败"
+  - id: do_ota
+    type: serial
+    device: DUT
+    send: 'AT+OTACONFIG="{OTA_URL}",1'
+    expect: ["OK", "+OTARESULT"]
+    timeout: 120
+    on_error: retry(2)
 
-  # 重启后验证版本
-  - command: "AT+GMR"
-    device: DUT_WiFi
-    order: 3
-    expected_responses: ["OK"]
-    timeout: 5000
-    success_actions:
-      - print: "✅ 固件版本验证"
+  - id: post_ota_wait
+    type: wait
+    duration: 5000
+
+  - id: verify_version
+    type: serial
+    device: DUT
+    send: "AT+GMR"
+    expect: ["OK"]
+    timeout: 5
+    capture:
+      new_version: 'SDK version:(.+?)\r'
+
+  - id: print_versions
+    type: action_batch
+    actions:
+      - print: "旧版本: {{ steps.get_version.capture.version }}"
+      - print: "新版本: {{ steps.verify_version.capture.new_version }}"
 ```
 
 ---
 
-## 9. 多设备并发
-
-同时测试 WiFi 模组和 BLE 模组：
+## 9. 多设备流水线
 
 ```yaml
 Devices:
-  - name: DUT_WiFi
-    status: enabled
+  - name: WiFi_Dev
     port: COM66
     baud_rate: 115200
-
-  - name: DUT_BLE
-    status: enabled
+  - name: BLE_Dev
     port: COM67
     baud_rate: 115200
 
-Commands:
-  # 并行执行：同时测试两个设备的 AT 通信
-  - command: "AT"
-    device: DUT_WiFi
-    order: 1
-    status: enabled
-    expected_responses: ["OK"]
-    timeout: 2000
-    concurrent_strategy: parallel
-    success_actions:
-      - print: "✅ WiFi AT 正常"
+Steps:
+  - id: wifi_check
+    type: serial
+    device: WiFi_Dev
+    send: "AT"
+    expect: ["OK"]
+    timeout: 3
 
-  - command: "AT"
-    device: DUT_BLE
-    order: 1
-    status: enabled
-    expected_responses: ["OK"]
-    timeout: 2000
-    concurrent_strategy: parallel
-    success_actions:
-      - print: "✅ BLE AT 正常"
+  - id: ble_check
+    type: serial
+    device: BLE_Dev
+    send: "AT"
+    expect: ["OK"]
+    timeout: 3
 
-  # 串行执行：WiFi 先连接，再 BLE 广播
-  - command: "AT+CWMODE=1"
-    device: DUT_WiFi
-    order: 2
-    expected_responses: ["OK"]
-    timeout: 3000
+  - id: wifi_connect
+    type: serial
+    device: WiFi_Dev
+    send: 'AT+CWJAP="{SSID}","{PASSWORD}"'
+    expect: ["OK", "WIFI GOT IP"]
+    timeout: 30
 
-  - command: "AT+BLEMODE=0"
-    device: DUT_BLE
-    order: 3
-    expected_responses: ["OK"]
-    timeout: 3000
+  - id: ble_adv
+    type: serial
+    device: BLE_Dev
+    send: "AT+BLEADV=1"
+    expect: ["OK"]
+    timeout: 5
 ```
 
 ---
 
-## 10. 变量保存与引用
-
-### 10.1 正则提取保存
+## 10. 变量捕获与复用
 
 ```yaml
-Commands:
-  # 查询信号强度，提取数值保存
-  - command: "AT+CSQ"
-    device: DUT_WiFi
-    order: 1
-    expected_responses: ["OK"]
-    timeout: 3000
-    success_actions:
-      - save_conditional:
-          device: DUT_WiFi
-          variable: rssi_value
-          pattern: "\\+CSQ: (\\d+)"
-      - print: "✅ 信号值已保存到变量"
+Steps:
+  - id: get_csq
+    type: serial
+    device: DUT
+    send: "AT+CSQ"
+    expect: ["OK"]
+    timeout: 5
+    capture:
+      rssi: '\+CSQ: (\d+)'
 
-  # 根据保存的变量值决定后续操作
-  - command: 'AT+SEND_DATA="$rssi_value"'
-    device: DUT_WiFi
-    order: 2
-    expected_responses: ["OK"]
-    timeout: 3000
+  - id: check_signal
+    type: action_batch
+    actions:
+      - print: "信号强度: {{ steps.get_csq.capture.rssi }}"
+      - save:
+          to: constants.rssi_value
+          value: "{{ steps.get_csq.capture.rssi }}"
 ```
 
-### 10.2 CRC 校验计算
+---
+
+## 11. 循环/稳定性测试
 
 ```yaml
-Commands:
-  - command: ""
-    device: DUT_WiFi
-    order: 1
-    timeout: 100
-    success_actions:
-      - calculate_crc:
-          device: DUT_WiFi
-          variable: crc_result
-          raw_data: "Hello AutoCom"
+Config:
+  description: "WiFi 重连 100 次"
+  mode: loop
+  loop:
+    iterations: 100
+    interval_ms: 2000
+    stop_on_failure: true
 
-  - command: 'AT+UPLOAD="$crc_result"'
-    device: DUT_WiFi
-    order: 2
-    expected_responses: ["OK"]
-    timeout: 5000
-```
+Devices:
+  - name: DUT
+    port: COM66
+    baud_rate: 115200
 
-### 10.3 随机字符串生成
+Constants:
+  SSID: "TestWiFi"
+  PASSWORD: "Pass123456"
 
-```yaml
-Commands:
-  - command: ""
-    device: DUT_WiFi
-    order: 1
-    timeout: 100
-    success_actions:
-      - generate_random_str:
-          device: DUT_WiFi
-          variable: random_token
-          length: 32
+Steps:
+  - id: connect
+    type: serial
+    device: DUT
+    send: 'AT+CWJAP="{SSID}","{PASSWORD}"'
+    expect: ["OK", "WIFI GOT IP"]
+    timeout: 30
+    on_error: retry(2)
 
-  - command: 'AT+REGISTER="$random_token"'
-    device: DUT_WiFi
-    order: 2
-    expected_responses: ["OK"]
-    timeout: 5000
-    success_actions:
-      - print: "✅ 随机 Token 注册成功"
+  - id: disconnect
+    type: serial
+    device: DUT
+    send: "AT+CWQAP"
+    expect: ["OK"]
+    timeout: 5
 ```

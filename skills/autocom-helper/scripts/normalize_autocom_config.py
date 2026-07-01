@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Normalize AutoCom config layout for readability and consistency."""
+"""规范化 AutoCom Steps 格式配置的布局以提高可读性和一致性。"""
 
 from __future__ import annotations
 
@@ -12,12 +12,11 @@ from typing import Any, Dict, List
 from lint_autocom_config import _load_config
 
 TOP_KEYS = [
-    "ConfigForDevices",
+    "Config",
     "Devices",
-    "ConfigForActions",
-    "ConfigForCommands",
     "Constants",
-    "Commands",
+    "Steps",
+    "loop",
 ]
 
 DEVICE_KEYS = [
@@ -34,16 +33,31 @@ DEVICE_KEYS = [
     "monitor",
 ]
 
-COMMAND_KEYS = [
-    "command",
+STEP_KEYS = [
+    "id",
+    "name",
+    "type",
     "device",
     "order",
-    "status",
-    "expected_responses",
+    "send",
+    "expect",
+    "capture",
     "timeout",
-    "concurrent_strategy",
-    "success_actions",
-    "error_actions",
+    "url",
+    "method",
+    "headers",
+    "body",
+    "command",
+    "shell",
+    "duration",
+    "target",
+    "max_iterations",
+    "if",
+    "unless",
+    "on_error",
+    "on_success",
+    "actions",
+    "hex_mode",
 ]
 
 
@@ -58,13 +72,13 @@ def _ordered_obj(src: Dict[str, Any], preferred: List[str]) -> Dict[str, Any]:
     return out
 
 
-def _normalize(data: Dict[str, Any], reindex_orders: bool = False) -> Dict[str, Any]:
+def _normalize(data: Dict[str, Any]) -> Dict[str, Any]:
     cfg = copy.deepcopy(data)
 
-    # Top-level key ordering
+    # 顶层键排序
     cfg = _ordered_obj(cfg, TOP_KEYS)
 
-    # Devices ordering
+    # 设备排序
     devices = cfg.get("Devices")
     if isinstance(devices, list):
         norm_devices = []
@@ -73,38 +87,31 @@ def _normalize(data: Dict[str, Any], reindex_orders: bool = False) -> Dict[str, 
                 norm_devices.append(_ordered_obj(dev, DEVICE_KEYS))
             else:
                 norm_devices.append(dev)
-        # Stable sort by name when possible
         cfg["Devices"] = sorted(
             norm_devices,
             key=lambda d: (d.get("name", "") if isinstance(d, dict) else "")
         )
 
-    # Commands ordering
-    commands = cfg.get("Commands")
-    if isinstance(commands, list):
-        norm_cmds = []
-        for cmd in commands:
-            if isinstance(cmd, dict):
-                norm_cmds.append(_ordered_obj(cmd, COMMAND_KEYS))
+    # 步骤排序
+    steps = cfg.get("Steps")
+    if isinstance(steps, list):
+        norm_steps = []
+        for step in steps:
+            if isinstance(step, dict):
+                norm_steps.append(_ordered_obj(step, STEP_KEYS))
             else:
-                norm_cmds.append(cmd)
+                norm_steps.append(step)
 
-        def _cmd_sort_key(c: Any) -> Any:
-            if not isinstance(c, dict):
-                return (10**9, "")
-            order = c.get("order")
+        def _step_sort_key(s: Any) -> Any:
+            if not isinstance(s, dict):
+                return (10 ** 9, "")
+            order = s.get("order")
             if isinstance(order, int):
-                return (order, c.get("device", ""))
-            return (10**9, c.get("device", ""))
+                return (order, s.get("id", ""))
+            return (10 ** 9, s.get("id", ""))
 
-        norm_cmds.sort(key=_cmd_sort_key)
-
-        if reindex_orders:
-            for idx, cmd in enumerate(norm_cmds, start=1):
-                if isinstance(cmd, dict):
-                    cmd["order"] = idx
-
-        cfg["Commands"] = norm_cmds
+        norm_steps.sort(key=_step_sort_key)
+        cfg["Steps"] = norm_steps
 
     return cfg
 
@@ -117,26 +124,25 @@ def _dump(path: str, data: Dict[str, Any]) -> str:
     try:
         import yaml  # type: ignore
     except Exception as exc:
-        raise RuntimeError("pyyaml is required to write YAML files. install with: pip install pyyaml") from exc
+        raise RuntimeError("输出 YAML 文件需要 pyyaml 库，请执行: pip install pyyaml") from exc
 
     return yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Normalize AutoCom YAML/JSON config")
-    parser.add_argument("file", help="source config file")
-    parser.add_argument("--out", help="output file path; default: <input>.normalized.<ext>")
-    parser.add_argument("--write", action="store_true", help="overwrite source file")
-    parser.add_argument("--reindex-orders", action="store_true", help="rewrite command orders to 1..N after sort")
+    parser = argparse.ArgumentParser(description="规范化 AutoCom Steps 格式配置")
+    parser.add_argument("file", help="源配置文件")
+    parser.add_argument("--out", help="输出文件路径；默认: <输入文件名>.normalized.<扩展名>")
+    parser.add_argument("--write", action="store_true", help="直接覆盖源文件")
     args = parser.parse_args()
 
     if args.write and args.out:
-        print("ERROR: --write and --out cannot be used together")
+        print("错误: --write 和 --out 不能同时使用")
         return 2
 
     try:
         data = _load_config(args.file)
-        normalized = _normalize(data, reindex_orders=args.reindex_orders)
+        normalized = _normalize(data)
 
         if args.write:
             target = args.file
@@ -151,10 +157,10 @@ def main() -> int:
         with open(target, "w", encoding="utf-8") as f:
             f.write(text)
 
-        print(f"Wrote normalized config to: {target}")
+        print(f"已写入规范化配置到: {target}")
         return 0
     except Exception as e:
-        print(f"ERROR: {e}")
+        print(f"错误: {e}")
         return 2
 
 

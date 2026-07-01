@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Batch lint AutoCom config files in a directory tree."""
+"""批量检查目录树中的 AutoCom Steps 格式配置文件。"""
 
 from __future__ import annotations
 
@@ -8,8 +8,7 @@ import os
 import sys
 from typing import List, Tuple
 
-# Reuse single-file lint implementation
-from lint_autocom_config import Finding, _lint, _load_config
+from lint_autocom_config import Finding, _lint_steps, _load_config
 
 
 def _collect_files(root: str) -> List[str]:
@@ -30,7 +29,7 @@ def _print_for_file(path: str, findings: List[Finding]) -> None:
     rel = path
     print(f"\n== {rel}")
     if not findings:
-        print("  No findings")
+        print("  未发现问题")
         return
 
     for f in sorted(findings, key=lambda x: (_severity_rank(x.severity), x.code, x.location)):
@@ -38,18 +37,18 @@ def _print_for_file(path: str, findings: List[Finding]) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Batch lint AutoCom YAML/JSON configs")
-    parser.add_argument("path", help="directory path to scan")
-    parser.add_argument("--stop-on-error", action="store_true", help="stop at first parse error")
+    parser = argparse.ArgumentParser(description="批量检查 AutoCom Steps 格式配置")
+    parser.add_argument("path", help="要扫描的目录路径")
+    parser.add_argument("--stop-on-error", action="store_true", help="遇到解析错误时立即停止")
     args = parser.parse_args()
 
     if not os.path.isdir(args.path):
-        print(f"ERROR: not a directory: {args.path}")
+        print(f"错误: 不是有效的目录: {args.path}")
         return 2
 
     files = _collect_files(args.path)
     if not files:
-        print("No config files found (.json/.yaml/.yml).")
+        print("未找到配置文件（.json/.yaml/.yml）。")
         return 0
 
     total_files = 0
@@ -62,23 +61,23 @@ def main() -> int:
         total_files += 1
         try:
             data = _load_config(path)
-            findings = _lint(data)
+            findings = _lint_steps(data)
             total_findings += len(findings)
             blockers += sum(1 for f in findings if f.severity == "blocker")
             majors += sum(1 for f in findings if f.severity == "major")
             _print_for_file(path, findings)
-        except Exception as e:  # parse/load issues
+        except Exception as e:
             parse_errors.append((path, str(e)))
-            print(f"\n== {path}\n  [ERROR] PARSE failed: {e}")
+            print(f"\n== {path}\n  [错误] 解析失败: {e}")
             if args.stop_on_error:
                 break
 
-    print("\n== Summary")
-    print(f"  files: {total_files}")
-    print(f"  findings: {total_findings}")
-    print(f"  blockers: {blockers}")
-    print(f"  majors: {majors}")
-    print(f"  parse_errors: {len(parse_errors)}")
+    print("\n== 汇总")
+    print(f"  文件数: {total_files}")
+    print(f"  发现问题数: {total_findings}")
+    print(f"  阻塞级: {blockers}")
+    print(f"  主要级: {majors}")
+    print(f"  解析错误: {len(parse_errors)}")
 
     if parse_errors:
         return 2

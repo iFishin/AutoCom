@@ -1,160 +1,185 @@
-# Action 参考目录（可分发版）
+# Action Batch 动作目录
 
-本文件是 autocom-helper 的内置 Action 白名单与参数参考。仅当 action 在此文件中定义时，智能体才应推荐使用。
+以下所有动作均可用于 `type: action_batch` 步骤的 `actions:` 列表中。
 
-## 说明
+## Print（打印）
 
-- 该目录用于独立分发，不依赖仓库外文档。
-- 如你的项目新增了 action，请在本文件追加。
-- 新增 action 时，请提供：名称、用途、最小参数、示例。
+向日志输出一条消息。
 
-## 基础动作
-
-### print
-
-- 用途: 输出提示消息
-- 格式:
-
-```json
-{"print": "message"}
+```yaml
+- print: "Pipeline step completed"
 ```
 
-### wait
+支持模板变量：
 
-- 用途: 等待指定毫秒
-- 格式:
-
-```json
-{"wait": {"duration": 1000}}
+```yaml
+- print: "当前版本: {{ steps.check_fw.capture.version }}"
+- print: "SSID: {SSID}"
 ```
 
-### retry
+---
 
-- 用途: 失败后重试
-- 格式:
+## Wait（等待）
 
-```json
-{"retry": 3}
+暂停执行一段时间。
+
+```yaml
+- wait:
+    duration: 1000     # 毫秒
 ```
 
-### save
+---
 
-- 用途: 保存变量
-- 格式:
+## Save（保存）
 
-```json
-{"save": {"device": "DUT", "variable": "var_name", "value": "value"}}
+在运行时上下文中存储一个值。
+
+```yaml
+- save:
+    to: constants.my_var
+    value: "hello"
+
+- save:
+    to: devices.DeviceA.power
+    value: 100
+
+- save:
+    to: devices.DeviceA.fw_version
+    value: "{{ steps.check_fw.capture.version }}"
 ```
 
-### save_conditional
+| 字段 | 必填 | 说明 |
+|-------|----------|-------------|
+| `to` | ✅ | 目标路径：`constants.KEY`、`devices.NAME.KEY`、`steps.ID.capture.KEY` |
+| `value` | ✅ | 值（支持模板变量） |
 
-- 用途: 正则提取并保存变量
-- 格式:
+---
 
-```json
-{"save_conditional": {"device": "DUT", "variable": "ip", "pattern": "regex"}}
+## Retry（重试）
+
+失败时重试当前 action_batch 块。
+
+```yaml
+- retry: 3
 ```
 
-## 设备/流程控制动作
+注意：这只会重试 action_batch 本身，不会重试单个串口指令。
+对于串口步骤的重试，请使用顶层 `on_error: retry(N)`。
 
-### set_status
+---
 
-```json
-{"set_status": "enabled"}
+## Generate Random String（生成随机字符串）
+
+```yaml
+- generate_random_str:
+    to: constants.token         # 存储位置
+    length: 16                  # 字符串长度
 ```
 
-### set_status_by_order
+---
 
-```json
-{"set_status_by_order": {"order": 2, "status": "disabled"}}
+## Calculate Length（计算长度）
+
+```yaml
+- calculate_length:
+    to: constants.data_len
+    data: "{{ steps.get_fw.capture.version }}"
 ```
 
-### execute_command
+---
 
-```json
-{"execute_command": {"command": "AT", "timeout": 1000}}
+## Calculate CRC（计算 CRC 校验）
+
+```yaml
+- calculate_crc:
+    to: constants.checksum
+    raw_data: "some data"
 ```
 
-### execute_command_by_order
+---
 
-```json
-{"execute_command_by_order": 3}
+## Replace String（替换字符串）
+
+```yaml
+- replace_str:
+    to: constants.fixed
+    data: "a-b-c"
+    original_str: "-"
+    new_str: "_"
 ```
 
-## 数据处理动作
+---
 
-### generate_random_str
+## WiFi Connect（WiFi 连接）
 
-```json
-{"generate_random_str": {"device": "DUT", "variable": "token", "length": 16}}
+将主机连接到 WiFi 网络（使用 pywifi）。
+
+```yaml
+- wifi_connect:
+    ssid: "{SSID}"
+    password: "{PASSWORD}"
+    timeout: 20           # 每次尝试的超时秒数（默认 10）
+    retry: 3              # 尝试次数（默认 3）
+    retry_interval: 1.0   # 尝试间隔秒数
+    iface_index: 0        # WiFi 接口索引
 ```
 
-### calculate_length
+---
 
-```json
-{"calculate_length": {"device": "DUT", "variable": "len", "data": "abc"}}
+## Post WiFi Config（发送 WiFi 配置）
+
+通过 HTTP POST 向设备发送 WiFi 凭据（SoftAP 配置）。
+
+```yaml
+- post_wifi_config_once:
+    device_ip: "192.168.1.1"
+    ssid: "{Target_SSID}"
+    password: "{Target_PASSWORD}"
+    timeout: 5
+    repeat: 3             # 发送次数（服务器可能不响应）
+    repeat_interval: 0.5  # 发送间隔秒数
 ```
 
-### calculate_crc
+---
 
-```json
-{"calculate_crc": {"device": "DUT", "variable": "crc", "raw_data": "ABC"}}
+## Get WiFi Config（获取 WiFi 配置）
+
+通过 HTTP GET 向设备发送 WiFi 凭据（SoftAP 配置）。
+
+```yaml
+- get_wifi_config_once:
+    device_ip: "192.168.1.1"
+    ssid: "{Target_SSID}"
+    password: "{Target_PASSWORD}"
+    timeout: 5
+    repeat: 3
+    repeat_interval: 0.5
 ```
 
-### replace_str
+---
 
-```json
-{"replace_str": {"device": "DUT", "variable": "out", "data": "abc", "original_str": "a", "new_str": "A"}}
+## Get Network Page（获取网络页面）
+
+通过 HTTP GET 从设备获取页面。
+
+```yaml
+- get_network_page:
+    device_ip: "192.168.1.1"
+    url: "/"
 ```
 
-## 网络相关动作
+---
 
-### wifi_connect
+## Send File（发送文件）
 
-```json
-{"wifi_connect": {"ssid": "MyWiFi", "password": "Pass", "timeout": 10}}
-```
+通过串口发送文件内容。
 
-### get_wifi_config
+```yaml
+- send_file: "certs/server.crt"
 
-```json
-{"get_wifi_config": {"device_ip": "192.168.1.1", "ssid": "MyWiFi", "password": "Pass"}}
-```
-
-### post_wifi_config
-
-```json
-{"post_wifi_config": {"device_ip": "192.168.1.1", "ssid": "MyWiFi", "password": "Pass"}}
-```
-
-### get_network_page
-
-```json
-{"get_network_page": {"device_ip": "192.168.1.1", "url": "/"}}
-```
-
-### send_file
-
-```json
-{"send_file": "certs/server.crt"}
-```
-
-扩展格式:
-
-```json
-{"send_file": {"path": "config.txt", "line_ending": "crlf", "encoding": "utf-8"}}
-```
-
-## 用户自定义动作（预留）
-
-在这里追加你的自定义 action，并给出 JSON 示例。建议格式：
-
-```markdown
-### my_custom_action
-- 用途: ...
-- 格式:
-```json
-{"my_custom_action": {...}}
-```
-
+# 带选项：
+- send_file:
+    path: "config.txt"
+    encoding: "utf-8"       # 或 "gbk"、"latin-1"
+    line_ending: "lf"       # "lf"、"crlf"、"cr"、"none"
 ```
