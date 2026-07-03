@@ -148,9 +148,13 @@ autocom -m temps/
 通过 AutoCom MCP 服务器提供：
 
 - `load_pipeline`, `validate_pipeline`, `run_pipeline`
+- `pipeline_list`, `pipeline_step_debug`, `pipeline_dry_run`
+- `execution_list`, `execution_report`, `session_log_query`
 - `list_serial_ports`, `execute_serial_command`, `monitor_serial_port`
 - `serial_session_open/send/read/close/list`（持久会话）
 - `serial_pin_status/set`, `serial_loopback_test`, `serial_latency_bench`
+- `serial_baud_scan`, `serial_hex_dump`
+- `device_profile_list/save/delete`（设备参数管理）
 
 ## 常见错误
 
