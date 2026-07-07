@@ -126,38 +126,6 @@ Steps:
 
 ---
 
-## 📁 项目结构
-
-```
-AutoCom/
-├── components/
-│   ├── SessionStore.py       # SQLite 持久化层（替代旧 JSON DataStore）
-│   ├── Context.py             # 运行时变量上下文
-│   ├── PipelineScheduler.py   # 流水线调度器（程序计数器 + 控制流）
-│   ├── steps/                 # 各 type 的 Handler
-│   │   ├── serial.py
-│   │   ├── http.py
-│   │   ├── script.py
-│   │   ├── wait.py
-│   │   └── action_batch.py
-│   ├── CommandExecutor.py     # 旧兼容层（保留 execute_command()）
-│   ├── Device.py              # 串口设备抽象
-│   └── Logger.py              # 日志系统
-├── utils/
-│   ├── TemplateEngine.py      # 变量解析 + 条件评估
-│   ├── ActionHandler.py       # Action 分发系统
-│   └── dirs.py                # 路径管理
-├── dicts/
-│   └── AutoCom2_Dicts/        # 新格式示例配置文件
-├── docs/
-│   ├── Started.md             # 开发指南
-│   └── MCP.md                 # MCP Server 文档
-├── data/
-│   └── sessions.db            # SQLite 执行记录
-├── cli.py                     # CLI 入口
-└── AutoCom.py                 # 主执行引擎
-```
-
 ---
 
 ## 📚 文档
