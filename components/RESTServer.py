@@ -36,6 +36,7 @@ except Exception:
 # 复用 MCPServer 的串口操作方法
 from components.MCPServer import AutoComMCPServer
 from components.Logger import AutoComLogger, get_logger
+from version import __version__
 
 logger: AutoComLogger = get_logger("AutoCom.API")
 
@@ -52,7 +53,7 @@ class AutoComRESTServer:
 
         self.app = FastAPI(
             title="AutoCom REST API",
-            version="1.0.0",
+            version=__version__,
             description="AutoCom 串口调试与流水线执行 REST API",
             docs_url="/docs",
             redoc_url="/redoc",
