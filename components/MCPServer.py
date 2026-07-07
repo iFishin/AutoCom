@@ -2073,17 +2073,21 @@ class AutoComMCPServer:
             raw = ser.read(bytes_to_read)
             if not raw:
                 return {"success": True, "port": port, "baud_rate": baud_rate,
-                        "bytes_read": 0, "hex_dump": [], "text": "(no data)"}
+                        "bytes_read": 0, "hex_dump": [], "raw_bytes": [], "text": "(no data)"}
 
             # 格式化 hex dump
             hex_lines = []
+            bytes_list = list(raw)
             for i in range(0, len(raw), 16):
                 chunk = raw[i:i + 16]
                 hex_part = " ".join(f"{b:02x}" for b in chunk)
-                # 补齐空格
-                hex_part = hex_part.ljust(16 * 3 - 1)
                 ascii_part = "".join(chr(b) if 32 <= b < 127 else "." for b in chunk)
-                hex_lines.append(f"{i:08x}  {hex_part}  |{ascii_part}|")
+                hex_lines.append({
+                    "offset": i,
+                    "hex": hex_part,
+                    "ascii": ascii_part,
+                    "raw": [b for b in chunk],
+                })
 
             return {
                 "success": True,
@@ -2091,6 +2095,7 @@ class AutoComMCPServer:
                 "baud_rate": baud_rate,
                 "bytes_read": len(raw),
                 "hex_dump": hex_lines,
+                "raw_bytes": bytes_list,
                 "text": raw.decode("utf-8", errors="replace"),
             }
         except Exception as e:
