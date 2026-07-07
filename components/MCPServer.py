@@ -1988,7 +1988,8 @@ class AutoComMCPServer:
         import serial
 
         line_ending_bytes = bytes.fromhex(line_ending) if line_ending else b"\r\n"
-        send_data = test_command.encode("utf-8") + line_ending_bytes
+        cmd = (test_command or "AT").strip() or "AT"
+        send_data = cmd.encode("utf-8") + line_ending_bytes
 
         results = []
         for baud in AutoComMCPServer.BAUD_RATES_TO_TRY:

@@ -19,12 +19,12 @@ import uuid
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
-    from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Query
+    from fastapi import FastAPI, Body, HTTPException, WebSocket, WebSocketDisconnect, Query
     from fastapi.middleware.cors import CORSMiddleware
     import uvicorn
 
 try:
-    from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Query
+    from fastapi import FastAPI, Body, HTTPException, WebSocket, WebSocketDisconnect, Query
     from fastapi.middleware.cors import CORSMiddleware
     import uvicorn
 
@@ -124,16 +124,17 @@ class AutoComRESTServer:
         @app.post("/api/ports/{port}/baud-scan", tags=["串口操作"])
         async def baud_scan(
             port: str,
-            test_command: str = Query("AT", description="发送的测试指令"),
-            expected_response: str = Query("OK", description="期望收到的响应"),
-            line_ending: str = Query("0d0a", description="指令结束符的十六进制字节"),
+            body: dict = Body(default={"test_command": "AT", "expected_response": "OK", "line_ending": "0d0a"}),
         ) -> dict:
             """自动尝试常用波特率，找到能收到期望响应的那个"""
+            cmd = (body.get("test_command") or "AT").strip() or "AT"
+            expected = (body.get("expected_response") or "OK").strip() or "OK"
+            line_end = body.get("line_ending", "0d0a") or "0d0a"
             return await AutoComMCPServer._serial_baud_scan(
                 port=port,
-                test_command=test_command,
-                expected_response=expected_response,
-                line_ending=line_ending,
+                test_command=cmd,
+                expected_response=expected,
+                line_ending=line_end,
             )
 
         @app.get("/api/ports/{port}/hex-dump", tags=["串口操作"])
