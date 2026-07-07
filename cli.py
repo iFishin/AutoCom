@@ -98,6 +98,11 @@ def run_main():
         print(f"    autocom mcp --sse               {'启动 SSE (HTTP/Socket)'}")
         print(f"    autocom mcp --streamable        {'启动 Streamable HTTP'}")
         print()
+        print("  🌍  REST API (HTTP 接口):")
+        print(f"    autocom api                     {'启动 REST API (端口 8000)'}")
+        print(f"    autocom api --port 8080         {'自定义端口'}")
+        print(f"    autocom api --host 127.0.0.1    {'仅本地访问'}")
+        print()
         print(f"  {'─' * 50}")
         print("  📖  完整文档: https://github.com/iFishin/AutoCom")
         print()
@@ -188,6 +193,31 @@ def run_main():
         type=int,
         default=0,
         help="以 HTTP 服务模式运行（可选，默认直接打开本地文件）",
+    )
+
+    # ── api 子命令 ──
+    api_parser = subparsers.add_parser(
+        "api",
+        help="启动 REST API Server（提供 HTTP 接口，含 Swagger UI）",
+        epilog="""示例:
+  autocom api                            # 默认 8000 端口
+  autocom api --port 8080                # 自定义端口
+  autocom api --host 127.0.0.1           # 仅本地访问
+  autocom api --port 8080 --host 0.0.0.0 # 所有网络接口
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    api_parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="监听端口（默认: 8000）",
+    )
+    api_parser.add_argument(
+        "--host",
+        type=str,
+        default="0.0.0.0",
+        help="监听地址（默认: 0.0.0.0，也可设为 127.0.0.1 仅本地访问）",
     )
 
     parser.add_argument(
@@ -299,6 +329,18 @@ def run_main():
     # studio 子命令
     if args.command == "studio":
         _open_studio(args.port)
+        return
+
+    # api 子命令
+    if args.command == "api":
+        try:
+            from components.RESTServer import main as api_main
+        except ImportError as e:
+            print(f"Error: {e}")
+            print("Please install dependencies: pip install fastapi uvicorn")
+            raise SystemExit(1)
+        sys.argv = [sys.argv[0], "--port", str(args.port), "--host", args.host]
+        api_main()
         return
 
     # 初始化 Logger（现在可以使用 CLI 参数指定输出模式）

@@ -324,6 +324,10 @@ autocom mcp --sse --port 8888 --auth-key s3cr3t  # 带 API 密钥
 # Studio UI
 autocom studio                            # 打开流水线编辑器
 autocom studio --port 8080                # 在 HTTP 上启动编辑器
+
+# REST API
+autocom api                               # 启动 REST API（端口 8000）
+autocom api --port 8080 --host 127.0.0.1  # 自定义端口和地址
 ```
 
 ---

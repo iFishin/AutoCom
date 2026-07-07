@@ -141,6 +141,11 @@ autocom -f dicts/
 
 # 监视文件夹，自动执行新文件
 autocom -m temps/
+
+# REST API（HTTP 接口，含 Swagger UI）
+autocom api                            # 默认 8000 端口
+autocom api --port 8080                # 自定义端口
+autocom api --host 127.0.0.1           # 仅本地访问
 ```
 
 ## MCP 工具参考
