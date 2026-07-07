@@ -91,7 +91,7 @@ class AutoComRESTServer:
         async def health() -> dict:
             return {
                 "status": "ok",
-                "version": "1.0.0",
+                "version": __version__,
                 "sessions": len(self._sessions),
             }
 
