@@ -22,10 +22,11 @@ classifiers = [
 ]
 keywords = ["serial", "automation", "testing", "embedded", "iot"]
 requires-python = ">=3.10"
-dependencies = ["pyserial>=3.5", "wcwidth", "requests", "pywifi"]
+dependencies = ["pyserial>=3.5", "wcwidth", "requests", "pywifi", "pyyaml"]
 
 [project.optional-dependencies]
-mcp = ["fastmcp>=0.1.0", "starlette", "uvicorn", "pyyaml"]
+mcp = ["fastmcp>=0.1.0", "starlette", "uvicorn"]
+api = ["fastapi>=0.100.0", "uvicorn"]
 yaml = ["pyyaml"]
 dev = ["pytest", "pytest-asyncio", "pytest-mock"]
 

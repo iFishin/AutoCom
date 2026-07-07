@@ -17,6 +17,9 @@ recursive-include utils *.py
 recursive-include studio *.html *.css *.js
 recursive-include studio/js *.js
 
+# Include Skills (参考文档、模板、脚本)
+recursive-include skills *.md *.yaml *.py *.json
+
 # Include all JSON configuration files (optional, for reference)
 # Users should use 'autocom --init' to create their own configs
 # recursive-include configs *.json
