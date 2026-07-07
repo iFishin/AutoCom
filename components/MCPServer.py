@@ -726,7 +726,8 @@ class AutoComMCPServer:
         # ======================== 串口调试增强 ========================
 
         @mcp.tool()
-        async def serial_baud_scan(port: str, test_command: str = "AT", expected_response: str = "OK") -> dict:
+        async def serial_baud_scan(port: str, test_command: str = "AT", expected_response: str = "OK",
+                                    line_ending: str = "0d0a") -> dict:
             """自动尝试常用波特率（9600~921600），找到能收到期望响应的那个。
             排查"连不上"问题时的第一选择。
             """
@@ -734,6 +735,7 @@ class AutoComMCPServer:
             t0 = time.time()
             result = await AutoComMCPServer._serial_baud_scan(
                 port=port, test_command=test_command, expected_response=expected_response,
+                line_ending=line_ending,
             )
             self._audit_log_tool("serial_baud_scan", {"port": port}, result, (time.time() - t0) * 1000)
             return result
@@ -1980,9 +1982,12 @@ class AutoComMCPServer:
     BAUD_RATES_TO_TRY = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600]
 
     @staticmethod
-    async def _serial_baud_scan(port: str, test_command: str = "AT", expected_response: str = "OK") -> dict:
+    async def _serial_baud_scan(port: str, test_command: str = "AT", expected_response: str = "OK",
+                                 line_ending: str = "0d0a") -> dict:
         """自动尝试常用波特率，找到能收到期望响应的那个。"""
         import serial
+
+        line_ending_bytes = bytes.fromhex(line_ending) if line_ending else b"\r\n"
 
         results = []
         for baud in AutoComMCPServer.BAUD_RATES_TO_TRY:
@@ -1998,7 +2003,7 @@ class AutoComMCPServer:
                     timeout=2.0,
                 )
                 time.sleep(0.1)  # wait for port to settle
-                ser.write((test_command + "\r\n").encode("utf-8"))
+                ser.write(test_command.encode("utf-8") + line_ending_bytes)
                 resp = ser.read(1024).decode("utf-8", errors="replace")
                 elapsed = round((time.time() - t0) * 1000, 1)
                 matched = expected_response in resp

@@ -126,12 +126,14 @@ class AutoComRESTServer:
             port: str,
             test_command: str = Query("AT", description="发送的测试指令"),
             expected_response: str = Query("OK", description="期望收到的响应"),
+            line_ending: str = Query("0d0a", description="指令结束符的十六进制字节"),
         ) -> dict:
             """自动尝试常用波特率，找到能收到期望响应的那个"""
             return await AutoComMCPServer._serial_baud_scan(
                 port=port,
                 test_command=test_command,
                 expected_response=expected_response,
+                line_ending=line_ending,
             )
 
         @app.get("/api/ports/{port}/hex-dump", tags=["串口操作"])
