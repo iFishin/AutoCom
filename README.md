@@ -184,10 +184,49 @@ autocom mcp --sse --port 8888   # HTTP 模式
 
 ---
 
+## 🌍 REST API（HTTP 接口）
+
+通过 FastAPI 提供完整的 HTTP REST 接口，自动生成 Swagger UI 文档。
+
+```bash
+pip install autocom[api]
+autocom api                          # 默认端口 8000
+autocom api --port 8080              # 自定义端口
+autocom api --host 127.0.0.1         # 仅本地访问
+```
+
+启动后浏览器打开 `http://localhost:8000/docs` 即可查看和调试所有接口。
+
+### 接口分类
+
+```
+端口操作     GET/POST  /api/ports/{port}/command|baud-scan|hex-dump|pin-status|...
+实时监视     WS        /api/ports/{port}/monitor
+持久会话     POST/GET/DELETE  /api/sessions   +  /api/sessions/{id}/send|read
+设备配置     GET/POST/DELETE  /api/profiles
+流水线       POST      /api/pipeline/run|validate|dry-run|step-debug
+执行历史     GET       /api/executions  +  /api/executions/{id}/search
+```
+
+也可以用 curl 调用：
+
+```bash
+# 列出串口
+curl http://localhost:8000/api/ports
+
+# 发送 AT 指令
+curl -X POST "http://localhost:8000/api/ports/COM16/command?command=AT&baud_rate=115200"
+
+# 列出执行历史
+curl "http://localhost:8000/api/executions?limit=5"
+```
+
+---
+
 ## 🤝 贡献
 
 欢迎提交 Issue 和 Pull Request！详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 📄 许可证
 
-MIT License © 2025 iFishin
+MIT License © 2026 iFishin
