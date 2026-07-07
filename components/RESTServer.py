@@ -16,7 +16,12 @@ import json
 import threading
 import time
 import uuid
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Query
+    from fastapi.middleware.cors import CORSMiddleware
+    import uvicorn
 
 try:
     from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Query
@@ -81,7 +86,7 @@ class AutoComRESTServer:
 
         # ─── 健康检查 ───
 
-        @app.get("/api/health")
+        @app.get("/api/health", tags=["系统"])
         async def health() -> dict:
             return {
                 "status": "ok",
@@ -91,12 +96,12 @@ class AutoComRESTServer:
 
         # ─── 串口基础操作 ───
 
-        @app.get("/api/ports")
+        @app.get("/api/ports", tags=["串口操作"])
         async def list_ports() -> dict:
             """列出当前可用的串口设备"""
             return await AutoComMCPServer._list_serial_ports()
 
-        @app.post("/api/ports/{port}/command")
+        @app.post("/api/ports/{port}/command", tags=["串口操作"])
         async def execute_command(
             port: str,
             command: str = Query(..., description="要发送的指令"),
@@ -115,7 +120,7 @@ class AutoComRESTServer:
                 hex_mode=hex_mode,
             )
 
-        @app.post("/api/ports/{port}/baud-scan")
+        @app.post("/api/ports/{port}/baud-scan", tags=["串口操作"])
         async def baud_scan(
             port: str,
             test_command: str = Query("AT", description="发送的测试指令"),
@@ -128,7 +133,7 @@ class AutoComRESTServer:
                 expected_response=expected_response,
             )
 
-        @app.get("/api/ports/{port}/hex-dump")
+        @app.get("/api/ports/{port}/hex-dump", tags=["串口操作"])
         async def hex_dump(
             port: str,
             baud_rate: int = Query(115200, description="波特率"),
@@ -143,7 +148,7 @@ class AutoComRESTServer:
                 timeout=timeout,
             )
 
-        @app.get("/api/ports/{port}/pin-status")
+        @app.get("/api/ports/{port}/pin-status", tags=["串口操作"])
         async def pin_status(
             port: str,
             baud_rate: int = Query(115200, description="波特率"),
@@ -153,7 +158,7 @@ class AutoComRESTServer:
                 port=port, baud_rate=baud_rate
             )
 
-        @app.post("/api/ports/{port}/pin-set")
+        @app.post("/api/ports/{port}/pin-set", tags=["串口操作"])
         async def pin_set(
             port: str,
             baud_rate: int = Query(115200, description="波特率"),
@@ -165,7 +170,7 @@ class AutoComRESTServer:
                 port=port, baud_rate=baud_rate, dtr=dtr, rts=rts
             )
 
-        @app.post("/api/ports/{port}/loopback")
+        @app.post("/api/ports/{port}/loopback", tags=["串口操作"])
         async def loopback_test(
             port: str,
             mode: str = Query("hardware", description="回环模式: hardware 或 echo"),
@@ -186,7 +191,7 @@ class AutoComRESTServer:
                 timeout=timeout,
             )
 
-        @app.post("/api/ports/{port}/latency")
+        @app.post("/api/ports/{port}/latency", tags=["串口操作"])
         async def latency_bench(
             port: str,
             baud_rate: int = Query(115200, description="波特率"),
@@ -270,7 +275,7 @@ class AutoComRESTServer:
 
         # ─── 持久会话 ───
 
-        @app.post("/api/sessions")
+        @app.post("/api/sessions", tags=["持久会话"])
         async def open_session(
             port: str = Query(..., description="COM 端口名称"),
             baud_rate: int = Query(115200, description="波特率"),
@@ -315,7 +320,7 @@ class AutoComRESTServer:
                 "label": session["label"],
             }
 
-        @app.get("/api/sessions")
+        @app.get("/api/sessions", tags=["持久会话"])
         async def list_sessions() -> dict:
             """列出所有活跃的持久会话"""
             sessions: list[dict[str, Any]] = []
@@ -332,7 +337,7 @@ class AutoComRESTServer:
                     })
             return {"success": True, "sessions": sessions, "total": len(sessions)}
 
-        @app.get("/api/sessions/{session_id}")
+        @app.get("/api/sessions/{session_id}", tags=["持久会话"])
         async def get_session(session_id: str) -> dict:
             """获取单个会话的详细信息"""
             with self._session_lock:
@@ -348,7 +353,7 @@ class AutoComRESTServer:
                     "created_at": sess.get("created_at", 0),
                 }
 
-        @app.delete("/api/sessions/{session_id}")
+        @app.delete("/api/sessions/{session_id}", tags=["持久会话"])
         async def close_session(session_id: str) -> dict:
             """关闭并清理持久会话"""
             with self._session_lock:
@@ -363,7 +368,7 @@ class AutoComRESTServer:
                     pass
             return {"success": True, "session_id": session_id}
 
-        @app.post("/api/sessions/{session_id}/send")
+        @app.post("/api/sessions/{session_id}/send", tags=["持久会话"])
         async def session_send(
             session_id: str,
             command: str = Query(..., description="要发送的指令"),
@@ -404,7 +409,7 @@ class AutoComRESTServer:
             except Exception as e:
                 return {"success": False, "error": str(e)}
 
-        @app.post("/api/sessions/{session_id}/read")
+        @app.post("/api/sessions/{session_id}/read", tags=["持久会话"])
         async def session_read(
             session_id: str,
             timeout: Optional[float] = Query(None, description="等待数据的时间（秒）"),
@@ -438,12 +443,12 @@ class AutoComRESTServer:
 
         # ─── 设备参数管理 ───
 
-        @app.get("/api/profiles")
+        @app.get("/api/profiles", tags=["设备配置"])
         async def list_profiles() -> dict:
             """列出所有已保存的设备配置"""
             return await AutoComMCPServer._device_profile_list()
 
-        @app.post("/api/profiles")
+        @app.post("/api/profiles", tags=["设备配置"])
         async def save_profile(
             name: str = Query(..., description="配置名称（唯一标识）"),
             port: str = Query(..., description="COM 端口名称"),
@@ -463,7 +468,7 @@ class AutoComRESTServer:
                 timeout=timeout, label=label,
             )
 
-        @app.delete("/api/profiles/{name}")
+        @app.delete("/api/profiles/{name}", tags=["设备配置"])
         async def delete_profile(name: str) -> dict:
             """删除已保存的设备配置"""
             result = await AutoComMCPServer._device_profile_delete(name=name)
@@ -478,7 +483,7 @@ class AutoComRESTServer:
             """列出可用流水线配置文件"""
             return await AutoComMCPServer._pipeline_list(base_dir=base_dir)
 
-        @app.post("/api/pipeline/validate")
+        @app.post("/api/pipeline/validate", tags=["流水线"])
         async def validate_pipeline(
             file_path: str = Query(..., description="配置文件路径"),
             config_path: Optional[str] = Query(None, description="独立的配置覆盖文件"),
@@ -490,7 +495,7 @@ class AutoComRESTServer:
                 file_path=file_path, config_path=config_path, config_overrides=overrides,
             )
 
-        @app.post("/api/pipeline/run")
+        @app.post("/api/pipeline/run", tags=["流水线"])
         async def run_pipeline(
             file_path: str = Query(..., description="配置文件路径"),
             loop_count: Optional[int] = Query(None, description="循环轮数"),
@@ -508,7 +513,7 @@ class AutoComRESTServer:
                 config_overrides=overrides,
             )
 
-        @app.post("/api/pipeline/dry-run")
+        @app.post("/api/pipeline/dry-run", tags=["流水线"])
         async def dry_run(
             file_path: str = Query(..., description="配置文件路径"),
             config_overrides: Optional[str] = Query(None, description="JSON 格式的配置覆盖"),
@@ -519,7 +524,7 @@ class AutoComRESTServer:
                 file_path=file_path, config_overrides=overrides,
             )
 
-        @app.post("/api/pipeline/step-debug")
+        @app.post("/api/pipeline/step-debug", tags=["流水线"])
         async def step_debug(
             file_path: str = Query(..., description="配置文件路径"),
             step_id: str = Query(..., description="要调试的步骤 ID"),
@@ -533,12 +538,12 @@ class AutoComRESTServer:
 
         # ─── 执行历史 ───
 
-        @app.get("/api/executions")
+        @app.get("/api/executions", tags=["执行历史"])
         async def list_executions(limit: int = Query(20, description="最多返回的会话数")) -> dict:
             """列出最近执行会话"""
             return await AutoComMCPServer._execution_list(limit=limit)
 
-        @app.get("/api/executions/{session_id}")
+        @app.get("/api/executions/{session_id}", tags=["执行历史"])
         async def get_execution(session_id: str) -> dict:
             """解析指定执行会话的日志和结果"""
             result = await AutoComMCPServer._execution_report(session_id=session_id)
@@ -546,7 +551,7 @@ class AutoComRESTServer:
                 raise HTTPException(status_code=404, detail=str(result.get("error", "Not found")))
             return result
 
-        @app.get("/api/executions/{session_id}/search")
+        @app.get("/api/executions/{session_id}/search", tags=["执行历史"])
         async def search_logs(
             session_id: str,
             keyword: str = Query(..., description="搜索关键词（大小写不敏感）"),
