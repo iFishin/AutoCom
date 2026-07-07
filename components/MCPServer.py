@@ -1988,6 +1988,7 @@ class AutoComMCPServer:
         import serial
 
         line_ending_bytes = bytes.fromhex(line_ending) if line_ending else b"\r\n"
+        send_data = test_command.encode("utf-8") + line_ending_bytes
 
         results = []
         for baud in AutoComMCPServer.BAUD_RATES_TO_TRY:
@@ -2000,17 +2001,31 @@ class AutoComMCPServer:
                     bytesize=serial.EIGHTBITS,
                     parity=serial.PARITY_NONE,
                     stopbits=serial.STOPBITS_ONE,
-                    timeout=2.0,
+                    timeout=0.2,
                 )
-                time.sleep(0.1)  # wait for port to settle
-                ser.write(test_command.encode("utf-8") + line_ending_bytes)
-                resp = ser.read(1024).decode("utf-8", errors="replace")
+                time.sleep(0.15)  # wait for port to settle
+                ser.reset_input_buffer()  # clear stale data
+                ser.write(send_data)
+
+                # 轮询读取（同 execute_serial_command 策略）
+                resp = b""
+                deadline = time.time() + 1.0
+                while time.time() < deadline:
+                    if ser.in_waiting:
+                        chunk = ser.read(ser.in_waiting)
+                        resp += chunk
+                        # 如果已经收到期望内容，提前退出
+                        if expected_response.encode("utf-8") in resp:
+                            break
+                    await asyncio.sleep(0.02)
+
+                text = resp.decode("utf-8", errors="replace")
                 elapsed = round((time.time() - t0) * 1000, 1)
-                matched = expected_response in resp
+                matched = expected_response in text
                 results.append({
                     "baud_rate": baud,
                     "success": matched,
-                    "response": resp.strip() if resp else "(no response)",
+                    "response": text.strip() if text else "(no response)",
                     "elapsed_ms": elapsed,
                 })
             except Exception as e:
