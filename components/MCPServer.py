@@ -1726,6 +1726,8 @@ class AutoComMCPServer:
             errors = 0
 
             for i in range(rounds):
+                ser.reset_input_buffer()
+
                 # TX 延迟：write() 返回耗时
                 t0 = time.perf_counter()
                 ser.write(send_bytes)
@@ -1733,31 +1735,20 @@ class AutoComMCPServer:
                 tx_done = time.perf_counter()
                 tx_lat = (tx_done - t0) * 1000
 
-                # 等待并读取响应
-                received = b""
-                first_byte_time = None
-                deadline = time.time() + timeout
-                ser.timeout = 0.05  # 短超时：收完数据后快速退出
-
-                while time.time() < deadline:
-                    try:
-                        chunk = ser.read(ser.in_waiting or 1)
-                    except Exception:
-                        break
-                    if chunk:
-                        if first_byte_time is None:
-                            first_byte_time = time.perf_counter()
-                            fbl = (first_byte_time - t0) * 1000
-                            first_byte_latencies.append(fbl)
-                        received += chunk
-                    else:
-                        if received:
-                            break
-
-                rx_done = time.perf_counter()
-                rtt = (rx_done - t0) * 1000
-
-                if received:
+                # 两阶段读取:
+                # 阶段1: ser.read(1) 阻塞等待首字节（使用完整 timeout，保证能等到）
+                # 阶段2: ser.read(N) 读剩余数据（数据已在缓冲区，立即返回）
+                ser.timeout = timeout
+                chunk = ser.read(1)
+                if chunk:
+                    first_byte_time = time.perf_counter()
+                    fbl = (first_byte_time - t0) * 1000
+                    first_byte_latencies.append(fbl)
+                    # 剩余数据：设短超时，数据已在缓冲区则立即返回
+                    ser.timeout = 0.002
+                    rest = ser.read(4096)
+                    rx_done = time.perf_counter()
+                    rtt = (rx_done - t0) * 1000
                     tx_latencies.append(tx_lat)
                     rtt_latencies.append(rtt)
                 else:
