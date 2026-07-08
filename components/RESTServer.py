@@ -193,6 +193,19 @@ try:
         condition: str | None = None
         issues: list[str] = []
 
+    class PipelineItem(BaseModel):
+        file_path: str
+        file_name: str
+        relative_path: str
+        size_bytes: int
+        modified: float
+        directory: str
+
+    class PipelineListResponse(BaseModel):
+        success: bool
+        total: int
+        pipelines: list[PipelineItem]
+
     class PipelineDryRunResponse(BaseModel):
         success: bool
         file_path: str
