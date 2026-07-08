@@ -21,14 +21,64 @@ from typing import TYPE_CHECKING, Any, Optional
 if TYPE_CHECKING:
     from fastapi import FastAPI, Body, HTTPException, WebSocket, WebSocketDisconnect, Query
     from fastapi.middleware.cors import CORSMiddleware
+    from pydantic import BaseModel
     import uvicorn
 
 try:
     from fastapi import FastAPI, Body, HTTPException, WebSocket, WebSocketDisconnect, Query
     from fastapi.middleware.cors import CORSMiddleware
+    from pydantic import BaseModel
     import uvicorn
 
     _FASTAPI_AVAILABLE = True
+
+    # ── 响应模型 ──
+
+    class SessionOpenResponse(BaseModel):
+        success: bool
+        session_id: str
+        port: str
+        baud_rate: int
+        label: str
+
+    class SessionListItem(BaseModel):
+        session_id: str
+        port: str
+        baud_rate: int
+        label: str
+        created_at: float
+        idle_seconds: float
+
+    class SessionListResponse(BaseModel):
+        success: bool
+        sessions: list[SessionListItem]
+        total: int
+
+    class SessionDetailResponse(BaseModel):
+        success: bool
+        session_id: str
+        port: str
+        baud_rate: int
+        label: str
+        created_at: float
+
+    class SessionCloseResponse(BaseModel):
+        success: bool
+        session_id: str
+
+    class SessionSendResponse(BaseModel):
+        success: bool
+        command: str
+        response: str
+        elapsed_ms: int
+        bytes: int
+
+    class SessionReadResponse(BaseModel):
+        success: bool
+        data: str
+        bytes_count: int
+        session_id: str
+
 except Exception:
     _FASTAPI_AVAILABLE = False
 
@@ -279,7 +329,7 @@ class AutoComRESTServer:
 
         # ─── 持久会话 ───
 
-        @app.post("/api/sessions", tags=["持久会话"])
+        @app.post("/api/sessions", tags=["持久会话"], response_model=SessionOpenResponse)
         async def open_session(
             port: str = Query(..., description="COM 端口名称"),
             baud_rate: int = Query(115200, description="波特率"),
@@ -324,7 +374,7 @@ class AutoComRESTServer:
                 "label": session["label"],
             }
 
-        @app.get("/api/sessions", tags=["持久会话"])
+        @app.get("/api/sessions", tags=["持久会话"], response_model=SessionListResponse)
         async def list_sessions() -> dict:
             """列出所有活跃的持久会话"""
             sessions: list[dict[str, Any]] = []
@@ -341,7 +391,7 @@ class AutoComRESTServer:
                     })
             return {"success": True, "sessions": sessions, "total": len(sessions)}
 
-        @app.get("/api/sessions/{session_id}", tags=["持久会话"])
+        @app.get("/api/sessions/{session_id}", tags=["持久会话"], response_model=SessionDetailResponse)
         async def get_session(session_id: str) -> dict:
             """获取单个会话的详细信息"""
             with self._session_lock:
@@ -357,7 +407,7 @@ class AutoComRESTServer:
                     "created_at": sess.get("created_at", 0),
                 }
 
-        @app.delete("/api/sessions/{session_id}", tags=["持久会话"])
+        @app.delete("/api/sessions/{session_id}", tags=["持久会话"], response_model=SessionCloseResponse)
         async def close_session(session_id: str) -> dict:
             """关闭并清理持久会话"""
             with self._session_lock:
@@ -372,7 +422,7 @@ class AutoComRESTServer:
                     pass
             return {"success": True, "session_id": session_id}
 
-        @app.post("/api/sessions/{session_id}/send", tags=["持久会话"])
+        @app.post("/api/sessions/{session_id}/send", tags=["持久会话"], response_model=SessionSendResponse)
         async def session_send(
             session_id: str,
             command: str = Query(..., description="要发送的指令"),
@@ -413,7 +463,7 @@ class AutoComRESTServer:
             except Exception as e:
                 return {"success": False, "error": str(e)}
 
-        @app.post("/api/sessions/{session_id}/read", tags=["持久会话"])
+        @app.post("/api/sessions/{session_id}/read", tags=["持久会话"], response_model=SessionReadResponse)
         async def session_read(
             session_id: str,
             timeout: Optional[float] = Query(None, description="等待数据的时间（秒）"),
