@@ -179,6 +179,92 @@ try:
         first_byte_latency_ms: LatencyStats | None = None
         rtt_ms: LatencyStats | None = None
 
+    # ── 流水线 / 执行历史响应模型 ──
+
+    class PipelineStepBrief(BaseModel):
+        id: str
+        type: str
+        device: str | None = None
+        has_expect: bool = False
+        has_capture: bool = False
+        timeout: int | None = None
+        on_error: str | None = None
+        on_success: str | None = None
+        condition: str | None = None
+        issues: list[str] = []
+
+    class PipelineDryRunResponse(BaseModel):
+        success: bool
+        file_path: str
+        config: dict | None = None
+        devices: list[dict] = []
+        constants: list[str] = []
+        steps: list[PipelineStepBrief] = []
+        flow_issues: list[str] = []
+        total_steps: int = 0
+        has_issues: bool = False
+
+    class StepDebugResult(BaseModel):
+        step_id: str
+        step_type: str
+        passed: bool
+        output: str | None = None
+        captures: dict = {}
+        error: str | None = None
+        execution_time_ms: float = 0
+        skipped: bool = False
+
+    class PipelineStepDebugResponse(BaseModel):
+        success: bool
+        file_path: str
+        step_id: str
+        step_type: str | None = None
+        result: StepDebugResult | None = None
+
+    class PipelineValidateResponse(BaseModel):
+        success: bool
+        errors: list[str] = []
+        warnings: list[str] = []
+        summary: str | None = None
+
+    class PipelineRunResponse(BaseModel):
+        success: bool
+        summary: dict = {}
+        results: list[dict] = []
+
+    class ExecutionSession(BaseModel):
+        session_id: str
+        path: str
+        has_log: bool
+        has_json: bool
+        device_logs: list[str]
+        device_count: int
+
+    class ExecutionListResponse(BaseModel):
+        success: bool
+        total: int
+        sessions: list[ExecutionSession]
+
+    class ExecutionReportResponse(BaseModel):
+        success: bool
+        session_id: str
+        path: str
+        execution_log: dict | None = None
+        device_logs: dict = {}
+        summary: dict = {}
+
+    class LogMatch(BaseModel):
+        file: str
+        line: int
+        text: str
+
+    class LogSearchResponse(BaseModel):
+        success: bool
+        session_id: str
+        keyword: str
+        total_matches: int
+        matches: list[LogMatch]
+
     # ── 设备配置响应模型 ──
 
     class ProfileItem(BaseModel):
@@ -207,46 +293,6 @@ try:
         success: bool
         deleted: str
         total: int
-
-    # ── 流水线 / 执行历史通用响应 ──
-
-    class PipelineItem(BaseModel):
-        file_path: str
-        file_name: str
-        relative_path: str
-        size_bytes: int
-        modified: float
-        directory: str
-
-    class PipelineListResponse(BaseModel):
-        success: bool
-        total: int
-        pipelines: list[PipelineItem]
-
-    class ExecutionSession(BaseModel):
-        session_id: str
-        path: str
-        has_log: bool
-        has_json: bool
-        device_logs: list[str]
-        device_count: int
-
-    class ExecutionListResponse(BaseModel):
-        success: bool
-        total: int
-        sessions: list[ExecutionSession]
-
-    class LogMatch(BaseModel):
-        file: str
-        line: int
-        text: str
-
-    class LogSearchResponse(BaseModel):
-        success: bool
-        session_id: str
-        keyword: str
-        total_matches: int
-        matches: list[LogMatch]
 
 except Exception:
     _FASTAPI_AVAILABLE = False
@@ -706,7 +752,7 @@ class AutoComRESTServer:
             """列出可用流水线配置文件"""
             return await AutoComMCPServer._pipeline_list(base_dir=base_dir)
 
-        @app.post("/api/pipeline/validate", tags=["流水线"], response_model=dict)
+        @app.post("/api/pipeline/validate", tags=["流水线"], response_model=PipelineValidateResponse)
         async def validate_pipeline(
             file_path: str = Query(..., description="配置文件路径"),
             config_path: Optional[str] = Query(None, description="独立的配置覆盖文件"),
@@ -718,7 +764,7 @@ class AutoComRESTServer:
                 file_path=file_path, config_path=config_path, config_overrides=overrides,
             )
 
-        @app.post("/api/pipeline/run", tags=["流水线"], response_model=dict)
+        @app.post("/api/pipeline/run", tags=["流水线"], response_model=PipelineRunResponse)
         async def run_pipeline(
             file_path: str = Query(..., description="配置文件路径"),
             loop_count: Optional[int] = Query(None, description="循环轮数"),
@@ -736,7 +782,7 @@ class AutoComRESTServer:
                 config_overrides=overrides,
             )
 
-        @app.post("/api/pipeline/dry-run", tags=["流水线"], response_model=dict)
+        @app.post("/api/pipeline/dry-run", tags=["流水线"], response_model=PipelineDryRunResponse)
         async def dry_run(
             file_path: str = Query(..., description="配置文件路径"),
             config_overrides: Optional[str] = Query(None, description="JSON 格式的配置覆盖"),
@@ -747,7 +793,7 @@ class AutoComRESTServer:
                 file_path=file_path, config_overrides=overrides,
             )
 
-        @app.post("/api/pipeline/step-debug", tags=["流水线"], response_model=dict)
+        @app.post("/api/pipeline/step-debug", tags=["流水线"], response_model=PipelineStepDebugResponse)
         async def step_debug(
             file_path: str = Query(..., description="配置文件路径"),
             step_id: str = Query(..., description="要调试的步骤 ID"),
@@ -766,7 +812,7 @@ class AutoComRESTServer:
             """列出最近执行会话"""
             return await AutoComMCPServer._execution_list(limit=limit)
 
-        @app.get("/api/executions/{session_id}", tags=["执行历史"], response_model=dict)
+        @app.get("/api/executions/{session_id}", tags=["执行历史"], response_model=ExecutionReportResponse)
         async def get_execution(session_id: str) -> dict:
             """解析指定执行会话的日志和结果"""
             result = await AutoComMCPServer._execution_report(session_id=session_id)
