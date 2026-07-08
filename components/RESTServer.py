@@ -614,8 +614,8 @@ class AutoComRESTServer:
             t0 = time.time()
             try:
                 ser.write(send_bytes)
-                wait_timeout = timeout if timeout is not None else sess.get("baud_rate", 115200) / 100
-                ser.timeout = max(0.5, wait_timeout)
+                wait_timeout = timeout if timeout is not None else 5.0
+                ser.timeout = wait_timeout
                 resp = ser.read(4096)
                 elapsed = int((time.time() - t0) * 1000)
                 text = resp.decode("utf-8", errors="replace")
