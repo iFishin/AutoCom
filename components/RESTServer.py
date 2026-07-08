@@ -79,6 +79,175 @@ try:
         bytes_count: int
         session_id: str
 
+    # ── 串口操作响应模型 ──
+
+    class HealthResponse(BaseModel):
+        status: str
+        version: str
+        sessions: int
+
+    class PortItem(BaseModel):
+        device: str
+        description: str
+        hwid: str
+        vid: int | None = None
+        pid: int | None = None
+        serial_number: str | None = None
+        manufacturer: str | None = None
+
+    class PortListResponse(BaseModel):
+        success: bool
+        total: int
+        devices: list[PortItem]
+
+    class CommandResponse(BaseModel):
+        success: bool
+        port: str
+        command: str
+        response: str
+        elapsed_ms: int
+        error: str | None = None
+
+    class BaudRateResult(BaseModel):
+        baud_rate: int
+        success: bool
+        response: str
+        elapsed_ms: float
+        error: str | None = None
+
+    class BaudScanResponse(BaseModel):
+        success: bool
+        port: str
+        test_command: str
+        expected_response: str
+        total_tried: int
+        working_count: int
+        working_rates: list[int]
+        results: list[BaudRateResult]
+
+    class HexDumpLine(BaseModel):
+        offset: int
+        hex: str
+        ascii: str
+        raw: list[int]
+
+    class HexDumpResponse(BaseModel):
+        success: bool
+        port: str
+        baud_rate: int
+        bytes_read: int
+        hex_dump: list[HexDumpLine]
+        raw_bytes: list[int]
+        text: str
+
+    class PinStatusResponse(BaseModel):
+        success: bool
+        port: str
+        cts: bool | None = None
+        dsr: bool | None = None
+        dcd: bool | None = None
+        ri: bool | None = None
+        error: str | None = None
+
+    class PinSetResponse(BaseModel):
+        success: bool
+        port: str
+        error: str | None = None
+
+    class LoopbackResponse(BaseModel):
+        success: bool
+        port: str
+        mode: str
+        sent_bytes: int
+        received_bytes: int
+        elapsed_ms: float
+        error: str | None = None
+
+    class LatencyStats(BaseModel):
+        min: float
+        max: float
+        avg: float
+
+    class LatencyResponse(BaseModel):
+        success: bool
+        port: str
+        baud_rate: int
+        test_data: str
+        rounds: int
+        errors: int
+        tx_latency_ms: LatencyStats | None = None
+        first_byte_latency_ms: LatencyStats | None = None
+        rtt_ms: LatencyStats | None = None
+
+    # ── 设备配置响应模型 ──
+
+    class ProfileItem(BaseModel):
+        name: str
+        port: str
+        baud_rate: int
+        data_bits: int
+        stop_bits: int
+        parity: str
+        flow_control: bool
+        timeout: float
+        label: str
+        created: float
+
+    class ProfileListResponse(BaseModel):
+        success: bool
+        total: int
+        profiles: list[ProfileItem]
+
+    class ProfileSaveResponse(BaseModel):
+        success: bool
+        profile: ProfileItem
+        total: int
+
+    class ProfileDeleteResponse(BaseModel):
+        success: bool
+        deleted: str
+        total: int
+
+    # ── 流水线 / 执行历史通用响应 ──
+
+    class PipelineItem(BaseModel):
+        file_path: str
+        file_name: str
+        relative_path: str
+        size_bytes: int
+        modified: float
+        directory: str
+
+    class PipelineListResponse(BaseModel):
+        success: bool
+        total: int
+        pipelines: list[PipelineItem]
+
+    class ExecutionSession(BaseModel):
+        session_id: str
+        path: str
+        has_log: bool
+        has_json: bool
+        device_logs: list[str]
+        device_count: int
+
+    class ExecutionListResponse(BaseModel):
+        success: bool
+        total: int
+        sessions: list[ExecutionSession]
+
+    class LogMatch(BaseModel):
+        file: str
+        line: int
+        text: str
+
+    class LogSearchResponse(BaseModel):
+        success: bool
+        session_id: str
+        keyword: str
+        total_matches: int
+        matches: list[LogMatch]
+
 except Exception:
     _FASTAPI_AVAILABLE = False
 
@@ -137,7 +306,7 @@ class AutoComRESTServer:
 
         # ─── 健康检查 ───
 
-        @app.get("/api/health", tags=["系统"])
+        @app.get("/api/health", tags=["系统"], response_model=HealthResponse)
         async def health() -> dict:
             return {
                 "status": "ok",
@@ -147,12 +316,12 @@ class AutoComRESTServer:
 
         # ─── 串口基础操作 ───
 
-        @app.get("/api/ports", tags=["串口操作"])
+        @app.get("/api/ports", tags=["串口操作"], response_model=PortListResponse)
         async def list_ports() -> dict:
             """列出当前可用的串口设备"""
             return await AutoComMCPServer._list_serial_ports()
 
-        @app.post("/api/ports/{port}/command", tags=["串口操作"])
+        @app.post("/api/ports/{port}/command", tags=["串口操作"], response_model=CommandResponse)
         async def execute_command(
             port: str,
             command: str = Query(..., description="要发送的指令"),
@@ -171,7 +340,7 @@ class AutoComRESTServer:
                 hex_mode=hex_mode,
             )
 
-        @app.post("/api/ports/{port}/baud-scan", tags=["串口操作"])
+        @app.post("/api/ports/{port}/baud-scan", tags=["串口操作"], response_model=BaudScanResponse)
         async def baud_scan(
             port: str,
             body: dict = Body(default={"test_command": "AT", "expected_response": "OK", "line_ending": "0d0a"}),
@@ -187,7 +356,7 @@ class AutoComRESTServer:
                 line_ending=line_end,
             )
 
-        @app.get("/api/ports/{port}/hex-dump", tags=["串口操作"])
+        @app.get("/api/ports/{port}/hex-dump", tags=["串口操作"], response_model=HexDumpResponse)
         async def hex_dump(
             port: str,
             baud_rate: int = Query(115200, description="波特率"),
@@ -202,7 +371,7 @@ class AutoComRESTServer:
                 timeout=timeout,
             )
 
-        @app.get("/api/ports/{port}/pin-status", tags=["串口操作"])
+        @app.get("/api/ports/{port}/pin-status", tags=["串口操作"], response_model=PinStatusResponse)
         async def pin_status(
             port: str,
             baud_rate: int = Query(115200, description="波特率"),
@@ -212,7 +381,7 @@ class AutoComRESTServer:
                 port=port, baud_rate=baud_rate
             )
 
-        @app.post("/api/ports/{port}/pin-set", tags=["串口操作"])
+        @app.post("/api/ports/{port}/pin-set", tags=["串口操作"], response_model=PinSetResponse)
         async def pin_set(
             port: str,
             baud_rate: int = Query(115200, description="波特率"),
@@ -224,7 +393,7 @@ class AutoComRESTServer:
                 port=port, baud_rate=baud_rate, dtr=dtr, rts=rts
             )
 
-        @app.post("/api/ports/{port}/loopback", tags=["串口操作"])
+        @app.post("/api/ports/{port}/loopback", tags=["串口操作"], response_model=LoopbackResponse)
         async def loopback_test(
             port: str,
             mode: str = Query("hardware", description="回环模式: hardware 或 echo"),
@@ -245,7 +414,7 @@ class AutoComRESTServer:
                 timeout=timeout,
             )
 
-        @app.post("/api/ports/{port}/latency", tags=["串口操作"])
+        @app.post("/api/ports/{port}/latency", tags=["串口操作"], response_model=LatencyResponse)
         async def latency_bench(
             port: str,
             baud_rate: int = Query(115200, description="波特率"),
@@ -497,12 +666,12 @@ class AutoComRESTServer:
 
         # ─── 设备参数管理 ───
 
-        @app.get("/api/profiles", tags=["设备配置"])
+        @app.get("/api/profiles", tags=["设备配置"], response_model=ProfileListResponse)
         async def list_profiles() -> dict:
             """列出所有已保存的设备配置"""
             return await AutoComMCPServer._device_profile_list()
 
-        @app.post("/api/profiles", tags=["设备配置"])
+        @app.post("/api/profiles", tags=["设备配置"], response_model=ProfileSaveResponse)
         async def save_profile(
             name: str = Query(..., description="配置名称（唯一标识）"),
             port: str = Query(..., description="COM 端口名称"),
@@ -522,7 +691,7 @@ class AutoComRESTServer:
                 timeout=timeout, label=label,
             )
 
-        @app.delete("/api/profiles/{name}", tags=["设备配置"])
+        @app.delete("/api/profiles/{name}", tags=["设备配置"], response_model=ProfileDeleteResponse)
         async def delete_profile(name: str) -> dict:
             """删除已保存的设备配置"""
             result = await AutoComMCPServer._device_profile_delete(name=name)
@@ -532,12 +701,12 @@ class AutoComRESTServer:
 
         # ─── 流水线 ───
 
-        @app.get("/api/pipelines")
+        @app.get("/api/pipelines", tags=["流水线"], response_model=PipelineListResponse)
         async def list_pipelines(base_dir: Optional[str] = Query(None, description="搜索目录")) -> dict:
             """列出可用流水线配置文件"""
             return await AutoComMCPServer._pipeline_list(base_dir=base_dir)
 
-        @app.post("/api/pipeline/validate", tags=["流水线"])
+        @app.post("/api/pipeline/validate", tags=["流水线"], response_model=dict)
         async def validate_pipeline(
             file_path: str = Query(..., description="配置文件路径"),
             config_path: Optional[str] = Query(None, description="独立的配置覆盖文件"),
@@ -549,7 +718,7 @@ class AutoComRESTServer:
                 file_path=file_path, config_path=config_path, config_overrides=overrides,
             )
 
-        @app.post("/api/pipeline/run", tags=["流水线"])
+        @app.post("/api/pipeline/run", tags=["流水线"], response_model=dict)
         async def run_pipeline(
             file_path: str = Query(..., description="配置文件路径"),
             loop_count: Optional[int] = Query(None, description="循环轮数"),
@@ -567,7 +736,7 @@ class AutoComRESTServer:
                 config_overrides=overrides,
             )
 
-        @app.post("/api/pipeline/dry-run", tags=["流水线"])
+        @app.post("/api/pipeline/dry-run", tags=["流水线"], response_model=dict)
         async def dry_run(
             file_path: str = Query(..., description="配置文件路径"),
             config_overrides: Optional[str] = Query(None, description="JSON 格式的配置覆盖"),
@@ -578,7 +747,7 @@ class AutoComRESTServer:
                 file_path=file_path, config_overrides=overrides,
             )
 
-        @app.post("/api/pipeline/step-debug", tags=["流水线"])
+        @app.post("/api/pipeline/step-debug", tags=["流水线"], response_model=dict)
         async def step_debug(
             file_path: str = Query(..., description="配置文件路径"),
             step_id: str = Query(..., description="要调试的步骤 ID"),
@@ -592,12 +761,12 @@ class AutoComRESTServer:
 
         # ─── 执行历史 ───
 
-        @app.get("/api/executions", tags=["执行历史"])
+        @app.get("/api/executions", tags=["执行历史"], response_model=ExecutionListResponse)
         async def list_executions(limit: int = Query(20, description="最多返回的会话数")) -> dict:
             """列出最近执行会话"""
             return await AutoComMCPServer._execution_list(limit=limit)
 
-        @app.get("/api/executions/{session_id}", tags=["执行历史"])
+        @app.get("/api/executions/{session_id}", tags=["执行历史"], response_model=dict)
         async def get_execution(session_id: str) -> dict:
             """解析指定执行会话的日志和结果"""
             result = await AutoComMCPServer._execution_report(session_id=session_id)
@@ -605,7 +774,7 @@ class AutoComRESTServer:
                 raise HTTPException(status_code=404, detail=str(result.get("error", "Not found")))
             return result
 
-        @app.get("/api/executions/{session_id}/search", tags=["执行历史"])
+        @app.get("/api/executions/{session_id}/search", tags=["执行历史"], response_model=LogSearchResponse)
         async def search_logs(
             session_id: str,
             keyword: str = Query(..., description="搜索关键词（大小写不敏感）"),
