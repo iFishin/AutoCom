@@ -1737,6 +1737,7 @@ class AutoComMCPServer:
                 received = b""
                 first_byte_time = None
                 deadline = time.time() + timeout
+                ser.timeout = 0.05  # 短超时：收完数据后快速退出
 
                 while time.time() < deadline:
                     try:
