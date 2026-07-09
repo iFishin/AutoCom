@@ -810,25 +810,25 @@ class AutoComRESTServer:
 
         @app.post("/api/pipeline/validate", tags=["流水线"], response_model=PipelineValidateResponse)
         async def validate_pipeline(
-            pipeline: Optional[str] = Query(None, description="已保存的流水线名称（与 config_content 二选一）"),
-            config_content: Optional[str] = Query(None, description="YAML/JSON 配置内容（与 pipeline 二选一）"),
+            name: Optional[str] = Query(None, description="已保存的流水线名称（与 config_content 二选一）"),
+            config_content: Optional[str] = Query(None, description="YAML/JSON 配置内容（与 name 二选一）"),
         ) -> dict:
             """校验流水线配置"""
-            resolved = self._resolve_pipeline(pipeline, config_content)
+            resolved = self._resolve_pipeline(name, config_content)
             if not resolved:
                 raise HTTPException(status_code=400, detail="Must provide either pipeline or config_content")
             return await AutoComMCPServer._validate_pipeline(file_path=resolved)
 
         @app.post("/api/pipeline/run", tags=["流水线"], response_model=PipelineRunResponse)
         async def run_pipeline(
-            pipeline: Optional[str] = Query(None, description="已保存的流水线名称（与 config_content 二选一）"),
-            config_content: Optional[str] = Query(None, description="YAML/JSON 配置内容（与 pipeline 二选一）"),
+            name: Optional[str] = Query(None, description="已保存的流水线名称（与 config_content 二选一）"),
+            config_content: Optional[str] = Query(None, description="YAML/JSON 配置内容（与 name 二选一）"),
             loop_count: Optional[int] = Query(None, description="循环轮数"),
             duration: Optional[str] = Query(None, description="限时: 30s, 5m, 1h"),
             stop_on_failure: Optional[bool] = Query(None, description="失败即停止"),
         ) -> dict:
             """执行流水线"""
-            resolved = self._resolve_pipeline(pipeline, config_content)
+            resolved = self._resolve_pipeline(name, config_content)
             if not resolved:
                 raise HTTPException(status_code=400, detail="Must provide either pipeline or config_content")
             return await AutoComMCPServer._run_pipeline(
@@ -837,23 +837,23 @@ class AutoComRESTServer:
 
         @app.post("/api/pipeline/dry-run", tags=["流水线"], response_model=PipelineDryRunResponse)
         async def dry_run(
-            pipeline: Optional[str] = Query(None, description="已保存的流水线名称（与 config_content 二选一）"),
-            config_content: Optional[str] = Query(None, description="YAML/JSON 配置内容（与 pipeline 二选一）"),
+            name: Optional[str] = Query(None, description="已保存的流水线名称（与 config_content 二选一）"),
+            config_content: Optional[str] = Query(None, description="YAML/JSON 配置内容（与 name 二选一）"),
         ) -> dict:
             """干运行：解析变量、追踪控制流，不执行 I/O"""
-            resolved = self._resolve_pipeline(pipeline, config_content)
+            resolved = self._resolve_pipeline(name, config_content)
             if not resolved:
                 raise HTTPException(status_code=400, detail="Must provide either pipeline or config_content")
             return await AutoComMCPServer._pipeline_dry_run(file_path=resolved)
 
         @app.post("/api/pipeline/step-debug", tags=["流水线"], response_model=PipelineStepDebugResponse)
         async def step_debug(
-            pipeline: Optional[str] = Query(None, description="已保存的流水线名称（与 config_content 二选一）"),
-            config_content: Optional[str] = Query(None, description="YAML/JSON 配置内容（与 pipeline 二选一）"),
+            name: Optional[str] = Query(None, description="已保存的流水线名称（与 config_content 二选一）"),
+            config_content: Optional[str] = Query(None, description="YAML/JSON 配置内容（与 name 二选一）"),
             step_id: str = Query(..., description="要调试的步骤 ID"),
         ) -> dict:
             """单步调试：只执行流水线中的某一个步骤"""
-            resolved = self._resolve_pipeline(pipeline, config_content)
+            resolved = self._resolve_pipeline(name, config_content)
             if not resolved:
                 raise HTTPException(status_code=400, detail="Must provide either pipeline or config_content")
             return await AutoComMCPServer._pipeline_step_debug(file_path=resolved, step_id=step_id)
