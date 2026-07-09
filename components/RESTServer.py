@@ -216,7 +216,7 @@ try:
 
     class PipelineItem(BaseModel):
         name: str
-        path: str
+        # path removed for security
         size_bytes: int
         modified: float
 
@@ -231,7 +231,7 @@ try:
     class PipelineSaveResponse(BaseModel):
         success: bool
         name: str
-        path: str
+
 
     class PipelineDeleteResponse(BaseModel):
         success: bool
@@ -1032,7 +1032,7 @@ class AutoComRESTServer:
             if f.suffix in (".yaml", ".yml", ".json") and f.is_file():
                 items.append({
                     "name": f.stem,
-                    "path": str(f),
+                    
                     "size_bytes": f.stat().st_size,
                     "modified": f.stat().st_mtime,
                 })
