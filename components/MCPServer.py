@@ -1180,11 +1180,38 @@ class AutoComMCPServer:
             finally:
                 AutoComLogger.get_instance().cli_output_mode = prev_mode
 
+            # 收集执行结果
+            results = []
+            session_id = None
+            try:
+                latest = sorted(Path("device_logs").iterdir(), key=lambda e: e.name, reverse=True)
+                if latest:
+                    session_dir = latest[0]
+                    session_id = session_dir.name
+                    json_file = session_dir / "EXECUTION.json"
+                    if json_file.is_file():
+                        try:
+                            with open(json_file, "r", encoding="utf-8") as f:
+                                json_data = json.load(f)
+                                results = json_data if isinstance(json_data, list) else [json_data]
+                        except Exception:
+                            pass
+                    if not results:
+                        log_file = session_dir / "EXECUTION.log"
+                        if log_file.is_file():
+                            for line in log_file.read_text("utf-8", errors="replace").splitlines():
+                                if "[PASS]" in line or "[FAIL]" in line or "[SKIP]" in line or "[ERROR]" in line:
+                                    results.append({"line": line.strip()})
+            except Exception:
+                pass
+
             return {
                 "success": True,
+                "session_id": session_id,
                 "executed_iterations": exec_cfg.iterations,
                 "mode": exec_cfg.mode,
                 "elapsed_seconds": round(elapsed, 3),
+                "results": results,
             }
         except Exception as e:
             logger.log_error(f"Error running pipeline: {e}")
