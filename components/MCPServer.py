@@ -453,24 +453,29 @@ class AutoComMCPServer:
 
         @mcp.tool()
         async def validate_pipeline(
-            file_path: str,
+            file_path: Optional[str] = None,
+            config_content: Optional[str] = None,
             config_path: Optional[str] = None,
             config_overrides: Optional[dict] = None,
         ) -> dict:
             """校验 AutoCom Steps 配置文件（YAML/JSON），返回错误与告警列表。"""
-            logger.log_info(f"MCP: validate_pipeline {file_path}")
+            resolved = AutoComMCPServer._resolve_config_file(file_path, config_content)
+            if not resolved:
+                return {"success": False, "error": "Must provide either file_path or config_content"}
+            logger.log_info(f"MCP: validate_pipeline {resolved}")
             t0 = time.time()
             result = await AutoComMCPServer._validate_pipeline(
-                file_path=file_path,
+                file_path=resolved,
                 config_path=config_path,
                 config_overrides=config_overrides,
             )
-            self._audit_log_tool("validate_pipeline", {"file_path": file_path}, result, (time.time() - t0) * 1000)
+            self._audit_log_tool("validate_pipeline", {"file_path": resolved}, result, (time.time() - t0) * 1000)
             return result
 
         @mcp.tool()
         async def run_pipeline(
-            file_path: str,
+            file_path: Optional[str] = None,
+            config_content: Optional[str] = None,
             config_path: Optional[str] = None,
             config_overrides: Optional[dict] = None,
             loop_count: Optional[int] = None,
@@ -490,12 +495,15 @@ class AutoComMCPServer:
             - max_failures: 最大失败次数
             - interval_ms: 轮次间隔毫秒数
             """
+            resolved = AutoComMCPServer._resolve_config_file(file_path, config_content)
+            if not resolved:
+                return {"success": False, "error": "Must provide either file_path or config_content"}
             logger.log_info(
-                f"MCP: run_pipeline {file_path} loop={loop_count} duration={duration} infinite={infinite}"
+                f"MCP: run_pipeline {resolved} loop={loop_count} duration={duration} infinite={infinite}"
             )
             t0 = time.time()
             result = await AutoComMCPServer._run_pipeline(
-                file_path=file_path,
+                file_path=resolved,
                 config_path=config_path,
                 config_overrides=config_overrides,
                 loop_count=loop_count,
@@ -794,28 +802,38 @@ class AutoComMCPServer:
         # ======================== 单步调试 ========================
 
         @mcp.tool()
-        async def pipeline_step_debug(file_path: str, step_id: str,
-                                        config_overrides: Optional[dict] = None) -> dict:
+        async def pipeline_step_debug(file_path: Optional[str] = None,
+                                config_content: Optional[str] = None,
+                                step_id: str = "",
+                                config_overrides: Optional[dict] = None) -> dict:
             """只执行流水线中的某一个步骤，方便单独调试某条指令"""
-            logger.log_info(f"MCP: pipeline_step_debug {file_path} step={step_id}")
+            resolved = AutoComMCPServer._resolve_config_file(file_path, config_content)
+            if not resolved:
+                return {"success": False, "error": "Must provide either file_path or config_content"}
+            logger.log_info(f"MCP: pipeline_step_debug {resolved} step={step_id}")
             t0 = time.time()
             result = await AutoComMCPServer._pipeline_step_debug(
-                file_path=file_path, step_id=step_id, config_overrides=config_overrides,
+                file_path=resolved, step_id=step_id, config_overrides=config_overrides,
             )
             self._audit_log_tool("pipeline_step_debug", {
-                "file_path": file_path, "step_id": step_id,
+                "file_path": resolved, "step_id": step_id,
             }, result, (time.time() - t0) * 1000)
             return result
 
         @mcp.tool()
-        async def pipeline_dry_run(file_path: str, config_overrides: Optional[dict] = None) -> dict:
+        async def pipeline_dry_run(file_path: Optional[str] = None,
+                                    config_content: Optional[str] = None,
+                                    config_overrides: Optional[dict] = None) -> dict:
             """对流水线做干运行：解析变量、追踪控制流，但不执行实际 I/O"""
-            logger.log_info(f"MCP: pipeline_dry_run {file_path}")
+            resolved = AutoComMCPServer._resolve_config_file(file_path, config_content)
+            if not resolved:
+                return {"success": False, "error": "Must provide either file_path or config_content"}
+            logger.log_info(f"MCP: pipeline_dry_run {resolved}")
             t0 = time.time()
             result = await AutoComMCPServer._pipeline_dry_run(
-                file_path=file_path, config_overrides=config_overrides,
+                file_path=resolved, config_overrides=config_overrides,
             )
-            self._audit_log_tool("pipeline_dry_run", {"file_path": file_path}, result, (time.time() - t0) * 1000)
+            self._audit_log_tool("pipeline_dry_run", {"file_path": resolved}, result, (time.time() - t0) * 1000)
             return result
 
     # ------------------------- 工具实现 -------------------------
@@ -2338,6 +2356,29 @@ class AutoComMCPServer:
             }
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    @staticmethod
+    def _resolve_config_file(file_path: Optional[str] = None,
+                             config_content: Optional[str] = None) -> Optional[str]:
+        """解析配置来源：config_content 写入临时文件，或直接返回 file_path。"""
+        if config_content and config_content.strip():
+            import tempfile
+            try:
+                import yaml
+                data = yaml.safe_load(config_content)
+                tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
+                yaml.safe_dump(data, tmp, sort_keys=False, allow_unicode=True)
+                tmp.close()
+            except Exception:
+                import json as _json
+                data = _json.loads(config_content)
+                tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
+                _json.dump(data, tmp, indent=2, ensure_ascii=False)
+                tmp.close()
+            return tmp.name
+        if file_path:
+            return file_path
+        return None
 
 
 def _create_auth_middleware(auth_key: str):
