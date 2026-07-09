@@ -1169,21 +1169,26 @@ class AutoComMCPServer:
                 from AutoCom import parse_duration
                 exec_cfg.duration_seconds = parse_duration(duration)
 
-            # 执行
-            start_time = time.time()
-            execute_with_loop(str(path), config=dict_data)
-            elapsed = time.time() - start_time
+            # 执行（API 模式使用 plain 输出，不打印表格）
+            from components.Logger import AutoComLogger
+            prev_mode = getattr(AutoComLogger.get_instance(), "cli_output_mode", "table")
+            try:
+                AutoComLogger.get_instance().cli_output_mode = "plain"
+                start_time = time.time()
+                execute_with_loop(str(path), config=dict_data)
+                elapsed = time.time() - start_time
+            finally:
+                AutoComLogger.get_instance().cli_output_mode = prev_mode
 
             return {
                 "success": True,
-                "file_path": str(path.resolve()),
                 "executed_iterations": exec_cfg.iterations,
                 "mode": exec_cfg.mode,
                 "elapsed_seconds": round(elapsed, 3),
             }
         except Exception as e:
             logger.log_error(f"Error running pipeline: {e}")
-            return {"success": False, "file_path": file_path, "error": str(e)}
+            return {"success": False, "error": str(e)}
 
     # ======================== 持久会话实现 ========================
 
