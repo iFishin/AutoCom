@@ -409,6 +409,7 @@ class AutoComRESTServer:
 
         @app.get("/api/health", tags=["系统"], response_model=HealthResponse)
         async def health() -> dict:
+            """健康检查，返回服务状态和版本号"""
             return {
                 "status": "ok",
                 "version": __version__,
@@ -887,7 +888,7 @@ class AutoComRESTServer:
             name: Optional[str] = Query(None, description="已保存的流水线名称（与 config_content 二选一）"),
             config_content: Optional[str] = Query(None, description="YAML/JSON 配置内容（与 name 二选一）"),
             loop_count: Optional[int] = Query(None, description="循环轮数"),
-            duration: Optional[str] = Query(None, description="限时: 30s, 5m, 1h"),
+            duration: Optional[str] = Query(None, description="限时时长，单位: 30(秒), 30s(秒), 5m(分), 1h(时)"),
             stop_on_failure: Optional[bool] = Query(None, description="失败即停止"),
         ) -> dict:
             """执行流水线"""
