@@ -899,20 +899,25 @@ class AutoComRESTServer:
 
     def _resolve_config(self, file_path: Optional[str], config_content: Optional[str]) -> Optional[str]:
         """解析配置来源：优先 config_content 写入临时文件，其次 file_path。"""
-        if config_content:
+        if config_content and config_content.strip():
             import tempfile
+            import yaml
+            import json as _json
+            data = None
             try:
-                import yaml
                 data = yaml.safe_load(config_content)
             except Exception:
-                import json
-                data = json.loads(config_content)
+                try:
+                    data = _json.loads(config_content)
+                except Exception:
+                    raise HTTPException(status_code=400, detail="config_content is not valid YAML or JSON")
+            if not isinstance(data, dict):
+                raise HTTPException(status_code=400, detail="config_content must parse to a JSON object (dict)")
             tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
             try:
                 yaml.safe_dump(data, tmp, sort_keys=False, allow_unicode=True)
             except Exception:
-                import json
-                tmp.write(json.dumps(data, indent=2, ensure_ascii=False))
+                _json.dump(data, tmp, indent=2, ensure_ascii=False)
             tmp.close()
             return tmp.name
         if file_path:

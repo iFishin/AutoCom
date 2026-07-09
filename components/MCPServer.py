@@ -2363,18 +2363,25 @@ class AutoComMCPServer:
         """解析配置来源：config_content 写入临时文件，或直接返回 file_path。"""
         if config_content and config_content.strip():
             import tempfile
+            import yaml
+            import json as _json
+            data = None
+            # 先尝试 YAML，再尝试 JSON
             try:
-                import yaml
                 data = yaml.safe_load(config_content)
-                tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
-                yaml.safe_dump(data, tmp, sort_keys=False, allow_unicode=True)
-                tmp.close()
             except Exception:
-                import json as _json
-                data = _json.loads(config_content)
-                tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
+                try:
+                    data = _json.loads(config_content)
+                except Exception:
+                    raise ValueError("config_content is not valid YAML or JSON")
+            if not isinstance(data, dict):
+                raise ValueError("config_content must parse to a JSON object (dict)")
+            tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
+            try:
+                yaml.safe_dump(data, tmp, sort_keys=False, allow_unicode=True)
+            except Exception:
                 _json.dump(data, tmp, indent=2, ensure_ascii=False)
-                tmp.close()
+            tmp.close()
             return tmp.name
         if file_path:
             return file_path
