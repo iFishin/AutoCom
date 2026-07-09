@@ -20,13 +20,13 @@ import uuid
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
-    from fastapi import FastAPI, Body, HTTPException, WebSocket, WebSocketDisconnect, Query
+    from fastapi import FastAPI, Body, HTTPException, Response, WebSocket, WebSocketDisconnect, Query
     from fastapi.middleware.cors import CORSMiddleware
     from pydantic import BaseModel
     import uvicorn
 
 try:
-    from fastapi import FastAPI, Body, HTTPException, WebSocket, WebSocketDisconnect, Query
+    from fastapi import FastAPI, Body, HTTPException, Response, WebSocket, WebSocketDisconnect, Query
     from fastapi.middleware.cors import CORSMiddleware
     from pydantic import BaseModel
     import uvicorn
@@ -291,11 +291,12 @@ try:
 
     class ExecutionSession(BaseModel):
         session_id: str
-        path: str
-        has_log: bool
-        has_json: bool
-        device_logs: list[str]
-        device_count: int
+        has_log: bool = False
+        has_json: bool = False
+        device_logs: list[str] = []
+        device_count: int = 0
+        log_count: int = 0
+        config_count: int = 0
 
     class ExecutionListResponse(BaseModel):
         success: bool
@@ -305,9 +306,8 @@ try:
     class ExecutionReportResponse(BaseModel):
         success: bool
         session_id: str
-        path: str
         execution_log: dict | None = None
-        device_logs: dict = {}
+        device_logs: list[dict] = []
         summary: dict = {}
 
     class LogMatch(BaseModel):
@@ -950,6 +950,21 @@ class AutoComRESTServer:
             """在指定执行会话的设备日志中搜索关键词"""
             return await AutoComMCPServer._session_log_query(
                 session_id=session_id, keyword=keyword, max_results=max_results,
+            )
+
+        @app.get("/api/executions/{session_id}/logs/{filename:path}", tags=["执行历史"])
+        async def get_execution_log(session_id: str, filename: str):
+            """获取指定执行会话的原始日志文件内容"""
+            from pathlib import Path
+            log_file = Path("device_logs") / session_id / filename
+            if not log_file.is_file() or log_file.parent.name != session_id:
+                raise HTTPException(status_code=404, detail="Log file not found")
+            return Response(
+                content=log_file.read_text("utf-8", errors="replace"),
+                media_type="text/plain; charset=utf-8",
+                headers={
+                    "Content-Disposition": f'inline; filename="{filename}"',
+                },
             )
 
     # ── 会话清理 ──

@@ -1912,17 +1912,18 @@ class AutoComMCPServer:
         for entry in sorted(base.iterdir(), key=lambda e: e.name, reverse=True):
             if not entry.is_dir():
                 continue
-            has_log = (entry / "EXECUTION.log").is_file()
-            has_json = (entry / "EXECUTION.json").is_file()
-            device_logs = sorted(f.name for f in entry.iterdir()
-                                 if f.suffix == ".log" and f.name != "EXECUTION.log")
+            log_files = sorted(f.name for f in entry.iterdir() if f.suffix == ".log")
+            config_files = sorted(f.name for f in entry.iterdir()
+                                  if f.suffix in (".yaml", ".yml", ".json"))
+            device_logs = [f for f in log_files if f != "EXECUTION.log"]
             sessions.append({
                 "session_id": entry.name,
-                "path": str(entry.resolve()),
-                "has_log": has_log,
-                "has_json": has_json,
+                "has_log": "EXECUTION.log" in log_files,
+                "has_json": (entry / "EXECUTION.json").is_file(),
                 "device_logs": device_logs,
                 "device_count": len(device_logs),
+                "log_count": len(log_files),
+                "config_count": len(config_files),
             })
             if len(sessions) >= limit:
                 break
@@ -1941,7 +1942,6 @@ class AutoComMCPServer:
         result = {
             "success": True,
             "session_id": session_id,
-            "execution_log": None,
             "device_logs": {},
             "summary": {},
         }
@@ -1953,10 +1953,9 @@ class AutoComMCPServer:
                 lines = exec_log.read_text("utf-8", errors="replace").splitlines()
                 result["execution_log"] = {
                     "line_count": len(lines),
-                    "content": lines[:500],  # 限制返回行数
-                    "truncated": len(lines) > 500,
+                    "preview": lines[:50],
+                    "truncated": len(lines) > 50,
                 }
-                # 提取摘要
                 summary = {"iterations": 0, "passed": 0, "failed": 0, "errors": [], "total_time": ""}
                 for line in lines:
                     if "iteration" in line.lower() and "failed" in line.lower():
@@ -1973,18 +1972,15 @@ class AutoComMCPServer:
             except Exception as e:
                 result["execution_log"] = {"error": str(e)}
 
-        # 读取设备日志
+        # 列出设备日志（仅文件名和大小，不返回全文）
+        log_list = []
         for f in sorted(session_dir.iterdir()):
             if f.suffix == ".log" and f.name != "EXECUTION.log":
-                try:
-                    dev_lines = f.read_text("utf-8", errors="replace").splitlines()
-                    result["device_logs"][f.name] = {
-                        "line_count": len(dev_lines),
-                        "content": dev_lines[:200],
-                        "truncated": len(dev_lines) > 200,
-                    }
-                except Exception as e:
-                    result["device_logs"][f.name] = {"error": str(e)}
+                log_list.append({
+                    "filename": f.name,
+                    "size_bytes": f.stat().st_size,
+                })
+        result["device_logs"] = log_list
 
         return result
 
