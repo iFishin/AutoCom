@@ -194,13 +194,30 @@ try:
         issues: list[str] = []
 
     class PipelineItem(BaseModel):
-        file_path: str
-        file_name: str
-        relative_path: str
+        name: str
+        path: str
         size_bytes: int
         modified: float
-        directory: str
 
+    class PipelineListResponse(BaseModel):
+        success: bool
+        total: int
+        pipelines: list[PipelineItem]
+
+    class PipelineSaveResponse(BaseModel):
+        success: bool
+        name: str
+        path: str
+
+    class PipelineDeleteResponse(BaseModel):
+        success: bool
+        name: str
+
+    class PipelineContentResponse(BaseModel):
+        success: bool
+        name: str
+        content: str
+        size_bytes: int
     class PipelineListResponse(BaseModel):
         success: bool
         total: int
@@ -758,81 +775,82 @@ class AutoComRESTServer:
                 raise HTTPException(status_code=404, detail=str(result.get("error", "Not found")))
             return result
 
-        # ─── 流水线 ───
+        # ─── 流水线存储管理 ───
 
-        @app.get("/api/pipelines", tags=["流水线"], response_model=PipelineListResponse)
-        async def list_pipelines(base_dir: Optional[str] = Query(None, description="搜索目录")) -> dict:
-            """列出可用流水线配置文件"""
-            return await AutoComMCPServer._pipeline_list(base_dir=base_dir)
+        @app.get("/api/storage/pipelines", tags=["流水线存储"], response_model=PipelineListResponse)
+        async def storage_list_pipelines() -> dict:
+            """列出 ~/.autocom/pipelines/ 下已保存的流水线"""
+            return self._storage_list()
+
+        @app.post("/api/storage/pipelines", tags=["流水线存储"], response_model=PipelineSaveResponse)
+        async def storage_save_pipeline(
+            name: str = Query(..., description="流水线名称（不含扩展名）"),
+            content: str = Body(..., description="YAML/JSON 配置内容"),
+        ) -> dict:
+            """保存流水线配置文件到 ~/.autocom/pipelines/"""
+            return self._storage_save(name, content)
+
+        @app.get("/api/storage/pipelines/{name}", tags=["流水线存储"], response_model=PipelineContentResponse)
+        async def storage_get_pipeline(name: str) -> dict:
+            """查看已保存的流水线内容"""
+            return self._storage_get(name)
+
+        @app.delete("/api/storage/pipelines/{name}", tags=["流水线存储"], response_model=PipelineDeleteResponse)
+        async def storage_delete_pipeline(name: str) -> dict:
+            """删除已保存的流水线"""
+            return self._storage_delete(name)
+
+        # ─── 流水线执行 ───
 
         @app.post("/api/pipeline/validate", tags=["流水线"], response_model=PipelineValidateResponse)
         async def validate_pipeline(
-            file_path: Optional[str] = Query(None, description="配置文件路径（与 config_content 二选一）"),
-            config_content: Optional[str] = Query(None, description="YAML/JSON 配置内容（与 file_path 二选一）"),
-            config_path: Optional[str] = Query(None, description="独立的配置覆盖文件"),
-            config_overrides: Optional[str] = Query(None, description="JSON 格式的配置覆盖"),
+            pipeline: Optional[str] = Query(None, description="已保存的流水线名称（与 config_content 二选一）"),
+            config_content: Optional[str] = Query(None, description="YAML/JSON 配置内容（与 pipeline 二选一）"),
         ) -> dict:
             """校验流水线配置"""
-            resolved = self._resolve_config(file_path, config_content)
+            resolved = self._resolve_pipeline(pipeline, config_content)
             if not resolved:
-                raise HTTPException(status_code=400, detail="Must provide either file_path or config_content")
-            overrides = json.loads(config_overrides) if config_overrides else None
-            return await AutoComMCPServer._validate_pipeline(
-                file_path=resolved, config_path=config_path, config_overrides=overrides,
-            )
+                raise HTTPException(status_code=400, detail="Must provide either pipeline or config_content")
+            return await AutoComMCPServer._validate_pipeline(file_path=resolved)
 
         @app.post("/api/pipeline/run", tags=["流水线"], response_model=PipelineRunResponse)
         async def run_pipeline(
-            file_path: Optional[str] = Query(None, description="配置文件路径（与 config_content 二选一）"),
-            config_content: Optional[str] = Query(None, description="YAML/JSON 配置内容（与 file_path 二选一）"),
+            pipeline: Optional[str] = Query(None, description="已保存的流水线名称（与 config_content 二选一）"),
+            config_content: Optional[str] = Query(None, description="YAML/JSON 配置内容（与 pipeline 二选一）"),
             loop_count: Optional[int] = Query(None, description="循环轮数"),
             duration: Optional[str] = Query(None, description="限时: 30s, 5m, 1h"),
             stop_on_failure: Optional[bool] = Query(None, description="失败即停止"),
-            config_overrides: Optional[str] = Query(None, description="JSON 格式的配置覆盖"),
         ) -> dict:
             """执行流水线"""
-            resolved = self._resolve_config(file_path, config_content)
+            resolved = self._resolve_pipeline(pipeline, config_content)
             if not resolved:
-                raise HTTPException(status_code=400, detail="Must provide either file_path or config_content")
-            overrides = json.loads(config_overrides) if config_overrides else None
+                raise HTTPException(status_code=400, detail="Must provide either pipeline or config_content")
             return await AutoComMCPServer._run_pipeline(
-                file_path=resolved,
-                loop_count=loop_count,
-                duration=duration,
-                stop_on_failure=stop_on_failure,
-                config_overrides=overrides,
+                file_path=resolved, loop_count=loop_count, duration=duration, stop_on_failure=stop_on_failure,
             )
 
         @app.post("/api/pipeline/dry-run", tags=["流水线"], response_model=PipelineDryRunResponse)
         async def dry_run(
-            file_path: Optional[str] = Query(None, description="配置文件路径（与 config_content 二选一）"),
-            config_content: Optional[str] = Query(None, description="YAML/JSON 配置内容（与 file_path 二选一）"),
-            config_overrides: Optional[str] = Query(None, description="JSON 格式的配置覆盖"),
+            pipeline: Optional[str] = Query(None, description="已保存的流水线名称（与 config_content 二选一）"),
+            config_content: Optional[str] = Query(None, description="YAML/JSON 配置内容（与 pipeline 二选一）"),
         ) -> dict:
             """干运行：解析变量、追踪控制流，不执行 I/O"""
-            resolved = self._resolve_config(file_path, config_content)
+            resolved = self._resolve_pipeline(pipeline, config_content)
             if not resolved:
-                raise HTTPException(status_code=400, detail="Must provide either file_path or config_content")
-            overrides = json.loads(config_overrides) if config_overrides else None
-            return await AutoComMCPServer._pipeline_dry_run(
-                file_path=resolved, config_overrides=overrides,
-            )
+                raise HTTPException(status_code=400, detail="Must provide either pipeline or config_content")
+            return await AutoComMCPServer._pipeline_dry_run(file_path=resolved)
 
         @app.post("/api/pipeline/step-debug", tags=["流水线"], response_model=PipelineStepDebugResponse)
         async def step_debug(
-            file_path: Optional[str] = Query(None, description="配置文件路径（与 config_content 二选一）"),
-            config_content: Optional[str] = Query(None, description="YAML/JSON 配置内容（与 file_path 二选一）"),
+            pipeline: Optional[str] = Query(None, description="已保存的流水线名称（与 config_content 二选一）"),
+            config_content: Optional[str] = Query(None, description="YAML/JSON 配置内容（与 pipeline 二选一）"),
             step_id: str = Query(..., description="要调试的步骤 ID"),
-            config_overrides: Optional[str] = Query(None, description="JSON 格式的配置覆盖"),
         ) -> dict:
             """单步调试：只执行流水线中的某一个步骤"""
-            resolved = self._resolve_config(file_path, config_content)
+            resolved = self._resolve_pipeline(pipeline, config_content)
             if not resolved:
-                raise HTTPException(status_code=400, detail="Must provide either file_path or config_content")
-            overrides = json.loads(config_overrides) if config_overrides else None
-            return await AutoComMCPServer._pipeline_step_debug(
-                file_path=resolved, step_id=step_id, config_overrides=overrides,
-            )
+                raise HTTPException(status_code=400, detail="Must provide either pipeline or config_content")
+            return await AutoComMCPServer._pipeline_step_debug(file_path=resolved, step_id=step_id)
 
         # ─── 执行历史 ───
 
@@ -897,8 +915,14 @@ class AutoComRESTServer:
 
     # ── 配置解析 ──
 
-    def _resolve_config(self, file_path: Optional[str], config_content: Optional[str]) -> Optional[str]:
-        """解析配置来源：优先 config_content 写入临时文件，其次 file_path（含路径穿越防护）。"""
+    def _pipeline_dir(self) -> pathlib.Path:
+        """~/.autocom/pipelines/ 目录，自动创建。"""
+        d = pathlib.Path.home() / ".autocom" / "pipelines"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _resolve_pipeline(self, pipeline: Optional[str], config_content: Optional[str]) -> Optional[str]:
+        """解析流水线来源：pipeline 名称 → 读取 ~/.autocom/pipelines/ 下的文件。"""
         if config_content and config_content.strip():
             import tempfile
             import yaml
@@ -912,7 +936,7 @@ class AutoComRESTServer:
                 except Exception:
                     raise HTTPException(status_code=400, detail="config_content is not valid YAML or JSON")
             if not isinstance(data, dict):
-                raise HTTPException(status_code=400, detail="config_content must parse to a JSON object (dict)")
+                raise HTTPException(status_code=400, detail="config_content must parse to a JSON object")
             tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
             try:
                 yaml.safe_dump(data, tmp, sort_keys=False, allow_unicode=True)
@@ -920,21 +944,56 @@ class AutoComRESTServer:
                 _json.dump(data, tmp, indent=2, ensure_ascii=False)
             tmp.close()
             return tmp.name
-        if file_path:
-            import pathlib
-            resolved = pathlib.Path(file_path).resolve()
-            cwd = pathlib.Path.cwd().resolve()
-            try:
-                resolved.relative_to(cwd)
-            except ValueError:
-                raise HTTPException(
-                    status_code=403,
-                    detail=f"Path traversal denied: '{file_path}' resolves to '{resolved}', outside working directory",
-                )
-            if not resolved.is_file():
-                raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
-            return str(resolved)
+        if pipeline:
+            p = self._pipeline_dir() / f"{pipeline}.yaml"
+            if not p.is_file():
+                p = self._pipeline_dir() / f"{pipeline}.yml"
+            if not p.is_file():
+                p = self._pipeline_dir() / f"{pipeline}.json"
+            if not p.is_file():
+                raise HTTPException(status_code=404, detail=f"Pipeline '{pipeline}' not found in ~/.autocom/pipelines/")
+            return str(p.resolve())
         return None
+
+    def _storage_list(self) -> dict:
+        """列出 ~/.autocom/pipelines/ 下所有流水线文件。"""
+        d = self._pipeline_dir()
+        items = []
+        for f in sorted(d.iterdir()):
+            if f.suffix in (".yaml", ".yml", ".json") and f.is_file():
+                items.append({
+                    "name": f.stem,
+                    "path": str(f),
+                    "size_bytes": f.stat().st_size,
+                    "modified": f.stat().st_mtime,
+                })
+        return {"success": True, "total": len(items), "pipelines": items}
+
+    def _storage_save(self, name: str, content: str) -> dict:
+        """保存流水线到 ~/.autocom/pipelines/。"""
+        d = self._pipeline_dir()
+        p = d / f"{name}.yaml"
+        p.write_text(content, encoding="utf-8")
+        return {"success": True, "name": name, "path": str(p)}
+
+    def _storage_get(self, name: str) -> dict:
+        """读取已保存的流水线内容。"""
+        d = self._pipeline_dir()
+        for ext in (".yaml", ".yml", ".json"):
+            p = d / f"{name}{ext}"
+            if p.is_file():
+                return {"success": True, "name": name, "content": p.read_text("utf-8"), "size_bytes": p.stat().st_size}
+        raise HTTPException(status_code=404, detail=f"Pipeline '{name}' not found")
+
+    def _storage_delete(self, name: str) -> dict:
+        """删除已保存的流水线。"""
+        d = self._pipeline_dir()
+        for ext in (".yaml", ".yml", ".json"):
+            p = d / f"{name}{ext}"
+            if p.is_file():
+                p.unlink()
+                return {"success": True, "name": name}
+        raise HTTPException(status_code=404, detail=f"Pipeline '{name}' not found")
 
     # ── 启动 ──
 
