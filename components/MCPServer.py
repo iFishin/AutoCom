@@ -1935,7 +1935,6 @@ class AutoComMCPServer:
         result = {
             "success": True,
             "session_id": session_id,
-            "path": str(session_dir.resolve()),
             "execution_log": None,
             "device_logs": {},
             "summary": {},
