@@ -785,9 +785,12 @@ class AutoComRESTServer:
         @app.post("/api/storage/pipelines", tags=["流水线存储"], response_model=PipelineSaveResponse)
         async def storage_save_pipeline(
             name: str = Query(..., description="流水线名称（不含扩展名）"),
-            content: str = Body(..., description="YAML/JSON 配置内容"),
+            body: dict = Body(default={"content": ""}, description="{\"content\": \"YAML/JSON 配置内容\"}"),
         ) -> dict:
             """保存流水线配置文件到 ~/.autocom/pipelines/"""
+            content = body.get("content", "")
+            if not content.strip():
+                raise HTTPException(status_code=400, detail="Body must contain 'content' field with YAML/JSON")
             return self._storage_save(name, content)
 
         @app.get("/api/storage/pipelines/{name}", tags=["流水线存储"], response_model=PipelineContentResponse)
