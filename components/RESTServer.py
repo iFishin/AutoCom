@@ -980,7 +980,7 @@ class AutoComRESTServer:
         d = self._pipeline_dir()
         p = d / f"{name}.yaml"
         p.write_text(content, encoding="utf-8")
-        return {"success": True, "name": name, "path": str(p)}
+        return {"success": True, "name": name}
 
     def _storage_get(self, name: str) -> dict:
         """读取已保存的流水线内容。"""
