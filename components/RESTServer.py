@@ -277,13 +277,16 @@ try:
 
     class PipelineValidateResponse(BaseModel):
         success: bool
-        errors: list[str] = []
-        warnings: list[str] = []
+        errors: list[dict] = []
+        warnings: list[dict] = []
         summary: str | None = None
 
     class PipelineRunResponse(BaseModel):
         success: bool
-        summary: dict = {}
+        session_id: str | None = None
+        executed_iterations: int = 0
+        mode: str = ""
+        elapsed_seconds: float = 0
         results: list[dict] = []
 
     class ExecutionSession(BaseModel):
