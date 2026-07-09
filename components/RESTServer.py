@@ -888,15 +888,16 @@ class AutoComRESTServer:
             name: Optional[str] = Query(None, description="已保存的流水线名称（与 config_content 二选一）"),
             config_content: Optional[str] = Query(None, description="YAML/JSON 配置内容（与 name 二选一）"),
             loop_count: Optional[int] = Query(None, description="循环轮数"),
-            duration: Optional[str] = Query(None, description="限时时长，单位: 30(秒), 30s(秒), 5m(分), 1h(时)"),
+            duration: Optional[int] = Query(None, description="限时执行时长（秒）"),
             stop_on_failure: Optional[bool] = Query(None, description="失败即停止"),
         ) -> dict:
             """执行流水线"""
             resolved = self._resolve_pipeline(name, config_content)
             if not resolved:
                 raise HTTPException(status_code=400, detail="Must provide either pipeline or config_content")
+            duration_str = str(duration) if duration is not None else None
             return await AutoComMCPServer._run_pipeline(
-                file_path=resolved, loop_count=loop_count, duration=duration, stop_on_failure=stop_on_failure,
+                file_path=resolved, loop_count=loop_count, duration=duration_str, stop_on_failure=stop_on_failure,
             )
 
         @app.post("/api/pipeline/dry-run", tags=["流水线"], response_model=PipelineDryRunResponse)
