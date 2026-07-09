@@ -767,28 +767,36 @@ class AutoComRESTServer:
 
         @app.post("/api/pipeline/validate", tags=["流水线"], response_model=PipelineValidateResponse)
         async def validate_pipeline(
-            file_path: str = Query(..., description="配置文件路径"),
+            file_path: Optional[str] = Query(None, description="配置文件路径（与 config_content 二选一）"),
+            config_content: Optional[str] = Query(None, description="YAML/JSON 配置内容（与 file_path 二选一）"),
             config_path: Optional[str] = Query(None, description="独立的配置覆盖文件"),
             config_overrides: Optional[str] = Query(None, description="JSON 格式的配置覆盖"),
         ) -> dict:
             """校验流水线配置"""
+            resolved = self._resolve_config(file_path, config_content)
+            if not resolved:
+                raise HTTPException(status_code=400, detail="Must provide either file_path or config_content")
             overrides = json.loads(config_overrides) if config_overrides else None
             return await AutoComMCPServer._validate_pipeline(
-                file_path=file_path, config_path=config_path, config_overrides=overrides,
+                file_path=resolved, config_path=config_path, config_overrides=overrides,
             )
 
         @app.post("/api/pipeline/run", tags=["流水线"], response_model=PipelineRunResponse)
         async def run_pipeline(
-            file_path: str = Query(..., description="配置文件路径"),
+            file_path: Optional[str] = Query(None, description="配置文件路径（与 config_content 二选一）"),
+            config_content: Optional[str] = Query(None, description="YAML/JSON 配置内容（与 file_path 二选一）"),
             loop_count: Optional[int] = Query(None, description="循环轮数"),
             duration: Optional[str] = Query(None, description="限时: 30s, 5m, 1h"),
             stop_on_failure: Optional[bool] = Query(None, description="失败即停止"),
             config_overrides: Optional[str] = Query(None, description="JSON 格式的配置覆盖"),
         ) -> dict:
             """执行流水线"""
+            resolved = self._resolve_config(file_path, config_content)
+            if not resolved:
+                raise HTTPException(status_code=400, detail="Must provide either file_path or config_content")
             overrides = json.loads(config_overrides) if config_overrides else None
             return await AutoComMCPServer._run_pipeline(
-                file_path=file_path,
+                file_path=resolved,
                 loop_count=loop_count,
                 duration=duration,
                 stop_on_failure=stop_on_failure,
@@ -797,25 +805,33 @@ class AutoComRESTServer:
 
         @app.post("/api/pipeline/dry-run", tags=["流水线"], response_model=PipelineDryRunResponse)
         async def dry_run(
-            file_path: str = Query(..., description="配置文件路径"),
+            file_path: Optional[str] = Query(None, description="配置文件路径（与 config_content 二选一）"),
+            config_content: Optional[str] = Query(None, description="YAML/JSON 配置内容（与 file_path 二选一）"),
             config_overrides: Optional[str] = Query(None, description="JSON 格式的配置覆盖"),
         ) -> dict:
             """干运行：解析变量、追踪控制流，不执行 I/O"""
+            resolved = self._resolve_config(file_path, config_content)
+            if not resolved:
+                raise HTTPException(status_code=400, detail="Must provide either file_path or config_content")
             overrides = json.loads(config_overrides) if config_overrides else None
             return await AutoComMCPServer._pipeline_dry_run(
-                file_path=file_path, config_overrides=overrides,
+                file_path=resolved, config_overrides=overrides,
             )
 
         @app.post("/api/pipeline/step-debug", tags=["流水线"], response_model=PipelineStepDebugResponse)
         async def step_debug(
-            file_path: str = Query(..., description="配置文件路径"),
+            file_path: Optional[str] = Query(None, description="配置文件路径（与 config_content 二选一）"),
+            config_content: Optional[str] = Query(None, description="YAML/JSON 配置内容（与 file_path 二选一）"),
             step_id: str = Query(..., description="要调试的步骤 ID"),
             config_overrides: Optional[str] = Query(None, description="JSON 格式的配置覆盖"),
         ) -> dict:
             """单步调试：只执行流水线中的某一个步骤"""
+            resolved = self._resolve_config(file_path, config_content)
+            if not resolved:
+                raise HTTPException(status_code=400, detail="Must provide either file_path or config_content")
             overrides = json.loads(config_overrides) if config_overrides else None
             return await AutoComMCPServer._pipeline_step_debug(
-                file_path=file_path, step_id=step_id, config_overrides=overrides,
+                file_path=resolved, step_id=step_id, config_overrides=overrides,
             )
 
         # ─── 执行历史 ───
@@ -878,6 +894,30 @@ class AutoComRESTServer:
                     except Exception:
                         pass
             self._sessions.clear()
+
+    # ── 配置解析 ──
+
+    def _resolve_config(self, file_path: Optional[str], config_content: Optional[str]) -> Optional[str]:
+        """解析配置来源：优先 config_content 写入临时文件，其次 file_path。"""
+        if config_content:
+            import tempfile
+            try:
+                import yaml
+                data = yaml.safe_load(config_content)
+            except Exception:
+                import json
+                data = json.loads(config_content)
+            tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
+            try:
+                yaml.safe_dump(data, tmp, sort_keys=False, allow_unicode=True)
+            except Exception:
+                import json
+                tmp.write(json.dumps(data, indent=2, ensure_ascii=False))
+            tmp.close()
+            return tmp.name
+        if file_path:
+            return file_path
+        return None
 
     # ── 启动 ──
 
