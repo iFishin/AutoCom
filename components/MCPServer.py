@@ -1184,24 +1184,30 @@ class AutoComMCPServer:
             results = []
             session_id = None
             try:
-                latest = sorted(Path("device_logs").iterdir(), key=lambda e: e.name, reverse=True)
-                if latest:
-                    session_dir = latest[0]
-                    session_id = session_dir.name
-                    json_file = session_dir / "EXECUTION.json"
-                    if json_file.is_file():
-                        try:
-                            with open(json_file, "r", encoding="utf-8") as f:
-                                json_data = json.load(f)
-                                results = json_data if isinstance(json_data, list) else [json_data]
-                        except Exception:
-                            pass
-                    if not results:
-                        log_file = session_dir / "EXECUTION.log"
-                        if log_file.is_file():
-                            for line in log_file.read_text("utf-8", errors="replace").splitlines():
-                                if "[PASS]" in line or "[FAIL]" in line or "[SKIP]" in line or "[ERROR]" in line:
-                                    results.append({"line": line.strip()})
+                from pathlib import Path as _P
+                logs = _P("device_logs")
+                if logs.is_dir():
+                    dirs = sorted(logs.iterdir(), key=lambda e: e.name, reverse=True)
+                    if dirs:
+                        session_dir = dirs[0]
+                        session_id = session_dir.name
+                        for f in sorted(session_dir.iterdir()):
+                            if f.suffix == ".log":
+                                text = f.read_text("utf-8", errors="replace")
+                                for block in text.split("========"):
+                                    info: dict[str, str] = {}
+                                    for line in block.splitlines():
+                                        ls = line.strip()
+                                        for prefix in ("step_id:", "step_type:", "status:", "elapsed_ms:"):
+                                            if ls.startswith(prefix):
+                                                info[prefix[:-1]] = ls.split(":", 1)[1].strip()
+                                    if "step_id" in info:
+                                        results.append({
+                                            "step_id": info.get("step_id"),
+                                            "step_type": info.get("step_type"),
+                                            "status": info.get("status"),
+                                            "elapsed_ms": info.get("elapsed_ms"),
+                                        })
             except Exception:
                 pass
 
