@@ -898,7 +898,7 @@ class AutoComRESTServer:
     # ── 配置解析 ──
 
     def _resolve_config(self, file_path: Optional[str], config_content: Optional[str]) -> Optional[str]:
-        """解析配置来源：优先 config_content 写入临时文件，其次 file_path。"""
+        """解析配置来源：优先 config_content 写入临时文件，其次 file_path（含路径穿越防护）。"""
         if config_content and config_content.strip():
             import tempfile
             import yaml
@@ -921,7 +921,19 @@ class AutoComRESTServer:
             tmp.close()
             return tmp.name
         if file_path:
-            return file_path
+            import pathlib
+            resolved = pathlib.Path(file_path).resolve()
+            cwd = pathlib.Path.cwd().resolve()
+            try:
+                resolved.relative_to(cwd)
+            except ValueError:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Path traversal denied: '{file_path}' resolves to '{resolved}', outside working directory",
+                )
+            if not resolved.is_file():
+                raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+            return str(resolved)
         return None
 
     # ── 启动 ──

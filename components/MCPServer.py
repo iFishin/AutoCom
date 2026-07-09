@@ -2360,8 +2360,29 @@ class AutoComMCPServer:
     @staticmethod
     def _resolve_config_file(file_path: Optional[str] = None,
                              config_content: Optional[str] = None) -> Optional[str]:
-        """解析配置来源：config_content 写入临时文件，或直接返回 file_path。"""
+        """解析配置来源：config_content 写入临时文件，或直接返回 file_path。
+
+        路径安全性：只允许访问工作目录下的文件，拒绝路径穿越。
+        """
+        if file_path:
+            import pathlib
+            resolved = pathlib.Path(file_path).resolve()
+            cwd = pathlib.Path.cwd().resolve()
+            try:
+                resolved.relative_to(cwd)
+            except ValueError:
+                raise ValueError(
+                    f"Path traversal denied: '{file_path}' resolves to '{resolved}', "
+                    f"which is outside the working directory '{cwd}'"
+                )
+            if not resolved.is_file():
+                raise ValueError(f"File not found: {file_path}")
+            return str(resolved)
+
         if config_content and config_content.strip():
+            import tempfile
+            import yaml
+            import json as _json
             import tempfile
             import yaml
             import json as _json
