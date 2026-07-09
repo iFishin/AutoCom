@@ -87,6 +87,26 @@ try:
         version: str
         sessions: int
 
+    class PingResponse(BaseModel):
+        pong: bool
+
+    class SystemInfoResponse(BaseModel):
+        success: bool
+        hostname: str
+        ip: str
+        version: str
+        python_version: str
+        platform: str
+        pid: int
+        uptime_seconds: float
+        active_sessions: int
+
+    class StatsResponse(BaseModel):
+        success: bool
+        uptime_seconds: float
+        active_sessions: int
+        started_at: float
+
     class PortItem(BaseModel):
         device: str
         description: str
@@ -349,6 +369,7 @@ class AutoComRESTServer:
     def __init__(self, host: str = "0.0.0.0", port: int = 8000) -> None:
         self.host = host
         self.port = port
+        self._started_at = time.time()
 
         self.app = FastAPI(
             title="AutoCom REST API",
@@ -392,6 +413,48 @@ class AutoComRESTServer:
                 "status": "ok",
                 "version": __version__,
                 "sessions": len(self._sessions),
+            }
+
+        @app.get("/api/ping", tags=["系统"], response_model=PingResponse)
+        async def ping() -> dict:
+            """连通性检测"""
+            return {"pong": True}
+
+        @app.get("/api/system/info", tags=["系统"], response_model=SystemInfoResponse)
+        async def system_info() -> dict:
+            """查询系统信息：主机名、IP、版本等"""
+            import socket
+            hostname = socket.gethostname()
+            ip = "127.0.0.1"
+            try:
+                for addr in socket.getaddrinfo(hostname, None):
+                    if addr[0] == socket.AF_INET:
+                        ip_candidate = addr[4][0]
+                        if not ip_candidate.startswith("127."):
+                            ip = ip_candidate
+                            break
+            except Exception:
+                pass
+            return {
+                "success": True,
+                "hostname": hostname,
+                "ip": ip,
+                "version": __version__,
+                "python_version": __import__("sys").version,
+                "platform": __import__("sys").platform,
+                "pid": __import__("os").getpid(),
+                "uptime_seconds": round(time.time() - self._started_at, 1),
+                "active_sessions": len(self._sessions),
+            }
+
+        @app.get("/api/stats", tags=["系统"], response_model=StatsResponse)
+        async def stats() -> dict:
+            """API 运行时统计"""
+            return {
+                "success": True,
+                "uptime_seconds": round(time.time() - self._started_at, 1),
+                "active_sessions": len(self._sessions),
+                "started_at": self._started_at,
             }
 
         # ─── 串口基础操作 ───
