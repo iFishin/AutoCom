@@ -131,8 +131,8 @@ try:
 
     class BaudRateResult(BaseModel):
         baud_rate: int
-        success: bool
-        response: str
+        response: str | None = None
+        elapsed_ms: float = 0
         elapsed_ms: float
         error: str | None = None
 
