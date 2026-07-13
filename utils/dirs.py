@@ -109,7 +109,7 @@ class Dirs:
 
     def device_logs_dir_safe(self) -> Path:
         """获取设备日志目录路径，不自动创建"""
-        return self.root / "device_logs"
+        return self.root / "logs/run"
 
     @property
     def device_logs_dir(self) -> Path:

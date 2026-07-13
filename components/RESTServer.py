@@ -958,7 +958,7 @@ class AutoComRESTServer:
         async def get_execution_log(session_id: str, filename: str):
             """获取指定执行会话的原始日志文件内容"""
             from pathlib import Path
-            log_file = Path("device_logs") / session_id / filename
+            log_file = Path("logs/run") / session_id / filename
             if not log_file.is_file() or log_file.parent.name != session_id:
                 raise HTTPException(status_code=404, detail="Log file not found")
             return Response(

@@ -710,7 +710,7 @@ class AutoComMCPServer:
 
         @mcp.tool()
         async def execution_list(limit: int = 20) -> dict:
-            """列出最近执行会话（从 device_logs/ 读取）"""
+            """列出最近执行会话（从 logs/run/ 读取）"""
             logger.log_info("MCP: execution_list called")
             t0 = time.time()
             result = await AutoComMCPServer._execution_list(limit=limit)
@@ -1193,7 +1193,7 @@ class AutoComMCPServer:
             session_id = None
             try:
                 from pathlib import Path as _P
-                logs = _P("device_logs")
+                logs = _P("logs/run")
                 if logs.is_dir():
                     dirs = sorted(logs.iterdir(), key=lambda e: e.name, reverse=True)
                     if dirs:
@@ -1912,7 +1912,7 @@ class AutoComMCPServer:
         """列出最近的执行会话。"""
         from pathlib import Path
 
-        base = Path("device_logs")
+        base = Path("logs/run")
         if not base.is_dir():
             return {"success": True, "total": 0, "sessions": []}
 
@@ -1943,9 +1943,9 @@ class AutoComMCPServer:
         """解析指定执行会话的日志和结果。"""
         from pathlib import Path
 
-        session_dir = Path("device_logs") / session_id
+        session_dir = Path("logs/run") / session_id
         if not session_dir.is_dir():
-            return {"success": False, "error": f"Session '{session_id}' not found in device_logs/"}
+            return {"success": False, "error": f"Session '{session_id}' not found in logs/run/"}
 
         result = {
             "success": True,
@@ -2013,7 +2013,7 @@ class AutoComMCPServer:
         """在指定会话的日志中搜索关键词。"""
         from pathlib import Path
 
-        session_dir = Path("device_logs") / session_id
+        session_dir = Path("logs/run") / session_id
         if not session_dir.is_dir():
             return {"success": False, "error": f"Session '{session_id}' not found"}
 
@@ -2472,7 +2472,7 @@ class AutoComMCPServer:
         import datetime
         from utils.dirs import get_dirs
         try:
-            logs_dir = get_dirs().device_logs_dir_safe / "operations"
+            logs_dir = get_dirs().root / "logs/operations"
             logs_dir.mkdir(parents=True, exist_ok=True)
             log_file = logs_dir / f"{datetime.date.today().isoformat()}.log"
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
