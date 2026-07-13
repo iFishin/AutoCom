@@ -43,7 +43,7 @@ try:
         label: str | None = None
 
     class SessionListItem(BaseModel):
-        session_id: str
+        session_id: str | None = None
         port: str
         baud_rate: int
         label: str
@@ -57,7 +57,7 @@ try:
 
     class SessionDetailResponse(BaseModel):
         success: bool
-        session_id: str
+        session_id: str | None = None
         port: str
         baud_rate: int
         label: str
@@ -65,7 +65,7 @@ try:
 
     class SessionCloseResponse(BaseModel):
         success: bool
-        session_id: str
+        session_id: str | None = None
 
     class SessionSendResponse(BaseModel):
         success: bool
@@ -78,7 +78,7 @@ try:
         success: bool
         data: str
         bytes_count: int
-        session_id: str
+        session_id: str | None = None
 
     # ── 串口操作响应模型 ──
 
@@ -290,7 +290,7 @@ try:
         results: list[dict] = []
 
     class ExecutionSession(BaseModel):
-        session_id: str
+        session_id: str | None = None
         has_log: bool = False
         has_json: bool = False
         device_logs: list[str] = []
@@ -305,7 +305,7 @@ try:
 
     class ExecutionReportResponse(BaseModel):
         success: bool
-        session_id: str
+        session_id: str | None = None
         execution_log: dict | None = None
         device_logs: list[dict] = []
         summary: dict = {}
@@ -318,7 +318,7 @@ try:
 
     class LogSearchResponse(BaseModel):
         success: bool
-        session_id: str
+        session_id: str | None = None
         keyword: str
         total_matches: int
         matches: list[LogMatch]
@@ -710,7 +710,7 @@ class AutoComRESTServer:
             return {"success": True, "sessions": sessions, "total": len(sessions)}
 
         @app.get("/api/sessions/{session_id}", tags=["持久会话"], response_model=SessionDetailResponse)
-        async def get_session(session_id: str) -> dict:
+        async def get_session(session_id: str | None = None) -> dict:
             """获取单个会话的详细信息"""
             with self._session_lock:
                 sess = self._sessions.get(session_id)
@@ -726,7 +726,7 @@ class AutoComRESTServer:
                 }
 
         @app.delete("/api/sessions/{session_id}", tags=["持久会话"], response_model=SessionCloseResponse)
-        async def close_session(session_id: str) -> dict:
+        async def close_session(session_id: str | None = None) -> dict:
             """关闭并清理持久会话"""
             with self._session_lock:
                 sess = self._sessions.pop(session_id, None)
@@ -742,7 +742,7 @@ class AutoComRESTServer:
 
         @app.post("/api/sessions/{session_id}/send", tags=["持久会话"], response_model=SessionSendResponse)
         async def session_send(
-            session_id: str,
+            session_id: str | None = None,
             command: str = Query(..., description="要发送的指令"),
             timeout: Optional[float] = Query(None, description="响应等待超时（秒）"),
             line_ending: str = Query("0d0a", description="行结尾的十六进制字节"),
@@ -783,7 +783,7 @@ class AutoComRESTServer:
 
         @app.post("/api/sessions/{session_id}/read", tags=["持久会话"], response_model=SessionReadResponse)
         async def session_read(
-            session_id: str,
+            session_id: str | None = None,
             timeout: Optional[float] = Query(None, description="等待数据的时间（秒）"),
             max_bytes: Optional[int] = Query(None, description="最大读取字节数"),
         ) -> dict:
@@ -936,7 +936,7 @@ class AutoComRESTServer:
             return await AutoComMCPServer._execution_list(limit=limit)
 
         @app.get("/api/executions/{session_id}", tags=["执行历史"], response_model=ExecutionReportResponse)
-        async def get_execution(session_id: str) -> dict:
+        async def get_execution(session_id: str | None = None) -> dict:
             """解析指定执行会话的日志和结果"""
             result = await AutoComMCPServer._execution_report(session_id=session_id)
             if not result.get("success"):
@@ -945,13 +945,23 @@ class AutoComRESTServer:
 
         @app.get("/api/executions/{session_id}/search", tags=["执行历史"], response_model=LogSearchResponse)
         async def search_logs(
-            session_id: str,
+            session_id: str | None = None,
             keyword: str = Query(..., description="搜索关键词（大小写不敏感）"),
             max_results: int = Query(50, description="最大返回匹配数"),
         ) -> dict:
             """在指定执行会话的设备日志中搜索关键词"""
             return await AutoComMCPServer._session_log_query(
                 session_id=session_id, keyword=keyword, max_results=max_results,
+            )
+
+        @app.get("/api/logs/search", tags=["执行历史"], response_model=LogSearchResponse)
+        async def log_search_global(
+            keyword: str = Query(..., description="搜索关键词（大小写不敏感）"),
+            max_results: int = Query(50, description="最大返回匹配数"),
+        ) -> dict:
+            """在所有历史日志（跨会话 + 操作日志）中搜索关键词"""
+            return await AutoComMCPServer._log_search_global(
+                keyword=keyword, max_results=max_results,
             )
 
         @app.get("/api/executions/{session_id}/logs/{filename:path}", tags=["执行历史"])

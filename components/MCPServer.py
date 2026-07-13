@@ -739,6 +739,17 @@ class AutoComMCPServer:
             }, result, (time.time() - t0) * 1000)
             return result
 
+        @mcp.tool()
+        async def log_search_global(keyword: str, max_results: int = 50) -> dict:
+            """在所有历史日志和操作日志中搜索关键词"""
+            logger.log_info(f"MCP: log_search_global keyword={keyword}")
+            t0 = time.time()
+            result = await AutoComMCPServer._log_search_global(
+                keyword=keyword, max_results=max_results,
+            )
+            self._audit_log_tool("log_search_global", {"keyword": keyword}, result, (time.time() - t0) * 1000)
+            return result
+
         # ======================== 串口调试增强 ========================
 
         @mcp.tool()
@@ -2039,6 +2050,71 @@ class AutoComMCPServer:
         return {
             "success": True,
             "session_id": session_id,
+            "keyword": keyword,
+            "total_matches": len(matches),
+            "matches": matches,
+        }
+
+    @staticmethod
+    async def _log_search_global(keyword: str, max_results: int = 50) -> dict:
+        """在所有日志中搜索关键词（跨会话 + 操作日志）。"""
+        from pathlib import Path
+        import re
+
+        matches = []
+        base_dirs = [Path("logs/run"), Path("logs/operations")]
+
+        for base in base_dirs:
+            if not base.is_dir():
+                continue
+            if base.name == "run":
+                # 搜索每个会话目录
+                for entry in sorted(base.iterdir(), reverse=True):
+                    if not entry.is_dir():
+                        continue
+                    for f in sorted(entry.iterdir()):
+                        if f.suffix != ".log":
+                            continue
+                        try:
+                            for lineno, line in enumerate(f.read_text("utf-8", errors="replace").splitlines(), 1):
+                                if keyword.lower() in line.lower():
+                                    matches.append({
+                                        "source": entry.name,
+                                        "file": f.name,
+                                        "line": lineno,
+                                        "text": line.strip(),
+                                    })
+                                    if len(matches) >= max_results:
+                                        break
+                        except Exception:
+                            pass
+                        if len(matches) >= max_results:
+                            break
+            else:
+                # 搜索操作日志（直接 .log 文件）
+                for f in sorted(base.iterdir()):
+                    if f.suffix != ".log":
+                        continue
+                    try:
+                        for lineno, line in enumerate(f.read_text("utf-8", errors="replace").splitlines(), 1):
+                            if keyword.lower() in line.lower():
+                                matches.append({
+                                    "source": base.name,
+                                    "file": f.name,
+                                    "line": lineno,
+                                    "text": line.strip(),
+                                })
+                                if len(matches) >= max_results:
+                                    break
+                    except Exception:
+                        pass
+                    if len(matches) >= max_results:
+                        break
+            if len(matches) >= max_results:
+                break
+
+        return {
+            "success": True,
             "keyword": keyword,
             "total_matches": len(matches),
             "matches": matches,
