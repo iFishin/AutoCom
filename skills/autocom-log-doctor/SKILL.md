@@ -15,23 +15,51 @@ description: 诊断 AutoCom 执行日志与串口日志中的失败原因，输�
 ## 日志来源（按优先级排序）
 
 1. **用户提供的失败日志片段**（最高优先）
-2. **执行日志**：`device_logs/{session_timestamp}/EXECUTION.log` — 步骤级执行跟踪
-3. **设备串口日志**：`device_logs/{session_timestamp}/{device_name}.log` — 每个设备的原始串口 I/O
+2. **流水线执行日志**：`logs/run/{session_timestamp}/` 目录下，包含：
+   - `DeviceA_COM16.log` — 各设备的原始串口 I/O（含步骤级结果）
+   - `serial_COM16.log` — 串口通信详情
+   - `EXECUTION.log` — 旧格式执行日志（部分场景仍存在）
+3. **操作日志**：`logs/operations/{date}.log` — 单步指令和持久会话的收发记录
 4. **MCP 审计日志**：`logs/mcp_audit/{date}.jsonl` — MCP 工具操作的 JSON Lines 审计
-5. **控制台输出** — 用户口述的 CLI 行为
+5. **控制台输出** — CLI 或 API 运行时输出
 
-### Logger 输出格式
+### 操作日志格式
 
 ```
-[2026-07-01 14:30:00] [INFO] Pipeline started: wifi_test.yaml
-[2026-07-01 14:30:01] [SEND] DeviceA -> AT
-[2026-07-01 14:30:01] [RECV] DeviceA -> AT\r\nOK\r\n
-[2026-07-01 14:30:01] [PASS] Step check_basic passed
-[2026-07-01 14:30:02] [SEND] DeviceA -> AT+CWJAP="TestWiFi","..."
-[2026-07-01 14:30:17] [FAIL] Step connect_wifi failed (timeout)
+[2026-07-13 19:15:43] [OK] [SEND] COM49 | ATI\r\n | OK\r\n
+[2026-07-13 19:16:10] [FAIL] [CMD] COM26 | AT | Serial error
 ```
 
-日志级别：`TRACE`, `DEBUG`, `INFO`, `PASS`, `WARNING`, `FAIL`, `ERROR`, `FATAL`
+### 设备日志格式（流水线执行）
+
+```
+========================================================================
+time: 2026-07-13 14:43:53
+step_id: open_echo
+step_type: serial
+status: failed
+elapsed_ms: 2005
+
+[send]
+AT+QECHO=1
+
+[response]
+OK
+
+[error]
+Expected ['OK'] not fully matched (matched 0/1)
+```
+
+## 日志检索（API 模式）
+
+如果使用 AutoCom REST API，可通过以下接口检索日志：
+
+| 接口 | 用途 |
+|------|------|
+| `GET /api/executions` | 列出所有执行记录（流水线 + 操作日志） |
+| `GET /api/executions/search?keyword=xxx` | 跨所有日志全局搜索 |
+| `GET /api/executions/{id}/search?keyword=xxx` | 在指定会话内搜索 |
+| `GET /api/executions/{id}?filename=xxx.log` | 下载原始日志文件 |
 
 ## 诊断流程
 

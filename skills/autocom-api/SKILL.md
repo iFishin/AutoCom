@@ -36,14 +36,27 @@ description: 通过 HTTP 接口远程操作 AutoCom——串口调试、持久�
 | POST | `/api/sessions/{id}/send` | 发指令 |
 | POST | `/api/sessions/{id}/read` | 读缓冲区 |
 
-### 设备配置 / 流水线 / 执行历史
+### 设备配置 / 流水线存储
 
 | 方法 | 路径 | 用途 |
 |------|------|------|
 | GET/POST/DELETE | `/api/profiles` | 设备参数 CRUD |
-| GET | `/api/pipelines` | 列出配置文件 |
-| POST | `/api/pipeline/validate\|run\|dry-run\|step-debug` | 流水线操作 |
-| GET | `/api/executions` | 执行历史 |
+| GET/POST/DELETE | `/api/storage/pipelines` | 流水线文件管理 |
+
+### 流水线执行
+
+| 方法 | 路径 | 用途 |
+|------|------|------|
+| POST | `/api/pipeline/validate\|run\|dry-run\|step-debug` | 校验/执行/干跑/单步调试 |
+
+### 执行历史
+
+| 方法 | 路径 | 用途 |
+|------|------|------|
+| GET | `/api/executions` | 列出所有执行记录 |
+| GET | `/api/executions/search?keyword=xxx` | 全局日志搜索 |
+| GET | `/api/executions/{id}` | 查看详情（`?filename=DeviceA.log` 下载原始日志） |
+| GET | `/api/executions/{id}/search?keyword=xxx` | 在指定会话内搜索 |
 
 ## 参数说明
 
@@ -92,24 +105,39 @@ httpx.delete(f"{api}/api/sessions/{sid}")
 ### 流水线执行
 
 ```python
+# 先保存流水线配置
+httpx.post(f"{api}/api/storage/pipelines?name=my_test",
+    json={"content": "Devices:\n  - name: DUT\n    port: COM16\n    baud_rate: 115200\n\nSteps:\n  - id: check\n    type: serial\n    device: DUT\n    send: AT\n    expect: ['OK']\n"})
+
 # 校验
-r = httpx.post(f"{api}/api/pipeline/validate", params={"file_path": "dicts/test.yaml"})
+r = httpx.post(f"{api}/api/pipeline/validate", params={"name": "my_test"})
 
 # 执行
-r = httpx.post(f"{api}/api/pipeline/run", params={"file_path": "dicts/test.yaml", "loop_count": 5})
+r = httpx.post(f"{api}/api/pipeline/run", params={"name": "my_test", "loop_count": 5})
+print(r.json()["results"])  # step-by-step results
 ```
 
-### 排查失败
+### 日志检索与排查
 
 ```python
-# 看历史
-r = httpx.get(f"{api}/api/executions", params={"limit": 5})
-sid = r.json()["sessions"][0]["session_id"]
-
-# 搜关键词
-r = httpx.get(f"{api}/api/executions/{sid}/search", params={"keyword": "FAIL"})
+# 全局搜索（跨所有会话和操作日志）
+r = httpx.get(f"{api}/api/executions/search", params={"keyword": "FAIL"})
 for m in r.json()["matches"]:
-    print(f"{m['file']}:{m['line']} {m['text']}")
+    print(f"[{m['session_id']}] {m['file']}:{m['line']} {m['text']}")
+
+# 指定会话内搜索
+r = httpx.get(f"{api}/api/executions/2026-07-13_14-30-00/search",
+    params={"keyword": "FAIL"})
+
+# 查执行详情 + 下载原始日志
+r = httpx.get(f"{api}/api/executions/2026-07-13_14-30-00").json()
+print(r["summary"])       # passed/failed 统计
+print(r["step_results"])  # 步骤执行结果
+print(r["device_logs"])   # 日志文件列表
+
+# 下载原始日志文件
+raw = httpx.get(f"{api}/api/executions/2026-07-13_14-30-00",
+    params={"filename": "DeviceA_COM16.log"}).text
 ```
 
 ## 调用方式
