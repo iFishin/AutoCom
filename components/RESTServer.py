@@ -950,10 +950,10 @@ class AutoComRESTServer:
         @app.get("/api/executions/{session_id}", tags=["执行历史"], response_model=ExecutionReportResponse)
         async def get_execution(
             session_id: str,
-            file: Optional[str] = Query(None, description="指定日志文件名，返回原始内容"),
+            filename: Optional[str] = Query(None, description="指定日志文件名，返回原始内容"),
         ):
-            """获取执行会话详情，或通过 ?file=name 下载原始日志"""
-            if file:
+            """获取执行会话详情，或通过 ?filename=name 下载原始日志"""
+            if filename:
                 from pathlib import Path
                 log_file = Path("logs/run") / session_id / file
                 if not log_file.is_file():
