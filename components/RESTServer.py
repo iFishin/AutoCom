@@ -481,7 +481,7 @@ class AutoComRESTServer:
             hex_mode: bool = Query(False, description="以十六进制字节发送"),
         ) -> dict:
             """向串口设备发送单条指令"""
-            return await AutoComMCPServer._execute_serial_command(
+            result = await AutoComMCPServer._execute_serial_command(
                 port=port,
                 command=command,
                 baud_rate=baud_rate,
@@ -489,6 +489,10 @@ class AutoComRESTServer:
                 line_ending=line_ending,
                 hex_mode=hex_mode,
             )
+            AutoComMCPServer._append_io_log("CMD", port, command,
+                                            result.get("response", ""),
+                                            success=result.get("success", False))
+            return result
 
         @app.post("/api/ports/{port}/baud-scan", tags=["串口操作"], response_model=BaudScanResponse)
         async def baud_scan(
@@ -711,7 +715,7 @@ class AutoComRESTServer:
             return {"success": True, "sessions": sessions, "total": len(sessions)}
 
         @app.get("/api/sessions/{session_id}", tags=["持久会话"], response_model=SessionDetailResponse)
-        async def get_session(session_id: str | None = None) -> dict:
+        async def get_session(session_id: str) -> dict:
             """获取单个会话的详细信息"""
             with self._session_lock:
                 sess = self._sessions.get(session_id)
@@ -727,7 +731,7 @@ class AutoComRESTServer:
                 }
 
         @app.delete("/api/sessions/{session_id}", tags=["持久会话"], response_model=SessionCloseResponse)
-        async def close_session(session_id: str | None = None) -> dict:
+        async def close_session(session_id: str) -> dict:
             """关闭并清理持久会话"""
             with self._session_lock:
                 sess = self._sessions.pop(session_id, None)
@@ -743,7 +747,7 @@ class AutoComRESTServer:
 
         @app.post("/api/sessions/{session_id}/send", tags=["持久会话"], response_model=SessionSendResponse)
         async def session_send(
-            session_id: str | None = None,
+            session_id: str,
             command: str = Query(..., description="要发送的指令"),
             timeout: Optional[float] = Query(None, description="响应等待超时（秒）"),
             line_ending: str = Query("0d0a", description="行结尾的十六进制字节"),
@@ -772,6 +776,8 @@ class AutoComRESTServer:
 
                 sess["last_active"] = time.time()
 
+                AutoComMCPServer._append_io_log("SEND", sess.get("port", ""),
+                                                command, text, success=True)
                 return {
                     "success": True,
                     "command": command,
@@ -780,11 +786,13 @@ class AutoComRESTServer:
                     "bytes": len(resp),
                 }
             except Exception as e:
+                AutoComMCPServer._append_io_log("SEND", sess.get("port", ""),
+                                                command, str(e), success=False)
                 return {"success": False, "error": str(e)}
 
         @app.post("/api/sessions/{session_id}/read", tags=["持久会话"], response_model=SessionReadResponse)
         async def session_read(
-            session_id: str | None = None,
+            session_id: str,
             timeout: Optional[float] = Query(None, description="等待数据的时间（秒）"),
             max_bytes: Optional[int] = Query(None, description="最大读取字节数"),
         ) -> dict:
