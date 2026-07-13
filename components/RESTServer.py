@@ -309,6 +309,7 @@ try:
         execution_log: dict | None = None
         device_logs: list[dict] = []
         summary: dict = {}
+        step_results: list[dict] = []
 
     class LogMatch(BaseModel):
         file: str

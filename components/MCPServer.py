@@ -1943,11 +1943,11 @@ class AutoComMCPServer:
         result = {
             "success": True,
             "session_id": session_id,
-            "device_logs": {},
-            "summary": {},
+            "device_logs": [],
+            "summary": {"iterations": 0, "passed": 0, "failed": 0, "errors": []},
         }
 
-        # 读取 EXECUTION.log
+        # 读取 EXECUTION.log（旧格式，部分场景仍存在）
         exec_log = session_dir / "EXECUTION.log"
         if exec_log.is_file():
             try:
@@ -1957,31 +1957,47 @@ class AutoComMCPServer:
                     "preview": lines[:50],
                     "truncated": len(lines) > 50,
                 }
-                summary = {"iterations": 0, "passed": 0, "failed": 0, "errors": [], "total_time": ""}
                 for line in lines:
                     if "iteration" in line.lower() and "failed" in line.lower():
-                        summary["failed"] += 1
+                        result["summary"]["failed"] += 1
                     if "iteration" in line.lower() and "pass" in line.lower():
-                        summary["passed"] += 1
+                        result["summary"]["passed"] += 1
                     if "Summary:" in line:
-                        summary["iterations"] = summary.get("iterations", 0) + 1
+                        result["summary"]["iterations"] += 1
                     if "Total execution time" in line:
-                        summary["total_time"] = line
+                        result["summary"]["total_time"] = line
                     if "ERROR" in line or "FATAL" in line:
-                        summary["errors"].append(line)
-                result["summary"] = summary
+                        result["summary"]["errors"].append(line)
             except Exception as e:
                 result["execution_log"] = {"error": str(e)}
 
-        # 列出设备日志（仅文件名和大小，不返回全文）
+        # 从设备日志(.log)中提取步骤结果
         log_list = []
+        step_results = []
         for f in sorted(session_dir.iterdir()):
             if f.suffix == ".log" and f.name != "EXECUTION.log":
                 log_list.append({
                     "filename": f.name,
                     "size_bytes": f.stat().st_size,
                 })
+                # 解析结构化步骤记录
+                text = f.read_text("utf-8", errors="replace")
+                for block in text.split("========"):
+                    info: dict[str, str] = {}
+                    for line in block.splitlines():
+                        ls = line.strip()
+                        for prefix in ("step_id:", "step_type:", "status:", "elapsed_ms:"):
+                            if ls.startswith(prefix):
+                                info[prefix[:-1]] = ls.split(":", 1)[1].strip()
+                    if "step_id" in info:
+                        step_results.append(info)
+                        if info.get("status") == "passed":
+                            result["summary"]["passed"] += 1
+                        elif info.get("status") == "failed":
+                            result["summary"]["failed"] += 1
+
         result["device_logs"] = log_list
+        result["step_results"] = step_results
 
         return result
 
