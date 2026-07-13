@@ -937,48 +937,49 @@ class AutoComRESTServer:
             """列出最近执行会话"""
             return await AutoComMCPServer._execution_list(limit=limit)
 
+        @app.get("/api/executions/search", tags=["执行历史"], response_model=LogSearchResponse)
+        async def search_all_logs(
+            keyword: str = Query(..., description="搜索关键词（大小写不敏感）"),
+            max_results: int = Query(50, description="最大返回匹配数"),
+        ) -> dict:
+            """在所有执行日志（跨会话 + 操作日志）中搜索关键词"""
+            return await AutoComMCPServer._log_search_global(
+                keyword=keyword, max_results=max_results,
+            )
+
         @app.get("/api/executions/{session_id}", tags=["执行历史"], response_model=ExecutionReportResponse)
-        async def get_execution(session_id: str | None = None) -> dict:
-            """解析指定执行会话的日志和结果"""
+        async def get_execution(
+            session_id: str,
+            file: Optional[str] = Query(None, description="指定日志文件名，返回原始内容"),
+        ):
+            """获取执行会话详情，或通过 ?file=name 下载原始日志"""
+            if file:
+                from pathlib import Path
+                log_file = Path("logs/run") / session_id / file
+                if not log_file.is_file():
+                    # 尝试 operations 日志
+                    log_file = Path("logs/operations") / file
+                if not log_file.is_file() or log_file.parent.name not in (session_id, "operations"):
+                    raise HTTPException(status_code=404, detail="Log file not found")
+                return Response(
+                    content=log_file.read_text("utf-8", errors="replace"),
+                    media_type="text/plain; charset=utf-8",
+                    headers={"Content-Disposition": f'inline; filename="{file}"'},
+                )
             result = await AutoComMCPServer._execution_report(session_id=session_id)
             if not result.get("success"):
                 raise HTTPException(status_code=404, detail=str(result.get("error", "Not found")))
             return result
 
         @app.get("/api/executions/{session_id}/search", tags=["执行历史"], response_model=LogSearchResponse)
-        async def search_logs(
-            session_id: str | None = None,
+        async def search_session_logs(
+            session_id: str,
             keyword: str = Query(..., description="搜索关键词（大小写不敏感）"),
             max_results: int = Query(50, description="最大返回匹配数"),
         ) -> dict:
             """在指定执行会话的设备日志中搜索关键词"""
             return await AutoComMCPServer._session_log_query(
                 session_id=session_id, keyword=keyword, max_results=max_results,
-            )
-
-        @app.get("/api/logs/search", tags=["执行历史"], response_model=LogSearchResponse)
-        async def log_search_global(
-            keyword: str = Query(..., description="搜索关键词（大小写不敏感）"),
-            max_results: int = Query(50, description="最大返回匹配数"),
-        ) -> dict:
-            """在所有历史日志（跨会话 + 操作日志）中搜索关键词"""
-            return await AutoComMCPServer._log_search_global(
-                keyword=keyword, max_results=max_results,
-            )
-
-        @app.get("/api/executions/{session_id}/logs/{filename:path}", tags=["执行历史"])
-        async def get_execution_log(session_id: str, filename: str):
-            """获取指定执行会话的原始日志文件内容"""
-            from pathlib import Path
-            log_file = Path("logs/run") / session_id / filename
-            if not log_file.is_file() or log_file.parent.name != session_id:
-                raise HTTPException(status_code=404, detail="Log file not found")
-            return Response(
-                content=log_file.read_text("utf-8", errors="replace"),
-                media_type="text/plain; charset=utf-8",
-                headers={
-                    "Content-Disposition": f'inline; filename="{filename}"',
-                },
             )
 
     # ── 会话清理 ──
