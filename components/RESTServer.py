@@ -37,10 +37,10 @@ try:
 
     class SessionOpenResponse(BaseModel):
         success: bool
-        session_id: str
-        port: str
-        baud_rate: int
-        label: str
+        session_id: str | None = None
+        port: str | None = None
+        baud_rate: int | None = None
+        label: str | None = None
 
     class SessionListItem(BaseModel):
         session_id: str
@@ -124,9 +124,9 @@ try:
     class CommandResponse(BaseModel):
         success: bool
         port: str
-        command: str
-        response: str
-        elapsed_ms: int
+        command: str | None = None
+        response: str | None = None
+        elapsed_ms: int | None = None
         error: str | None = None
 
     class BaudRateResult(BaseModel):
@@ -155,11 +155,11 @@ try:
     class HexDumpResponse(BaseModel):
         success: bool
         port: str
-        baud_rate: int
-        bytes_read: int
-        hex_dump: list[HexDumpLine]
-        raw_bytes: list[int]
-        text: str
+        baud_rate: int | None = None
+        bytes_read: int = 0
+        hex_dump: list = []
+        raw_bytes: list = []
+        text: str = ""
 
     class PinStatusResponse(BaseModel):
         success: bool
@@ -358,6 +358,7 @@ except Exception:
 # 复用 MCPServer 的串口操作方法
 from components.MCPServer import AutoComMCPServer
 from components.Logger import AutoComLogger, get_logger
+from utils.serial_helpers import parse_line_ending as _parse_le
 from version import __version__
 
 logger: AutoComLogger = get_logger("AutoCom.API")

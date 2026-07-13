@@ -58,6 +58,7 @@ except Exception:
     _FASTMCP_AVAILABLE = False
 
 from components.Logger import AutoComLogger, get_logger
+from utils.serial_helpers import parse_line_ending as _parse_le
 logger: AutoComLogger = get_logger("AutoCom.MCP")
 
 
@@ -1219,7 +1220,7 @@ class AutoComMCPServer:
                 "elapsed_seconds": round(elapsed, 3),
                 "results": results,
             }
-        except Exception as e:
+        except BaseException as e:
             logger.log_error(f"Error running pipeline: {e}")
             return {"success": False, "error": str(e)}
 
