@@ -290,6 +290,7 @@ try:
         results: list[dict] = []
 
     class ExecutionSession(BaseModel):
+        type: str = "pipeline"
         session_id: str | None = None
         has_log: bool = False
         has_json: bool = False
@@ -297,6 +298,7 @@ try:
         device_count: int = 0
         log_count: int = 0
         config_count: int = 0
+        line_count: int = 0
 
     class ExecutionListResponse(BaseModel):
         success: bool

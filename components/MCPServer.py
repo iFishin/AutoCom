@@ -1920,32 +1920,56 @@ class AutoComMCPServer:
 
     @staticmethod
     async def _execution_list(limit: int = 20) -> dict:
-        """列出最近的执行会话。"""
+        """列出最近的执行会话和操作日志。"""
         from pathlib import Path
 
-        base = Path("logs/run")
-        if not base.is_dir():
-            return {"success": True, "total": 0, "sessions": []}
-
         sessions = []
-        for entry in sorted(base.iterdir(), key=lambda e: e.name, reverse=True):
-            if not entry.is_dir():
-                continue
-            log_files = sorted(f.name for f in entry.iterdir() if f.suffix == ".log")
-            config_files = sorted(f.name for f in entry.iterdir()
-                                  if f.suffix in (".yaml", ".yml", ".json"))
-            device_logs = [f for f in log_files if f != "EXECUTION.log"]
-            sessions.append({
-                "session_id": entry.name,
-                "has_log": "EXECUTION.log" in log_files,
-                "has_json": (entry / "EXECUTION.json").is_file(),
-                "device_logs": device_logs,
-                "device_count": len(device_logs),
-                "log_count": len(log_files),
-                "config_count": len(config_files),
-            })
-            if len(sessions) >= limit:
-                break
+
+        # 1. 流水线执行日志 (logs/run/)
+        base = Path("logs/run")
+        if base.is_dir():
+            for entry in sorted(base.iterdir(), key=lambda e: e.name, reverse=True):
+                if not entry.is_dir():
+                    continue
+                log_files = sorted(f.name for f in entry.iterdir() if f.suffix == ".log")
+                config_files = sorted(f.name for f in entry.iterdir()
+                                      if f.suffix in (".yaml", ".yml", ".json"))
+                device_logs = [f for f in log_files if f != "EXECUTION.log"]
+                sessions.append({
+                    "type": "pipeline",
+                    "session_id": entry.name,
+                    "has_log": "EXECUTION.log" in log_files,
+                    "has_json": (entry / "EXECUTION.json").is_file(),
+                    "device_logs": device_logs,
+                    "device_count": len(device_logs),
+                    "log_count": len(log_files),
+                    "config_count": len(config_files),
+                })
+                if len(sessions) >= limit:
+                    break
+
+        # 2. 操作日志 (logs/operations/)
+        ops = Path("logs/operations")
+        if ops.is_dir():
+            for f in sorted(ops.iterdir(), key=lambda e: e.name, reverse=True):
+                if f.suffix != ".log":
+                    continue
+                line_count = 0
+                try:
+                    line_count = len(f.read_text("utf-8", errors="replace").splitlines())
+                except Exception:
+                    pass
+                sessions.append({
+                    "type": "operations",
+                    "session_id": f.stem,  # 日期
+                    "has_log": True,
+                    "device_logs": [f.name],
+                    "device_count": 1,
+                    "log_count": 1,
+                    "line_count": line_count,
+                })
+                if len(sessions) >= limit:
+                    break
 
         return {"success": True, "total": len(sessions), "sessions": sessions}
 
