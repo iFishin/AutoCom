@@ -314,7 +314,7 @@ try:
         step_results: list[dict] = []
 
     class LogMatch(BaseModel):
-        source: str | None = None
+        session_id: str | None = None
         file: str
         line: int
         text: str

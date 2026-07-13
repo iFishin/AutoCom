@@ -2118,7 +2118,7 @@ class AutoComMCPServer:
                             for lineno, line in enumerate(f.read_text("utf-8", errors="replace").splitlines(), 1):
                                 if keyword.lower() in line.lower():
                                     matches.append({
-                                        "source": entry.name,
+                                        "session_id": entry.name,
                                         "file": f.name,
                                         "line": lineno,
                                         "text": line.strip(),
@@ -2138,7 +2138,7 @@ class AutoComMCPServer:
                         for lineno, line in enumerate(f.read_text("utf-8", errors="replace").splitlines(), 1):
                             if keyword.lower() in line.lower():
                                 matches.append({
-                                    "source": base.name,
+                                    "session_id": base.name,
                                     "file": f.name,
                                     "line": lineno,
                                     "text": line.strip(),
