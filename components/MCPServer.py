@@ -278,6 +278,9 @@ class AutoComMCPServer:
                 "port": port, "command": command, "baud_rate": baud_rate,
                 "timeout": timeout, "device_name": device_name,
             }, result, result.get("elapsed_ms", 0))
+            AutoComMCPServer._append_io_log("CMD", port, command,
+                                            result.get("response", ""),
+                                            success=result.get("success", False))
             return result
 
         @mcp.tool()
@@ -572,6 +575,10 @@ class AutoComMCPServer:
             self._audit_log_tool("serial_session_send", {
                 "session_id": session_id, "command": command,
             }, result, result.get("elapsed_ms", 0))
+            AutoComMCPServer._append_io_log("SEND", "",
+                                            command, result.get("response", ""),
+                                            session_id=session_id,
+                                            success=result.get("success", False))
             return result
 
         @mcp.tool()
@@ -2457,6 +2464,26 @@ class AutoComMCPServer:
         if file_path:
             return file_path
         return None
+
+    @staticmethod
+    def _append_io_log(entry_type: str, port: str, command: str, response: str = "",
+                       session_id: str = "", success: bool = False) -> None:
+        """Append an I/O operation to the daily log file."""
+        import datetime
+        from utils.dirs import get_dirs
+        try:
+            logs_dir = get_dirs().device_logs_dir_safe / "operations"
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            log_file = logs_dir / f"{datetime.date.today().isoformat()}.log"
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            status = "OK" if success else "FAIL"
+            cmd_preview = command[:80].replace("\r\n", " ").replace("\n", " ")
+            resp_preview = response[:120].replace("\r\n", " ").replace("\n", " ")
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(f"[{timestamp}] [{status}] [{entry_type}] {port}"
+                        f" | {cmd_preview} | {resp_preview}\n")
+        except Exception:
+            pass
 
 
 def _create_auth_middleware(auth_key: str):
