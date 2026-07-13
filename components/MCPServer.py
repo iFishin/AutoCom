@@ -1975,12 +1975,27 @@ class AutoComMCPServer:
 
     @staticmethod
     async def _execution_report(session_id: str) -> dict:
-        """解析指定执行会话的日志和结果。"""
-        from pathlib import Path
-
         session_dir = Path("logs/run") / session_id
         if not session_dir.is_dir():
-            return {"success": False, "error": f"Session '{session_id}' not found in logs/run/"}
+            # 不在 logs/run/ 中，尝试 logs/operations/
+            ops_file = Path("logs/operations") / f"{session_id}.log"
+            if ops_file.is_file():
+                try:
+                    lines = ops_file.read_text("utf-8", errors="replace").splitlines()
+                    return {
+                        "success": True,
+                        "session_id": session_id,
+                        "type": "operations",
+                        "device_logs": [{"filename": ops_file.name, "size_bytes": ops_file.stat().st_size}],
+                        "line_count": len(lines),
+                        "preview": lines[:50],
+                        "truncated": len(lines) > 50,
+                        "summary": {"operations": [l.strip() for l in lines[:20]]},
+                    }
+                except Exception as e:
+                    return {"success": False, "error": str(e)}
+            return {"success": False, "error": f"Session '{session_id}' not found"}
+        
 
         result = {
             "success": True,
