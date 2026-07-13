@@ -321,9 +321,9 @@ try:
     class LogSearchResponse(BaseModel):
         success: bool
         session_id: str | None = None
-        keyword: str
-        total_matches: int
-        matches: list[LogMatch]
+        keyword: str = ""
+        total_matches: int = 0
+        matches: list[LogMatch] = []
 
     # ── 设备配置响应模型 ──
 

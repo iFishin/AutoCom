@@ -1994,7 +1994,7 @@ class AutoComMCPServer:
                     }
                 except Exception as e:
                     return {"success": False, "error": str(e)}
-            return {"success": False, "error": f"Session '{session_id}' not found"}
+            return {"success": False, "keyword": keyword, "total_matches": 0, "matches": [], "error": f"Session '{session_id}' not found"}
         
 
         result = {
@@ -2065,7 +2065,7 @@ class AutoComMCPServer:
 
         session_dir = Path("logs/run") / session_id
         if not session_dir.is_dir():
-            return {"success": False, "error": f"Session '{session_id}' not found"}
+            return {"success": False, "keyword": keyword, "total_matches": 0, "matches": [], "error": f"Session '{session_id}' not found"}
 
         matches = []
         for f in sorted(session_dir.iterdir()):
