@@ -1229,6 +1229,19 @@ class AutoComMCPServer:
                                         })
             except Exception:
                 pass
+            # 清理空目录
+            if session_id and results is not None:
+                sd = _P("logs/run") / session_id
+                if sd.is_dir():
+                    has_logs = any(f.suffix == ".log" for f in sd.iterdir())
+                    if not has_logs:
+                        try:
+                            for f in sd.iterdir():
+                                f.unlink()
+                            sd.rmdir()
+                            session_id = None
+                        except Exception:
+                            pass
 
             return {
                 "success": True,
