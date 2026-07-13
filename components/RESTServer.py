@@ -320,7 +320,6 @@ try:
         text: str
     class LogSearchResponse(BaseModel):
         success: bool
-        session_id: str | None = None
         keyword: str = ""
         total_matches: int = 0
         matches: list[LogMatch] = []
