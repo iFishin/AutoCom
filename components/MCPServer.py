@@ -2605,8 +2605,8 @@ class AutoComMCPServer:
             log_file = logs_dir / f"{datetime.date.today().isoformat()}.log"
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             status = "OK" if success else "FAIL"
-            cmd_preview = command[:80].replace("\r\n", " ").replace("\n", " ")
-            resp_preview = response[:120].replace("\r\n", " ").replace("\n", " ")
+            cmd_preview = command[:80].replace("\r", "\\r").replace("\n", "\\n")
+            resp_preview = response[:200].replace("\r", "\\r").replace("\n", "\\n")
             with open(log_file, "a", encoding="utf-8") as f:
                 f.write(f"[{timestamp}] [{status}] [{entry_type}] {port}"
                         f" | {cmd_preview} | {resp_preview}\n")
