@@ -777,7 +777,8 @@ class AutoComRESTServer:
                 sess["last_active"] = time.time()
 
                 AutoComMCPServer._append_io_log("SEND", sess.get("port", ""),
-                                                command, text, success=True)
+                                                command, text,
+                                                session_id=session_id, success=True)
                 return {
                     "success": True,
                     "command": command,
@@ -787,7 +788,8 @@ class AutoComRESTServer:
                 }
             except Exception as e:
                 AutoComMCPServer._append_io_log("SEND", sess.get("port", ""),
-                                                command, str(e), success=False)
+                                                command, str(e),
+                                                session_id=session_id, success=False)
                 return {"success": False, "error": str(e)}
 
         @app.post("/api/sessions/{session_id}/read", tags=["持久会话"], response_model=SessionReadResponse)

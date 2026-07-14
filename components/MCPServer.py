@@ -575,7 +575,7 @@ class AutoComMCPServer:
             self._audit_log_tool("serial_session_send", {
                 "session_id": session_id, "command": command,
             }, result, result.get("elapsed_ms", 0))
-            AutoComMCPServer._append_io_log("SEND", "",
+            AutoComMCPServer._append_io_log("SEND", result.get("port", ""),
                                             command, result.get("response", ""),
                                             session_id=session_id,
                                             success=result.get("success", False))
@@ -2628,7 +2628,8 @@ class AutoComMCPServer:
             cmd_preview = command[:80].replace("\r", "\\r").replace("\n", "\\n")
             resp_preview = response[:200].replace("\r", "\\r").replace("\n", "\\n")
             with open(log_file, "a", encoding="utf-8") as f:
-                f.write(f"[{timestamp}] [{status}] [{entry_type}] {port}"
+                sid_tag = f" [{session_id}]" if session_id else ""
+                f.write(f"[{timestamp}] [{status}] [{entry_type}]{sid_tag} {port}"
                         f" | {cmd_preview} | {resp_preview}\n")
         except Exception:
             pass
