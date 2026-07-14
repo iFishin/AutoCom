@@ -596,6 +596,10 @@ class AutoComMCPServer:
             self._audit_log_tool("serial_session_read", {
                 "session_id": session_id,
             }, result, (time.time() - t0) * 1000)
+            AutoComMCPServer._append_io_log("READ", result.get("port", ""),
+                                            result.get("data_text", result.get("data", "")),
+                                            session_id=session_id,
+                                            success=result.get("success", False))
             return result
 
         @mcp.tool()
@@ -1310,6 +1314,8 @@ class AutoComMCPServer:
             "monitor_buffer": deque(maxlen=5000),
             "monitor_started": 0.0,
             "monitor_bytes": 0,
+            "ser_lock": threading.Lock(),
+            "ser_lock": threading.Lock(),
         }
         with self._session_lock:
             self._sessions[session_id] = session_info

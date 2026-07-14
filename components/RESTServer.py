@@ -768,9 +768,20 @@ class AutoComRESTServer:
             t0 = time.time()
             try:
                 ser.write(send_bytes)
-                wait_timeout = timeout if timeout is not None else 5.0
-                ser.timeout = wait_timeout
-                resp = ser.read(4096)
+                ser.flush()
+                resp = b""
+                deadline = time.time() + (timeout if timeout is not None else 5.0)
+                ser.timeout = 0.1
+                while time.time() < deadline:
+                    if sess.get("last_active") is None:
+                        pass
+                    chunk = ser.read(4096)
+                    if chunk:
+                        resp += chunk
+                        sess["last_active"] = time.time()
+                    else:
+                        if resp:
+                            break
                 elapsed = int((time.time() - t0) * 1000)
                 text = resp.decode("utf-8", errors="replace")
 
@@ -815,6 +826,9 @@ class AutoComRESTServer:
                 resp = ser.read(max_read)
                 text = resp.decode("utf-8", errors="replace")
                 sess["last_active"] = time.time()
+                AutoComMCPServer._append_io_log("READ", sess.get("port", ""),
+                                                text, session_id=session_id,
+                                                success=True)
                 return {
                     "success": True,
                     "data": text,
@@ -822,6 +836,9 @@ class AutoComRESTServer:
                     "session_id": session_id,
                 }
             except Exception as e:
+                AutoComMCPServer._append_io_log("READ", sess.get("port", ""),
+                                                str(e), session_id=session_id,
+                                                success=False)
                 return {"success": False, "error": str(e)}
 
         # ─── 设备参数管理 ───
