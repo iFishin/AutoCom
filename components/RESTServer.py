@@ -762,7 +762,7 @@ class AutoComRESTServer:
             if ser is None:
                 raise HTTPException(status_code=500, detail="Session serial handle is closed")
 
-            line_ending_bytes = bytes.fromhex(line_ending) if line_ending else b"\r\n"
+            line_ending_bytes = _parse_le(line_ending)
             send_bytes = command.encode("utf-8") + line_ending_bytes
 
             t0 = time.time()
