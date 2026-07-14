@@ -1945,6 +1945,12 @@ class AutoComMCPServer:
                 if not entry.is_dir():
                     continue
                 log_files = sorted(f.name for f in entry.iterdir() if f.suffix == ".log")
+                if not log_files:
+                    try:
+                        entry.rmdir()
+                    except Exception:
+                        pass
+                    continue
                 config_files = sorted(f.name for f in entry.iterdir()
                                       if f.suffix in (".yaml", ".yml", ".json"))
                 device_logs = [f for f in log_files if f != "EXECUTION.log"]
@@ -2007,7 +2013,14 @@ class AutoComMCPServer:
                     }
                 except Exception as e:
                     return {"success": False, "error": str(e)}
-            return {"success": False, "keyword": keyword, "total_matches": 0, "matches": [], "error": f"Session '{session_id}' not found"}
+            # 空目录自动清理
+            try:
+                if not any(f.suffix == ".log" for f in session_dir.iterdir()):
+                    session_dir.rmdir()
+            except Exception:
+                pass
+            # 检查 session_log_query 的 keyword 字段
+            return {"success": False, "error": f"Session '{session_id}' not found"}
         
 
         result = {
@@ -2078,6 +2091,13 @@ class AutoComMCPServer:
 
         session_dir = Path("logs/run") / session_id
         if not session_dir.is_dir():
+            # 空目录自动清理
+            try:
+                if not any(f.suffix == ".log" for f in session_dir.iterdir()):
+                    session_dir.rmdir()
+            except Exception:
+                pass
+            return {"success": False, "error": f"Session '{session_id}' not found"}
             return {"success": False, "keyword": keyword, "total_matches": 0, "matches": [], "error": f"Session '{session_id}' not found"}
 
         matches = []
