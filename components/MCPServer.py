@@ -891,7 +891,7 @@ class AutoComMCPServer:
         import serial
 
         # 解析换行符
-        line_ending_bytes = bytes.fromhex(line_ending) if line_ending else b"\r\n"
+        line_ending_bytes = _parse_le(line_ending)
 
         # 处理十六进制发送
         if hex_mode:
@@ -1372,7 +1372,7 @@ class AutoComMCPServer:
         effective_timeout = timeout if timeout is not None else ser.timeout or 5.0
 
         # 解析换行符
-        le_bytes = bytes.fromhex(line_ending.replace(" ", "")) if line_ending else b"\r\n"
+        le_bytes = _parse_le(line_ending)
 
         # 指令编码
         if hex_mode:
@@ -2202,7 +2202,7 @@ class AutoComMCPServer:
         """自动尝试常用波特率，找到能收到期望响应的那个。"""
         import serial
 
-        line_ending_bytes = bytes.fromhex(line_ending) if line_ending else b"\r\n"
+        line_ending_bytes = _parse_le(line_ending)
         cmd = (test_command or "AT").strip() or "AT"
         send_data = cmd.encode("utf-8") + line_ending_bytes
 
