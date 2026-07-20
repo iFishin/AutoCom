@@ -981,16 +981,15 @@ class AutoComRESTServer:
             """获取执行会话详情，或通过 ?filename=name 下载原始日志"""
             if filename:
                 from pathlib import Path
-                log_file = Path("logs/run") / session_id / file
+                log_file = Path("logs/run") / session_id / filename
                 if not log_file.is_file():
-                    # 尝试 operations 日志
-                    log_file = Path("logs/operations") / file
+                    log_file = Path("logs/operations") / filename
                 if not log_file.is_file() or log_file.parent.name not in (session_id, "operations"):
                     raise HTTPException(status_code=404, detail="Log file not found")
                 return Response(
                     content=log_file.read_text("utf-8", errors="replace"),
                     media_type="text/plain; charset=utf-8",
-                    headers={"Content-Disposition": f'inline; filename="{file}"'},
+                    headers={"Content-Disposition": f'inline; filename="{filename}"'},
                 )
             result = await AutoComMCPServer._execution_report(session_id=session_id)
             if not result.get("success"):
