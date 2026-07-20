@@ -410,6 +410,28 @@ class AutoComRESTServer:
 
     def _register_routes(self) -> None:
         app = self.app
+        from fastapi.responses import JSONResponse
+        from fastapi.exceptions import RequestValidationError
+
+        @app.exception_handler(Exception)
+        async def _catch_all(request, exc):
+            if isinstance(exc, HTTPException):
+                return JSONResponse(
+                    status_code=exc.status_code,
+                    content={"success": False, "error": exc.detail},
+                )
+            logger.log_error(f"Unhandled exception: {type(exc).__name__}: {exc}")
+            return JSONResponse(
+                status_code=500,
+                content={"success": False, "error": f"{type(exc).__name__}: {exc}"},
+            )
+
+        @app.exception_handler(RequestValidationError)
+        async def _validation_error(request, exc):
+            return JSONResponse(
+                status_code=422,
+                content={"success": False, "error": str(exc)},
+            )
 
         # ─── 健康检查 ───
 
