@@ -22,7 +22,11 @@
                 },
                 "mode": {
                     "type": "string",
-                    "enum": ["single", "loop", "infinite"],
+                    "enum": [
+                        "single",
+                        "loop",
+                        "infinite"
+                    ],
                     "description": "执行模式",
                     "default": "single"
                 },
@@ -241,7 +245,14 @@
                     },
                     "type": {
                         "type": "string",
-                        "enum": ["serial", "serial_wait", "http", "script", "wait", "action_batch"],
+                        "enum": [
+                            "serial",
+                            "serial_wait",
+                            "http",
+                            "script",
+                            "wait",
+                            "action_batch"
+                        ],
                         "description": "步骤类型",
                         "default": "serial"
                     },
@@ -252,7 +263,10 @@
                     },
                     "status": {
                         "type": "string",
-                        "enum": ["enabled", "disabled"],
+                        "enum": [
+                            "enabled",
+                            "disabled"
+                        ],
                         "default": "enabled"
                     },
                     "timeout": {
@@ -315,38 +329,74 @@
                         "default": []
                     }
                 },
-                "required": ["id", "type"],
+                "required": [
+                    "id",
+                    "type"
+                ],
                 "allOf": [
                     {
-                        "if": { "properties": { "type": { "const": "serial" } } },
-                        "then": {
-                            "required": ["device"],
+                        "if": {
                             "properties": {
-                                "send": { "type": "string", "description": "串口发送内容" },
-                                "device": { "type": "string", "description": "设备名称（须匹配 Devices 中的 name）" },
+                                "type": {
+                                    "const": "serial"
+                                }
+                            }
+                        },
+                        "then": {
+                            "required": [
+                                "device"
+                            ],
+                            "properties": {
+                                "send": {
+                                    "type": "string",
+                                    "description": "串口发送内容"
+                                },
+                                "device": {
+                                    "type": "string",
+                                    "description": "设备名称（须匹配 Devices 中的 name）"
+                                },
                                 "expect": {
                                     "type": "array",
                                     "description": "期望响应列表",
-                                    "items": { "type": "string" }
+                                    "items": {
+                                        "type": "string"
+                                    }
                                 },
                                 "encoding": {
                                     "type": "string",
-                                    "enum": ["ascii", "hex"],
+                                    "enum": [
+                                        "ascii",
+                                        "hex"
+                                    ],
                                     "description": "编码方式"
                                 }
                             }
                         }
                     },
                     {
-                        "if": { "properties": { "type": { "const": "serial_wait" } } },
-                        "then": {
-                            "required": ["device", "expect"],
+                        "if": {
                             "properties": {
-                                "device": { "type": "string", "description": "设备名称（须匹配 Devices 中的 name）" },
+                                "type": {
+                                    "const": "serial_wait"
+                                }
+                            }
+                        },
+                        "then": {
+                            "required": [
+                                "device",
+                                "expect"
+                            ],
+                            "properties": {
+                                "device": {
+                                    "type": "string",
+                                    "description": "设备名称（须匹配 Devices 中的 name）"
+                                },
                                 "expect": {
                                     "type": "array",
                                     "description": "期望响应列表",
-                                    "items": { "type": "string" }
+                                    "items": {
+                                        "type": "string"
+                                    }
                                 },
                                 "timeout": {
                                     "type": "integer",
@@ -358,46 +408,114 @@
                         }
                     },
                     {
-                        "if": { "properties": { "type": { "const": "http" } } },
-                        "then": {
-                            "required": ["url"],
+                        "if": {
                             "properties": {
-                                "url": { "type": "string", "description": "请求 URL" },
+                                "type": {
+                                    "const": "http"
+                                }
+                            }
+                        },
+                        "then": {
+                            "required": [
+                                "url"
+                            ],
+                            "properties": {
+                                "url": {
+                                    "type": "string",
+                                    "description": "请求 URL"
+                                },
                                 "method": {
                                     "type": "string",
-                                    "enum": ["GET", "POST", "PUT", "DELETE"],
+                                    "enum": [
+                                        "GET",
+                                        "POST",
+                                        "PUT",
+                                        "DELETE"
+                                    ],
                                     "default": "GET"
                                 },
-                                "headers": { "type": "object", "description": "请求头" },
-                                "body": { "type": "object", "description": "请求体" }
+                                "headers": {
+                                    "type": "object",
+                                    "description": "请求头"
+                                },
+                                "body": {
+                                    "type": "object",
+                                    "description": "请求体"
+                                },
+                                "ignore_error": {
+                                    "type": "boolean",
+                                    "description": "为 true 时，无论请求成功还是失败都判定为 passed",
+                                    "default": false
+                                }
                             }
                         }
                     },
                     {
-                        "if": { "properties": { "type": { "const": "script" } } },
-                        "then": {
-                            "required": ["command"],
+                        "if": {
                             "properties": {
-                                "command": { "type": "string", "description": "要执行的命令" },
-                                "working_dir": { "type": "string", "description": "工作目录" },
-                                "shell": { "type": "boolean", "default": true, "description": "是否通过 shell 执行" },
-                                "env": { "type": "object", "description": "环境变量" }
+                                "type": {
+                                    "const": "script"
+                                }
                             }
-                        }
-                    },
-                    {
-                        "if": { "properties": { "type": { "const": "wait" } } },
+                        },
                         "then": {
-                            "required": ["duration"],
+                            "required": [
+                                "command"
+                            ],
                             "properties": {
-                                "duration": { "type": "integer", "minimum": 0, "description": "等待时长（毫秒）" }
+                                "command": {
+                                    "type": "string",
+                                    "description": "要执行的命令"
+                                },
+                                "working_dir": {
+                                    "type": "string",
+                                    "description": "工作目录"
+                                },
+                                "shell": {
+                                    "type": "boolean",
+                                    "default": true,
+                                    "description": "是否通过 shell 执行"
+                                },
+                                "env": {
+                                    "type": "object",
+                                    "description": "环境变量"
+                                }
                             }
                         }
                     },
                     {
-                        "if": { "properties": { "type": { "const": "action_batch" } } },
+                        "if": {
+                            "properties": {
+                                "type": {
+                                    "const": "wait"
+                                }
+                            }
+                        },
                         "then": {
-                            "required": ["actions"],
+                            "required": [
+                                "duration"
+                            ],
+                            "properties": {
+                                "duration": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "description": "等待时长（毫秒）"
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "if": {
+                            "properties": {
+                                "type": {
+                                    "const": "action_batch"
+                                }
+                            }
+                        },
+                        "then": {
+                            "required": [
+                                "actions"
+                            ],
                             "properties": {
                                 "actions": {
                                     "type": "array",

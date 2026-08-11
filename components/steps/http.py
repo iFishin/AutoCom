@@ -20,11 +20,15 @@ class HttpStepHandler(BaseStepHandler):
         step_id = step.get("id", "")
         engine = TemplateEngine(self.ctx)
 
+        # ignore_error: 为 true 时无论成功/失败都判定为 passed
+        ignore_error = step.get("ignore_error", False)
+
         try:
             import requests as req
         except ImportError:
-            return StepResult.from_error(step_id,
-                "requests library not installed. Run: pip install requests")
+            return StepResult.from_error(
+                step_id, "requests library not installed. Run: pip install requests"
+            )
 
         # 解析参数
         raw_url = step.get("url", "")
@@ -33,7 +37,9 @@ class HttpStepHandler(BaseStepHandler):
         raw_body = step.get("body", {})
 
         url = engine.resolve(raw_url)
-        headers = engine.resolve_dict(raw_headers) if isinstance(raw_headers, dict) else {}
+        headers = (
+            engine.resolve_dict(raw_headers) if isinstance(raw_headers, dict) else {}
+        )
         timeout = step.get("timeout", 10)
 
         t0 = time.time()
@@ -41,19 +47,29 @@ class HttpStepHandler(BaseStepHandler):
             if method == "GET":
                 resp = req.get(url, headers=headers, timeout=timeout)
             elif method == "POST":
-                body = engine.resolve_dict(raw_body) if isinstance(raw_body, dict) else raw_body
+                body = (
+                    engine.resolve_dict(raw_body)
+                    if isinstance(raw_body, dict)
+                    else raw_body
+                )
                 content_type = step.get("content_type", "json")
                 if content_type == "json":
                     resp = req.post(url, headers=headers, json=body, timeout=timeout)
                 else:
                     resp = req.post(url, headers=headers, data=body, timeout=timeout)
             elif method == "PUT":
-                body = engine.resolve_dict(raw_body) if isinstance(raw_body, dict) else raw_body
+                body = (
+                    engine.resolve_dict(raw_body)
+                    if isinstance(raw_body, dict)
+                    else raw_body
+                )
                 resp = req.put(url, headers=headers, json=body, timeout=timeout)
             elif method == "DELETE":
                 resp = req.delete(url, headers=headers, timeout=timeout)
             else:
-                return StepResult.from_error(step_id, f"Unsupported HTTP method: {method}")
+                return StepResult.from_error(
+                    step_id, f"Unsupported HTTP method: {method}"
+                )
 
             elapsed = int((time.time() - t0) * 1000)
 
@@ -68,13 +84,20 @@ class HttpStepHandler(BaseStepHandler):
 
             errors = []
             if expected_status is not None and resp.status_code != int(expected_status):
-                errors.append(f"Expected status {expected_status}, got {resp.status_code}")
+                errors.append(
+                    f"Expected status {expected_status}, got {resp.status_code}"
+                )
             if body_match:
                 import re
+
                 if not re.search(str(body_match), resp.text):
                     errors.append(f"Body does not match pattern: {body_match}")
 
             status = "passed" if not errors else "failed"
+
+            # ignore_error: 强制判定为 passed，保留错误信息便于排查
+            if ignore_error and status != "passed":
+                status = "passed"
 
             # capture from response
             capture = {}
@@ -82,6 +105,7 @@ class HttpStepHandler(BaseStepHandler):
             if isinstance(raw_capture, dict):
                 for key, pattern in raw_capture.items():
                     import re
+
                     m = re.search(engine.resolve(pattern), resp.text)
                     if m:
                         capture[key] = m.group(1)
@@ -98,5 +122,15 @@ class HttpStepHandler(BaseStepHandler):
             )
 
         except Exception as e:
-            return StepResult.from_error(step_id, str(e), step_type="http",
-                                          send=f"{method} {url}")
+            # ignore_error: 异常也判定为 passed，保留 error 信息
+            if ignore_error:
+                return StepResult(
+                    step_id=step_id,
+                    step_type="http",
+                    status="passed",
+                    send=f"{method} {url}",
+                    error=str(e),
+                )
+            return StepResult.from_error(
+                step_id, str(e), step_type="http", send=f"{method} {url}"
+            )

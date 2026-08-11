@@ -434,7 +434,7 @@ class AutoComLogger:
                 "Response",
             ],
             width_mode="proportional",
-            column_ratios=[2,1,1,1,2,3],
+            column_ratios=[2, 1, 1, 1, 2, 3],
         )
         # CLI output mode controls how CLI-specific logging (log_step_*, log_iteration_*, log_session_*) is emitted.
         # Allowed: 'table' (default), 'plain', 'both'
@@ -534,6 +534,7 @@ class AutoComLogger:
         # 自动捕获 exc_info（如果调用方传了 exc_info=True 但没传具体异常）
         if kwargs.get("exc_info") is True and "exc_info" not in kwargs:
             import sys
+
             kwargs["exc_info"] = sys.exc_info()
 
         # 合并上下文

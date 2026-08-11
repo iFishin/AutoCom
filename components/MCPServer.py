@@ -50,6 +50,7 @@ from typing import Any, Optional, List
 try:
     from fastmcp import FastMCP, Context
     from fastmcp.server.dependencies import get_context
+
     _FASTMCP_AVAILABLE = True
 except Exception:
     FastMCP = None
@@ -59,12 +60,18 @@ except Exception:
 
 from components.Logger import AutoComLogger, get_logger
 from utils.serial_helpers import parse_line_ending as _parse_le
+
 logger: AutoComLogger = get_logger("AutoCom.MCP")
 
 
 def _is_graceful_shutdown_exception(exc: BaseException) -> bool:
     """判断是否属于可静默处理的退出类异常。"""
-    graceful_types = (KeyboardInterrupt, asyncio.CancelledError, BrokenPipeError, EOFError)
+    graceful_types = (
+        KeyboardInterrupt,
+        asyncio.CancelledError,
+        BrokenPipeError,
+        EOFError,
+    )
     if isinstance(exc, graceful_types):
         return True
     with contextlib.suppress(Exception):
@@ -73,7 +80,9 @@ def _is_graceful_shutdown_exception(exc: BaseException) -> bool:
     return False
 
 
-def _run_coroutine_with_graceful_shutdown(coro, on_interrupt=None, suppress_stderr_on_graceful: bool = False):
+def _run_coroutine_with_graceful_shutdown(
+    coro, on_interrupt=None, suppress_stderr_on_graceful: bool = False
+):
     """运行协程并在 Ctrl+C/取消时安静退出，避免向终端打印大量堆栈。"""
 
     def _loop_exception_handler(loop, context):
@@ -141,10 +150,13 @@ class AutoComMCPServer:
         self.auth_key = auth_key
         self.server_name = server_name
         if FastMCP is None:
-            raise RuntimeError("FastMCP 类不可用，可能是 fastmcp 版本不兼容。请升级 fastmcp 或检查其文档。")
+            raise RuntimeError(
+                "FastMCP 类不可用，可能是 fastmcp 版本不兼容。请升级 fastmcp 或检查其文档。"
+            )
         self.mcp = FastMCP()
         # 操作审计日志
         from utils.dirs import get_dirs
+
         self._audit_dir = get_dirs().log_dir / "mcp_audit"
         self._audit_dir.mkdir(parents=True, exist_ok=True)
         self._audit_lock = threading.Lock()
@@ -155,13 +167,17 @@ class AutoComMCPServer:
         self._session_lock = threading.Lock()
         self._session_idle_timeout = 300.0  # 5 分钟无操作自动关闭
         self._session_cleanup_interval = 30.0  # 每 30s 扫描一次
-        self._cleanup_thread = threading.Thread(target=self._session_cleanup_worker, daemon=True)
+        self._cleanup_thread = threading.Thread(
+            target=self._session_cleanup_worker, daemon=True
+        )
         self._cleanup_thread.start()
         self._register_tools()
 
     # ======================== 操作审计日志 ========================
 
-    _AUDIT_SENSITIVE_KEYS = frozenset({"password", "pwd", "passwd", "auth_key", "api_key", "secret", "token"})
+    _AUDIT_SENSITIVE_KEYS = frozenset(
+        {"password", "pwd", "passwd", "auth_key", "api_key", "secret", "token"}
+    )
 
     def _sanitize_params(self, params: dict) -> dict:
         """脱敏：递归过滤敏感字段。"""
@@ -183,7 +199,9 @@ class AutoComMCPServer:
 
         now = dt.datetime.now()
         date_str = now.strftime("%Y-%m-%d")
-        entry["@timestamp"] = now.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + now.strftime("%z")
+        entry["@timestamp"] = now.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + now.strftime(
+            "%z"
+        )
 
         with self._audit_lock:
             # 按日轮转
@@ -211,7 +229,9 @@ class AutoComMCPServer:
             except Exception as e:
                 logger.log_error(f"Failed to write audit log: {e}")
 
-    def _audit_log_tool(self, tool_name: str, params: dict, result: dict, elapsed_ms: float = 0) -> None:
+    def _audit_log_tool(
+        self, tool_name: str, params: dict, result: dict, elapsed_ms: float = 0
+    ) -> None:
         """便捷包装：从工具调用中记录审计日志。"""
         audit_entry = {
             "type": "tool_call",
@@ -243,7 +263,9 @@ class AutoComMCPServer:
             logger.log_info("MCP: list_serial_ports called")
             t0 = time.time()
             result = await AutoComMCPServer._list_serial_ports()
-            self._audit_log_tool("list_serial_ports", {}, result, (time.time() - t0) * 1000)
+            self._audit_log_tool(
+                "list_serial_ports", {}, result, (time.time() - t0) * 1000
+            )
             return result
 
         @mcp.tool()
@@ -274,13 +296,25 @@ class AutoComMCPServer:
                 completion_rules=completion_rules,
                 priority=priority,
             )
-            self._audit_log_tool("execute_serial_command", {
-                "port": port, "command": command, "baud_rate": baud_rate,
-                "timeout": timeout, "device_name": device_name,
-            }, result, result.get("elapsed_ms", 0))
-            AutoComMCPServer._append_io_log("CMD", port, command,
-                                            result.get("response", ""),
-                                            success=result.get("success", False))
+            self._audit_log_tool(
+                "execute_serial_command",
+                {
+                    "port": port,
+                    "command": command,
+                    "baud_rate": baud_rate,
+                    "timeout": timeout,
+                    "device_name": device_name,
+                },
+                result,
+                result.get("elapsed_ms", 0),
+            )
+            AutoComMCPServer._append_io_log(
+                "CMD",
+                port,
+                command,
+                result.get("response", ""),
+                success=result.get("success", False),
+            )
             return result
 
         @mcp.tool()
@@ -295,7 +329,9 @@ class AutoComMCPServer:
             注意：FastMCP 对工具返回的 async generator 会先整体物化，因此不能用于真正逐条实时回传。
             本方法改为在工具执行过程中通过 progress message 持续发送数据，最后返回一次汇总。
             """
-            logger.log_info(f"MCP: monitor_serial_port {port} duration={duration} heartbeat={heartbeat_interval}")
+            logger.log_info(
+                f"MCP: monitor_serial_port {port} duration={duration} heartbeat={heartbeat_interval}"
+            )
 
             progress_token = None
             ctx: Optional[Any] = None
@@ -341,7 +377,9 @@ class AutoComMCPServer:
                 if data_text is not None:
                     payload["data"] = data_text
                 try:
-                    await current_ctx.report_progress(chunk_count, None, json.dumps(payload, ensure_ascii=False))
+                    await current_ctx.report_progress(
+                        chunk_count, None, json.dumps(payload, ensure_ascii=False)
+                    )
                 except Exception:
                     pass
 
@@ -412,7 +450,12 @@ class AutoComMCPServer:
                     "total_bytes": byte_count,
                     "tail_chunks": list(outputs),
                 }
-                self._audit_log_tool("monitor_serial_port", _audit_params, result, result["duration_seconds"] * 1000)
+                self._audit_log_tool(
+                    "monitor_serial_port",
+                    _audit_params,
+                    result,
+                    result["duration_seconds"] * 1000,
+                )
                 return result
             except (KeyboardInterrupt, asyncio.CancelledError):
                 await _emit("cancelled")
@@ -426,7 +469,12 @@ class AutoComMCPServer:
                     "total_bytes": byte_count,
                     "tail_chunks": list(outputs),
                 }
-                self._audit_log_tool("monitor_serial_port", _audit_params, result, result["duration_seconds"] * 1000)
+                self._audit_log_tool(
+                    "monitor_serial_port",
+                    _audit_params,
+                    result,
+                    result["duration_seconds"] * 1000,
+                )
                 return result
             finally:
                 if ser is not None:
@@ -452,7 +500,12 @@ class AutoComMCPServer:
                 config_path=config_path,
                 config_overrides=config_overrides,
             )
-            self._audit_log_tool("load_pipeline", {"file_path": file_path, "config_path": config_path}, result, (time.time() - t0) * 1000)
+            self._audit_log_tool(
+                "load_pipeline",
+                {"file_path": file_path, "config_path": config_path},
+                result,
+                (time.time() - t0) * 1000,
+            )
             return result
 
         @mcp.tool()
@@ -465,7 +518,10 @@ class AutoComMCPServer:
             """校验 AutoCom Steps 配置文件（YAML/JSON），返回错误与告警列表。"""
             resolved = AutoComMCPServer._resolve_config_file(file_path, config_content)
             if not resolved:
-                return {"success": False, "error": "Must provide either file_path or config_content"}
+                return {
+                    "success": False,
+                    "error": "Must provide either file_path or config_content",
+                }
             logger.log_info(f"MCP: validate_pipeline {resolved}")
             t0 = time.time()
             result = await AutoComMCPServer._validate_pipeline(
@@ -473,7 +529,12 @@ class AutoComMCPServer:
                 config_path=config_path,
                 config_overrides=config_overrides,
             )
-            self._audit_log_tool("validate_pipeline", {"file_path": resolved}, result, (time.time() - t0) * 1000)
+            self._audit_log_tool(
+                "validate_pipeline",
+                {"file_path": resolved},
+                result,
+                (time.time() - t0) * 1000,
+            )
             return result
 
         @mcp.tool()
@@ -501,7 +562,10 @@ class AutoComMCPServer:
             """
             resolved = AutoComMCPServer._resolve_config_file(file_path, config_content)
             if not resolved:
-                return {"success": False, "error": "Must provide either file_path or config_content"}
+                return {
+                    "success": False,
+                    "error": "Must provide either file_path or config_content",
+                }
             logger.log_info(
                 f"MCP: run_pipeline {resolved} loop={loop_count} duration={duration} infinite={infinite}"
             )
@@ -517,13 +581,20 @@ class AutoComMCPServer:
                 max_failures=max_failures,
                 interval_ms=interval_ms,
             )
-            self._audit_log_tool("run_pipeline", {
-                "file_path": file_path, "loop_count": loop_count,
-                "duration": duration, "infinite": infinite,
-            }, result, result.get("elapsed_seconds", 0) * 1000)
+            self._audit_log_tool(
+                "run_pipeline",
+                {
+                    "file_path": file_path,
+                    "loop_count": loop_count,
+                    "duration": duration,
+                    "infinite": infinite,
+                },
+                result,
+                result.get("elapsed_seconds", 0) * 1000,
+            )
             return result
 
-    # ======================== 持久会话工具 ========================
+        # ======================== 持久会话工具 ========================
 
         @mcp.tool()
         async def serial_session_open(
@@ -544,15 +615,26 @@ class AutoComMCPServer:
             logger.log_info(f"MCP: serial_session_open {port} @ {baud_rate}")
             t0 = time.time()
             result = await self._serial_session_open(
-                port=port, baud_rate=baud_rate,
-                data_bits=data_bits, stop_bits=stop_bits,
-                parity=parity, timeout=timeout,
-                flow_control=flow_control, label=label or port,
+                port=port,
+                baud_rate=baud_rate,
+                data_bits=data_bits,
+                stop_bits=stop_bits,
+                parity=parity,
+                timeout=timeout,
+                flow_control=flow_control,
+                label=label or port,
                 monitor=monitor,
             )
-            self._audit_log_tool("serial_session_open", {
-                "port": port, "baud_rate": baud_rate, "label": label,
-            }, result, (time.time() - t0) * 1000)
+            self._audit_log_tool(
+                "serial_session_open",
+                {
+                    "port": port,
+                    "baud_rate": baud_rate,
+                    "label": label,
+                },
+                result,
+                (time.time() - t0) * 1000,
+            )
             return result
 
         @mcp.tool()
@@ -568,17 +650,30 @@ class AutoComMCPServer:
             logger.log_info(f"MCP: serial_session_send {session_id}")
             t0 = time.time()
             result = await self._serial_session_send(
-                session_id=session_id, command=command,
-                timeout=timeout, line_ending=line_ending,
-                hex_mode=hex_mode, expected_responses=expected_responses,
+                session_id=session_id,
+                command=command,
+                timeout=timeout,
+                line_ending=line_ending,
+                hex_mode=hex_mode,
+                expected_responses=expected_responses,
             )
-            self._audit_log_tool("serial_session_send", {
-                "session_id": session_id, "command": command,
-            }, result, result.get("elapsed_ms", 0))
-            AutoComMCPServer._append_io_log("SEND", result.get("port", ""),
-                                            command, result.get("response", ""),
-                                            session_id=session_id,
-                                            success=result.get("success", False))
+            self._audit_log_tool(
+                "serial_session_send",
+                {
+                    "session_id": session_id,
+                    "command": command,
+                },
+                result,
+                result.get("elapsed_ms", 0),
+            )
+            AutoComMCPServer._append_io_log(
+                "SEND",
+                result.get("port", ""),
+                command,
+                result.get("response", ""),
+                session_id=session_id,
+                success=result.get("success", False),
+            )
             return result
 
         @mcp.tool()
@@ -591,15 +686,25 @@ class AutoComMCPServer:
             logger.log_info(f"MCP: serial_session_read {session_id}")
             t0 = time.time()
             result = await self._serial_session_read(
-                session_id=session_id, timeout=timeout, max_bytes=max_bytes,
+                session_id=session_id,
+                timeout=timeout,
+                max_bytes=max_bytes,
             )
-            self._audit_log_tool("serial_session_read", {
-                "session_id": session_id,
-            }, result, (time.time() - t0) * 1000)
-            AutoComMCPServer._append_io_log("READ", result.get("port", ""),
-                                            result.get("data_text", result.get("data", "")),
-                                            session_id=session_id,
-                                            success=result.get("success", False))
+            self._audit_log_tool(
+                "serial_session_read",
+                {
+                    "session_id": session_id,
+                },
+                result,
+                (time.time() - t0) * 1000,
+            )
+            AutoComMCPServer._append_io_log(
+                "READ",
+                result.get("port", ""),
+                result.get("data_text", result.get("data", "")),
+                session_id=session_id,
+                success=result.get("success", False),
+            )
             return result
 
         @mcp.tool()
@@ -608,7 +713,12 @@ class AutoComMCPServer:
             logger.log_info(f"MCP: serial_session_close {session_id}")
             t0 = time.time()
             result = await self._serial_session_close(session_id=session_id)
-            self._audit_log_tool("serial_session_close", {"session_id": session_id}, result, (time.time() - t0) * 1000)
+            self._audit_log_tool(
+                "serial_session_close",
+                {"session_id": session_id},
+                result,
+                (time.time() - t0) * 1000,
+            )
             return result
 
         @mcp.tool()
@@ -617,10 +727,12 @@ class AutoComMCPServer:
             logger.log_info("MCP: serial_session_list called")
             t0 = time.time()
             result = await self._serial_session_list()
-            self._audit_log_tool("serial_session_list", {}, result, (time.time() - t0) * 1000)
+            self._audit_log_tool(
+                "serial_session_list", {}, result, (time.time() - t0) * 1000
+            )
             return result
 
-    # ======================== 硬件调试工具 ========================
+        # ======================== 硬件调试工具 ========================
 
         @mcp.tool()
         async def serial_pin_status(port: str, baud_rate: int = 115200) -> dict:
@@ -629,8 +741,12 @@ class AutoComMCPServer:
             """
             logger.log_info(f"MCP: serial_pin_status {port}")
             t0 = time.time()
-            result = await AutoComMCPServer._serial_pin_status(port=port, baud_rate=baud_rate)
-            self._audit_log_tool("serial_pin_status", {"port": port}, result, (time.time() - t0) * 1000)
+            result = await AutoComMCPServer._serial_pin_status(
+                port=port, baud_rate=baud_rate
+            )
+            self._audit_log_tool(
+                "serial_pin_status", {"port": port}, result, (time.time() - t0) * 1000
+            )
             return result
 
         @mcp.tool()
@@ -646,9 +762,17 @@ class AutoComMCPServer:
             logger.log_info(f"MCP: serial_pin_set {port}")
             t0 = time.time()
             result = await AutoComMCPServer._serial_pin_set(
-                port=port, dtr=dtr, rts=rts, baud_rate=baud_rate,
+                port=port,
+                dtr=dtr,
+                rts=rts,
+                baud_rate=baud_rate,
             )
-            self._audit_log_tool("serial_pin_set", {"port": port, "dtr": dtr, "rts": rts}, result, (time.time() - t0) * 1000)
+            self._audit_log_tool(
+                "serial_pin_set",
+                {"port": port, "dtr": dtr, "rts": rts},
+                result,
+                (time.time() - t0) * 1000,
+            )
             return result
 
         @mcp.tool()
@@ -668,13 +792,23 @@ class AutoComMCPServer:
             logger.log_info(f"MCP: serial_loopback_test {port} mode={mode}")
             t0 = time.time()
             result = await AutoComMCPServer._serial_loopback_test(
-                port=port, baud_rate=baud_rate, mode=mode,
-                test_data=test_data, probe_command=probe_command,
-                probe_expected=probe_expected, timeout=timeout,
+                port=port,
+                baud_rate=baud_rate,
+                mode=mode,
+                test_data=test_data,
+                probe_command=probe_command,
+                probe_expected=probe_expected,
+                timeout=timeout,
             )
-            self._audit_log_tool("serial_loopback_test", {
-                "port": port, "mode": mode,
-            }, result, result.get("elapsed_ms", (time.time() - t0) * 1000))
+            self._audit_log_tool(
+                "serial_loopback_test",
+                {
+                    "port": port,
+                    "mode": mode,
+                },
+                result,
+                result.get("elapsed_ms", (time.time() - t0) * 1000),
+            )
             return result
 
         @mcp.tool()
@@ -691,12 +825,21 @@ class AutoComMCPServer:
             logger.log_info(f"MCP: serial_latency_bench {port} rounds={rounds}")
             t0 = time.time()
             result = await AutoComMCPServer._serial_latency_bench(
-                port=port, baud_rate=baud_rate, rounds=rounds,
-                test_data=test_data, timeout=timeout,
+                port=port,
+                baud_rate=baud_rate,
+                rounds=rounds,
+                test_data=test_data,
+                timeout=timeout,
             )
-            self._audit_log_tool("serial_latency_bench", {
-                "port": port, "rounds": rounds,
-            }, result, (time.time() - t0) * 1000)
+            self._audit_log_tool(
+                "serial_latency_bench",
+                {
+                    "port": port,
+                    "rounds": rounds,
+                },
+                result,
+                (time.time() - t0) * 1000,
+            )
             return result
 
         # ======================== 流水线配置管理 ========================
@@ -707,7 +850,12 @@ class AutoComMCPServer:
             logger.log_info("MCP: pipeline_list called")
             t0 = time.time()
             result = await AutoComMCPServer._pipeline_list(base_dir=base_dir)
-            self._audit_log_tool("pipeline_list", {"base_dir": base_dir or "(default)"}, result, (time.time() - t0) * 1000)
+            self._audit_log_tool(
+                "pipeline_list",
+                {"base_dir": base_dir or "(default)"},
+                result,
+                (time.time() - t0) * 1000,
+            )
             return result
 
         # ======================== 执行历史与分析 ========================
@@ -718,7 +866,9 @@ class AutoComMCPServer:
             logger.log_info("MCP: execution_list called")
             t0 = time.time()
             result = await AutoComMCPServer._execution_list(limit=limit)
-            self._audit_log_tool("execution_list", {"limit": limit}, result, (time.time() - t0) * 1000)
+            self._audit_log_tool(
+                "execution_list", {"limit": limit}, result, (time.time() - t0) * 1000
+            )
             return result
 
         @mcp.tool()
@@ -727,20 +877,35 @@ class AutoComMCPServer:
             logger.log_info(f"MCP: execution_report {session_id}")
             t0 = time.time()
             result = await AutoComMCPServer._execution_report(session_id=session_id)
-            self._audit_log_tool("execution_report", {"session_id": session_id}, result, (time.time() - t0) * 1000)
+            self._audit_log_tool(
+                "execution_report",
+                {"session_id": session_id},
+                result,
+                (time.time() - t0) * 1000,
+            )
             return result
 
         @mcp.tool()
-        async def session_log_query(session_id: str, keyword: str, max_results: int = 50) -> dict:
+        async def session_log_query(
+            session_id: str, keyword: str, max_results: int = 50
+        ) -> dict:
             """在指定执行会话的设备日志中搜索关键词"""
             logger.log_info(f"MCP: session_log_query {session_id} keyword={keyword}")
             t0 = time.time()
             result = await AutoComMCPServer._session_log_query(
-                session_id=session_id, keyword=keyword, max_results=max_results,
+                session_id=session_id,
+                keyword=keyword,
+                max_results=max_results,
             )
-            self._audit_log_tool("session_log_query", {
-                "session_id": session_id, "keyword": keyword,
-            }, result, (time.time() - t0) * 1000)
+            self._audit_log_tool(
+                "session_log_query",
+                {
+                    "session_id": session_id,
+                    "keyword": keyword,
+                },
+                result,
+                (time.time() - t0) * 1000,
+            )
             return result
 
         @mcp.tool()
@@ -749,38 +914,64 @@ class AutoComMCPServer:
             logger.log_info(f"MCP: log_search_global keyword={keyword}")
             t0 = time.time()
             result = await AutoComMCPServer._log_search_global(
-                keyword=keyword, max_results=max_results,
+                keyword=keyword,
+                max_results=max_results,
             )
-            self._audit_log_tool("log_search_global", {"keyword": keyword}, result, (time.time() - t0) * 1000)
+            self._audit_log_tool(
+                "log_search_global",
+                {"keyword": keyword},
+                result,
+                (time.time() - t0) * 1000,
+            )
             return result
 
         # ======================== 串口调试增强 ========================
 
         @mcp.tool()
-        async def serial_baud_scan(port: str, test_command: str = "AT", expected_response: str = "OK",
-                                    line_ending: str = "0d0a") -> dict:
+        async def serial_baud_scan(
+            port: str,
+            test_command: str = "AT",
+            expected_response: str = "OK",
+            line_ending: str = "0d0a",
+        ) -> dict:
             """自动尝试常用波特率（9600~921600），找到能收到期望响应的那个。
             排查"连不上"问题时的第一选择。
             """
             logger.log_info(f"MCP: serial_baud_scan {port} test={test_command}")
             t0 = time.time()
             result = await AutoComMCPServer._serial_baud_scan(
-                port=port, test_command=test_command, expected_response=expected_response,
+                port=port,
+                test_command=test_command,
+                expected_response=expected_response,
                 line_ending=line_ending,
             )
-            self._audit_log_tool("serial_baud_scan", {"port": port}, result, (time.time() - t0) * 1000)
+            self._audit_log_tool(
+                "serial_baud_scan", {"port": port}, result, (time.time() - t0) * 1000
+            )
             return result
 
         @mcp.tool()
-        async def serial_hex_dump(port: str, baud_rate: int = 115200,
-                                    bytes_to_read: int = 256, timeout: float = 3.0) -> dict:
+        async def serial_hex_dump(
+            port: str,
+            baud_rate: int = 115200,
+            bytes_to_read: int = 256,
+            timeout: float = 3.0,
+        ) -> dict:
             """以 hex + ASCII 格式读取串口数据，排查乱码和不可见字符问题"""
             logger.log_info(f"MCP: serial_hex_dump {port} baud={baud_rate}")
             t0 = time.time()
             result = await AutoComMCPServer._serial_hex_dump(
-                port=port, baud_rate=baud_rate, bytes_to_read=bytes_to_read, timeout=timeout,
+                port=port,
+                baud_rate=baud_rate,
+                bytes_to_read=bytes_to_read,
+                timeout=timeout,
             )
-            self._audit_log_tool("serial_hex_dump", {"port": port, "baud_rate": baud_rate}, result, (time.time() - t0) * 1000)
+            self._audit_log_tool(
+                "serial_hex_dump",
+                {"port": port, "baud_rate": baud_rate},
+                result,
+                (time.time() - t0) * 1000,
+            )
             return result
 
         # ======================== 设备参数管理 ========================
@@ -791,26 +982,43 @@ class AutoComMCPServer:
             logger.log_info("MCP: device_profile_list called")
             t0 = time.time()
             result = await AutoComMCPServer._device_profile_list()
-            self._audit_log_tool("device_profile_list", {}, result, (time.time() - t0) * 1000)
+            self._audit_log_tool(
+                "device_profile_list", {}, result, (time.time() - t0) * 1000
+            )
             return result
 
         @mcp.tool()
         async def device_profile_save(
-            name: str, port: str, baud_rate: int = 115200,
-            data_bits: int = 8, stop_bits: int = 1,
-            parity: str = "none", flow_control: bool = False,
-            timeout: float = 5.0, label: str = "",
+            name: str,
+            port: str,
+            baud_rate: int = 115200,
+            data_bits: int = 8,
+            stop_bits: int = 1,
+            parity: str = "none",
+            flow_control: bool = False,
+            timeout: float = 5.0,
+            label: str = "",
         ) -> dict:
             """保存设备串口配置。之后可通过 profile=NAME 快速打开会话"""
             logger.log_info(f"MCP: device_profile_save {name} -> {port}")
             t0 = time.time()
             result = await AutoComMCPServer._device_profile_save(
-                name=name, port=port, baud_rate=baud_rate,
-                data_bits=data_bits, stop_bits=stop_bits,
-                parity=parity, flow_control=flow_control,
-                timeout=timeout, label=label,
+                name=name,
+                port=port,
+                baud_rate=baud_rate,
+                data_bits=data_bits,
+                stop_bits=stop_bits,
+                parity=parity,
+                flow_control=flow_control,
+                timeout=timeout,
+                label=label,
             )
-            self._audit_log_tool("device_profile_save", {"name": name, "port": port}, result, (time.time() - t0) * 1000)
+            self._audit_log_tool(
+                "device_profile_save",
+                {"name": name, "port": port},
+                result,
+                (time.time() - t0) * 1000,
+            )
             return result
 
         @mcp.tool()
@@ -819,44 +1027,73 @@ class AutoComMCPServer:
             logger.log_info(f"MCP: device_profile_delete {name}")
             t0 = time.time()
             result = await AutoComMCPServer._device_profile_delete(name=name)
-            self._audit_log_tool("device_profile_delete", {"name": name}, result, (time.time() - t0) * 1000)
+            self._audit_log_tool(
+                "device_profile_delete",
+                {"name": name},
+                result,
+                (time.time() - t0) * 1000,
+            )
             return result
 
         # ======================== 单步调试 ========================
 
         @mcp.tool()
-        async def pipeline_step_debug(file_path: Optional[str] = None,
-                                config_content: Optional[str] = None,
-                                step_id: str = "",
-                                config_overrides: Optional[dict] = None) -> dict:
+        async def pipeline_step_debug(
+            file_path: Optional[str] = None,
+            config_content: Optional[str] = None,
+            step_id: str = "",
+            config_overrides: Optional[dict] = None,
+        ) -> dict:
             """只执行流水线中的某一个步骤，方便单独调试某条指令"""
             resolved = AutoComMCPServer._resolve_config_file(file_path, config_content)
             if not resolved:
-                return {"success": False, "error": "Must provide either file_path or config_content"}
+                return {
+                    "success": False,
+                    "error": "Must provide either file_path or config_content",
+                }
             logger.log_info(f"MCP: pipeline_step_debug {resolved} step={step_id}")
             t0 = time.time()
             result = await AutoComMCPServer._pipeline_step_debug(
-                file_path=resolved, step_id=step_id, config_overrides=config_overrides,
+                file_path=resolved,
+                step_id=step_id,
+                config_overrides=config_overrides,
             )
-            self._audit_log_tool("pipeline_step_debug", {
-                "file_path": resolved, "step_id": step_id,
-            }, result, (time.time() - t0) * 1000)
+            self._audit_log_tool(
+                "pipeline_step_debug",
+                {
+                    "file_path": resolved,
+                    "step_id": step_id,
+                },
+                result,
+                (time.time() - t0) * 1000,
+            )
             return result
 
         @mcp.tool()
-        async def pipeline_dry_run(file_path: Optional[str] = None,
-                                    config_content: Optional[str] = None,
-                                    config_overrides: Optional[dict] = None) -> dict:
+        async def pipeline_dry_run(
+            file_path: Optional[str] = None,
+            config_content: Optional[str] = None,
+            config_overrides: Optional[dict] = None,
+        ) -> dict:
             """对流水线做干运行：解析变量、追踪控制流，但不执行实际 I/O"""
             resolved = AutoComMCPServer._resolve_config_file(file_path, config_content)
             if not resolved:
-                return {"success": False, "error": "Must provide either file_path or config_content"}
+                return {
+                    "success": False,
+                    "error": "Must provide either file_path or config_content",
+                }
             logger.log_info(f"MCP: pipeline_dry_run {resolved}")
             t0 = time.time()
             result = await AutoComMCPServer._pipeline_dry_run(
-                file_path=resolved, config_overrides=config_overrides,
+                file_path=resolved,
+                config_overrides=config_overrides,
             )
-            self._audit_log_tool("pipeline_dry_run", {"file_path": resolved}, result, (time.time() - t0) * 1000)
+            self._audit_log_tool(
+                "pipeline_dry_run",
+                {"file_path": resolved},
+                result,
+                (time.time() - t0) * 1000,
+            )
             return result
 
     # ------------------------- 工具实现 -------------------------
@@ -867,15 +1104,17 @@ class AutoComMCPServer:
 
         devices = []
         for p in serial.tools.list_ports.comports():
-            devices.append({
-                "device": p.device,
-                "description": p.description,
-                "hwid": p.hwid,
-                "vid": getattr(p, "vid", None),
-                "pid": getattr(p, "pid", None),
-                "serial_number": getattr(p, "serial_number", None),
-                "manufacturer": getattr(p, "manufacturer", None),
-            })
+            devices.append(
+                {
+                    "device": p.device,
+                    "description": p.description,
+                    "hwid": p.hwid,
+                    "vid": getattr(p, "vid", None),
+                    "pid": getattr(p, "pid", None),
+                    "serial_number": getattr(p, "serial_number", None),
+                    "manufacturer": getattr(p, "manufacturer", None),
+                }
+            )
         return {"success": True, "total": len(devices), "devices": devices}
 
     @staticmethod
@@ -902,7 +1141,11 @@ class AutoComMCPServer:
             try:
                 send_bytes = bytes.fromhex(command.replace(" ", ""))
             except ValueError as e:
-                return {"success": False, "port": port, "error": f"Invalid hex command: {e}"}
+                return {
+                    "success": False,
+                    "port": port,
+                    "error": f"Invalid hex command: {e}",
+                }
         else:
             send_bytes = command.encode("utf-8")
 
@@ -925,8 +1168,14 @@ class AutoComMCPServer:
             start_time = time.time()
             response = b""
             expected = expected_responses or []
-            complete_patterns = completion_rules.get("complete", []) if completion_rules else []
-            terminal_patterns = completion_rules.get("terminal", ["OK", "ERROR"]) if completion_rules else ["OK", "ERROR"]
+            complete_patterns = (
+                completion_rules.get("complete", []) if completion_rules else []
+            )
+            terminal_patterns = (
+                completion_rules.get("terminal", ["OK", "ERROR"])
+                if completion_rules
+                else ["OK", "ERROR"]
+            )
 
             while time.time() - start_time < timeout:
                 avail = ser.in_waiting
@@ -945,7 +1194,9 @@ class AutoComMCPServer:
                                     "command": command,
                                     "response": text,
                                     "matched_pattern": pat,
-                                    "elapsed_ms": int((time.time() - start_time) * 1000),
+                                    "elapsed_ms": int(
+                                        (time.time() - start_time) * 1000
+                                    ),
                                 }
 
                     # 检查预期响应
@@ -958,7 +1209,9 @@ class AutoComMCPServer:
                                     "command": command,
                                     "response": text,
                                     "matched_expected": exp,
-                                    "elapsed_ms": int((time.time() - start_time) * 1000),
+                                    "elapsed_ms": int(
+                                        (time.time() - start_time) * 1000
+                                    ),
                                 }
 
                     # 检查终止条件
@@ -971,7 +1224,9 @@ class AutoComMCPServer:
                                     "command": command,
                                     "response": text,
                                     "matched_terminal": pat,
-                                    "elapsed_ms": int((time.time() - start_time) * 1000),
+                                    "elapsed_ms": int(
+                                        (time.time() - start_time) * 1000
+                                    ),
                                 }
 
                 await asyncio.sleep(0.02)
@@ -1083,20 +1338,34 @@ class AutoComMCPServer:
                 steps = pipeline_data.get("Steps") or []
 
                 if not devices:
-                    issues.append({"path": "Devices", "message": "Devices must not be empty"})
+                    issues.append(
+                        {"path": "Devices", "message": "Devices must not be empty"}
+                    )
                 if not steps:
-                    issues.append({"path": "Steps", "message": "Steps must not be empty"})
+                    issues.append(
+                        {"path": "Steps", "message": "Steps must not be empty"}
+                    )
 
                 # 检查设备
                 enabled_names = set()
                 if isinstance(devices, list):
                     for idx, dev in enumerate(devices):
                         if not isinstance(dev, dict):
-                            issues.append({"path": f"Devices[{idx}]", "message": "Device entry must be an object"})
+                            issues.append(
+                                {
+                                    "path": f"Devices[{idx}]",
+                                    "message": "Device entry must be an object",
+                                }
+                            )
                             continue
                         name = dev.get("name")
                         if not name:
-                            issues.append({"path": f"Devices[{idx}].name", "message": "Device must have a 'name' field"})
+                            issues.append(
+                                {
+                                    "path": f"Devices[{idx}].name",
+                                    "message": "Device must have a 'name' field",
+                                }
+                            )
                         if dev.get("status", "enabled") != "disabled" and name:
                             enabled_names.add(name)
 
@@ -1104,31 +1373,53 @@ class AutoComMCPServer:
                 if isinstance(steps, list):
                     for idx, step in enumerate(steps):
                         if not isinstance(step, dict):
-                            issues.append({"path": f"Steps[{idx}]", "message": "Step entry must be an object"})
+                            issues.append(
+                                {
+                                    "path": f"Steps[{idx}]",
+                                    "message": "Step entry must be an object",
+                                }
+                            )
                             continue
 
                         step_id = step.get("id", f"steps[{idx}]")
                         step_type = step.get("type")
 
                         if not step_type:
-                            issues.append({"path": f"Steps[{idx}].type", "message": f"Step '{step_id}' missing 'type' field"})
+                            issues.append(
+                                {
+                                    "path": f"Steps[{idx}].type",
+                                    "message": f"Step '{step_id}' missing 'type' field",
+                                }
+                            )
 
                         dev_name = step.get("device")
                         if dev_name:
                             if enabled_names and dev_name not in enabled_names:
-                                warnings.append({
-                                    "path": f"Steps[{idx}].device",
-                                    "message": f"Step '{step_id}' references unknown device '{dev_name}'",
-                                })
+                                warnings.append(
+                                    {
+                                        "path": f"Steps[{idx}].device",
+                                        "message": f"Step '{step_id}' references unknown device '{dev_name}'",
+                                    }
+                                )
 
                         timeout = step.get("timeout")
                         if timeout is not None:
                             try:
                                 tv = float(timeout)
                                 if tv <= 0:
-                                    issues.append({"path": f"Steps[{idx}].timeout", "message": "timeout must be > 0"})
+                                    issues.append(
+                                        {
+                                            "path": f"Steps[{idx}].timeout",
+                                            "message": "timeout must be > 0",
+                                        }
+                                    )
                             except Exception:
-                                issues.append({"path": f"Steps[{idx}].timeout", "message": "timeout must be numeric"})
+                                issues.append(
+                                    {
+                                        "path": f"Steps[{idx}].timeout",
+                                        "message": "timeout must be numeric",
+                                    }
+                                )
 
             return {
                 "success": len(issues) == 0,
@@ -1155,7 +1446,12 @@ class AutoComMCPServer:
         interval_ms: Optional[int] = None,
     ) -> dict:
         """执行完整的 Steps 流水线。"""
-        from AutoCom import execute_with_loop, resolve_execution_config, load_commands_from_file, merge_config
+        from AutoCom import (
+            execute_with_loop,
+            resolve_execution_config,
+            load_commands_from_file,
+            merge_config,
+        )
 
         path = Path(file_path)
         if not path.exists():
@@ -1190,11 +1486,15 @@ class AutoComMCPServer:
                 exec_cfg.interval_ms = interval_ms
             if duration:
                 from AutoCom import parse_duration
+
                 exec_cfg.duration_seconds = parse_duration(duration)
 
             # 执行（API 模式使用 plain 输出，不打印表格）
             from components.Logger import AutoComLogger
-            prev_mode = getattr(AutoComLogger.get_instance(), "cli_output_mode", "table")
+
+            prev_mode = getattr(
+                AutoComLogger.get_instance(), "cli_output_mode", "table"
+            )
             try:
                 AutoComLogger.get_instance().cli_output_mode = "plain"
                 start_time = time.time()
@@ -1208,6 +1508,7 @@ class AutoComMCPServer:
             session_id = None
             try:
                 from pathlib import Path as _P
+
                 logs = _P("logs/run")
                 if logs.is_dir():
                     dirs = sorted(logs.iterdir(), key=lambda e: e.name, reverse=True)
@@ -1221,16 +1522,25 @@ class AutoComMCPServer:
                                     info: dict[str, str] = {}
                                     for line in block.splitlines():
                                         ls = line.strip()
-                                        for prefix in ("step_id:", "step_type:", "status:", "elapsed_ms:"):
+                                        for prefix in (
+                                            "step_id:",
+                                            "step_type:",
+                                            "status:",
+                                            "elapsed_ms:",
+                                        ):
                                             if ls.startswith(prefix):
-                                                info[prefix[:-1]] = ls.split(":", 1)[1].strip()
+                                                info[prefix[:-1]] = ls.split(":", 1)[
+                                                    1
+                                                ].strip()
                                     if "step_id" in info:
-                                        results.append({
-                                            "step_id": info.get("step_id"),
-                                            "step_type": info.get("step_type"),
-                                            "status": info.get("status"),
-                                            "elapsed_ms": info.get("elapsed_ms"),
-                                        })
+                                        results.append(
+                                            {
+                                                "step_id": info.get("step_id"),
+                                                "step_type": info.get("step_type"),
+                                                "status": info.get("status"),
+                                                "elapsed_ms": info.get("elapsed_ms"),
+                                            }
+                                        )
             except Exception:
                 pass
             # 清理空目录
@@ -1281,8 +1591,17 @@ class AutoComMCPServer:
             "mark": serial.PARITY_MARK,
             "space": serial.PARITY_SPACE,
         }
-        _stopbits_map = {1: serial.STOPBITS_ONE, 1.5: serial.STOPBITS_ONE_POINT_FIVE, 2: serial.STOPBITS_TWO}
-        _bytesize_map = {5: serial.FIVEBITS, 6: serial.SIXBITS, 7: serial.SEVENBITS, 8: serial.EIGHTBITS}
+        _stopbits_map = {
+            1: serial.STOPBITS_ONE,
+            1.5: serial.STOPBITS_ONE_POINT_FIVE,
+            2: serial.STOPBITS_TWO,
+        }
+        _bytesize_map = {
+            5: serial.FIVEBITS,
+            6: serial.SIXBITS,
+            7: serial.SEVENBITS,
+            8: serial.EIGHTBITS,
+        }
 
         try:
             ser = serial.Serial(
@@ -1335,6 +1654,7 @@ class AutoComMCPServer:
 
     def _start_background_monitor(self, session_id: str, session: dict) -> None:
         """为 session 启动后台串口读取守护线程（monitor 模式）。"""
+
         def _read_loop():
             ser = session["serial"]
             while not session.get("closing"):
@@ -1353,7 +1673,9 @@ class AutoComMCPServer:
                     if not session.get("closing"):
                         time.sleep(0.05)
 
-        thread = threading.Thread(target=_read_loop, daemon=True, name=f"mon-{session_id}")
+        thread = threading.Thread(
+            target=_read_loop, daemon=True, name=f"mon-{session_id}"
+        )
         thread.start()
         session["monitor_thread"] = thread
 
@@ -1397,7 +1719,11 @@ class AutoComMCPServer:
             ser.flush()
             session["bytes_sent"] += len(send_bytes)
         except Exception as e:
-            return {"success": False, "error": f"Write failed: {e}", "session_id": session_id}
+            return {
+                "success": False,
+                "error": f"Write failed: {e}",
+                "session_id": session_id,
+            }
 
         # 读取响应
         response = b""
@@ -1711,8 +2037,10 @@ class AutoComMCPServer:
         ser = None
         try:
             ser = serial.Serial(
-                port=port, baudrate=baud_rate,
-                timeout=timeout, write_timeout=timeout,
+                port=port,
+                baudrate=baud_rate,
+                timeout=timeout,
+                write_timeout=timeout,
             )
 
             if mode == "hardware":
@@ -1737,9 +2065,15 @@ class AutoComMCPServer:
                 elapsed_ms = (time.perf_counter() - start) * 1000
                 match = received == send_bytes
                 match_ratio = (
-                    sum(1 for a, b in zip(received, send_bytes) if a == b) / len(send_bytes)
-                    if send_bytes else 0
-                ) if not match else 1.0
+                    (
+                        sum(1 for a, b in zip(received, send_bytes) if a == b)
+                        / len(send_bytes)
+                        if send_bytes
+                        else 0
+                    )
+                    if not match
+                    else 1.0
+                )
 
                 return {
                     "success": match,
@@ -1786,7 +2120,10 @@ class AutoComMCPServer:
                     "elapsed_ms": round(elapsed_ms, 2),
                 }
             else:
-                return {"success": False, "error": f"Unknown mode: {mode}, options: hardware, echo"}
+                return {
+                    "success": False,
+                    "error": f"Unknown mode: {mode}, options: hardware, echo",
+                }
 
         except Exception as e:
             return {"success": False, "port": port, "error": str(e)}
@@ -1809,8 +2146,10 @@ class AutoComMCPServer:
         ser = None
         try:
             ser = serial.Serial(
-                port=port, baudrate=baud_rate,
-                timeout=timeout, write_timeout=timeout,
+                port=port,
+                baudrate=baud_rate,
+                timeout=timeout,
+                write_timeout=timeout,
             )
 
             send_bytes = test_data.encode("utf-8") + b"\r\n"
@@ -1871,7 +2210,9 @@ class AutoComMCPServer:
                 result["first_byte_latency_ms"] = {
                     "min": round(min(first_byte_latencies), 3),
                     "max": round(max(first_byte_latencies), 3),
-                    "avg": round(sum(first_byte_latencies) / len(first_byte_latencies), 3),
+                    "avg": round(
+                        sum(first_byte_latencies) / len(first_byte_latencies), 3
+                    ),
                 }
             if rtt_latencies:
                 result["rtt_ms"] = {
@@ -1881,7 +2222,9 @@ class AutoComMCPServer:
                     "median": round(sorted(rtt_latencies)[len(rtt_latencies) // 2], 3),
                 }
             if errors > 0:
-                result["note"] = f"{errors}/{rounds} rounds got no response — device may not be connected or may not reply"
+                result["note"] = (
+                    f"{errors}/{rounds} rounds got no response — device may not be connected or may not reply"
+                )
 
             return result
 
@@ -1925,14 +2268,16 @@ class AutoComMCPServer:
                         stat = f.stat()
                     except Exception:
                         stat = None
-                    pipelines.append({
-                        "file_path": abspath,
-                        "file_name": f.name,
-                        "relative_path": str(f.relative_to(Path.cwd())),
-                        "size_bytes": stat.st_size if stat else 0,
-                        "modified": stat.st_mtime if stat else 0,
-                        "directory": str(f.parent),
-                    })
+                    pipelines.append(
+                        {
+                            "file_path": abspath,
+                            "file_name": f.name,
+                            "relative_path": str(f.relative_to(Path.cwd())),
+                            "size_bytes": stat.st_size if stat else 0,
+                            "modified": stat.st_mtime if stat else 0,
+                            "directory": str(f.parent),
+                        }
+                    )
         return {"success": True, "total": len(pipelines), "pipelines": pipelines}
 
     # ======================== 执行历史与分析 ========================
@@ -1950,26 +2295,33 @@ class AutoComMCPServer:
             for entry in sorted(base.iterdir(), key=lambda e: e.name, reverse=True):
                 if not entry.is_dir():
                     continue
-                log_files = sorted(f.name for f in entry.iterdir() if f.suffix == ".log")
+                log_files = sorted(
+                    f.name for f in entry.iterdir() if f.suffix == ".log"
+                )
                 if not log_files:
                     try:
                         entry.rmdir()
                     except Exception:
                         pass
                     continue
-                config_files = sorted(f.name for f in entry.iterdir()
-                                      if f.suffix in (".yaml", ".yml", ".json"))
+                config_files = sorted(
+                    f.name
+                    for f in entry.iterdir()
+                    if f.suffix in (".yaml", ".yml", ".json")
+                )
                 device_logs = [f for f in log_files if f != "EXECUTION.log"]
-                sessions.append({
-                    "type": "pipeline",
-                    "session_id": entry.name,
-                    "has_log": "EXECUTION.log" in log_files,
-                    "has_json": (entry / "EXECUTION.json").is_file(),
-                    "device_logs": device_logs,
-                    "device_count": len(device_logs),
-                    "log_count": len(log_files),
-                    "config_count": len(config_files),
-                })
+                sessions.append(
+                    {
+                        "type": "pipeline",
+                        "session_id": entry.name,
+                        "has_log": "EXECUTION.log" in log_files,
+                        "has_json": (entry / "EXECUTION.json").is_file(),
+                        "device_logs": device_logs,
+                        "device_count": len(device_logs),
+                        "log_count": len(log_files),
+                        "config_count": len(config_files),
+                    }
+                )
                 if len(sessions) >= limit:
                     break
 
@@ -1981,18 +2333,22 @@ class AutoComMCPServer:
                     continue
                 line_count = 0
                 try:
-                    line_count = len(f.read_text("utf-8", errors="replace").splitlines())
+                    line_count = len(
+                        f.read_text("utf-8", errors="replace").splitlines()
+                    )
                 except Exception:
                     pass
-                sessions.append({
-                    "type": "operations",
-                    "session_id": f.stem,  # 日期
-                    "has_log": True,
-                    "device_logs": [f.name],
-                    "device_count": 1,
-                    "log_count": 1,
-                    "line_count": line_count,
-                })
+                sessions.append(
+                    {
+                        "type": "operations",
+                        "session_id": f.stem,  # 日期
+                        "has_log": True,
+                        "device_logs": [f.name],
+                        "device_count": 1,
+                        "log_count": 1,
+                        "line_count": line_count,
+                    }
+                )
                 if len(sessions) >= limit:
                     break
 
@@ -2011,7 +2367,12 @@ class AutoComMCPServer:
                         "success": True,
                         "session_id": session_id,
                         "type": "operations",
-                        "device_logs": [{"filename": ops_file.name, "size_bytes": ops_file.stat().st_size}],
+                        "device_logs": [
+                            {
+                                "filename": ops_file.name,
+                                "size_bytes": ops_file.stat().st_size,
+                            }
+                        ],
                         "line_count": len(lines),
                         "preview": lines[:50],
                         "truncated": len(lines) > 50,
@@ -2027,7 +2388,6 @@ class AutoComMCPServer:
                 pass
             # 检查 session_log_query 的 keyword 字段
             return {"success": False, "error": f"Session '{session_id}' not found"}
-        
 
         result = {
             "success": True,
@@ -2065,17 +2425,24 @@ class AutoComMCPServer:
         step_results = []
         for f in sorted(session_dir.iterdir()):
             if f.suffix == ".log" and f.name != "EXECUTION.log":
-                log_list.append({
-                    "filename": f.name,
-                    "size_bytes": f.stat().st_size,
-                })
+                log_list.append(
+                    {
+                        "filename": f.name,
+                        "size_bytes": f.stat().st_size,
+                    }
+                )
                 # 解析结构化步骤记录
                 text = f.read_text("utf-8", errors="replace")
                 for block in text.split("========"):
                     info: dict[str, str] = {}
                     for line in block.splitlines():
                         ls = line.strip()
-                        for prefix in ("step_id:", "step_type:", "status:", "elapsed_ms:"):
+                        for prefix in (
+                            "step_id:",
+                            "step_type:",
+                            "status:",
+                            "elapsed_ms:",
+                        ):
                             if ls.startswith(prefix):
                                 info[prefix[:-1]] = ls.split(":", 1)[1].strip()
                     if "step_id" in info:
@@ -2091,7 +2458,9 @@ class AutoComMCPServer:
         return result
 
     @staticmethod
-    async def _session_log_query(session_id: str, keyword: str, max_results: int = 50) -> dict:
+    async def _session_log_query(
+        session_id: str, keyword: str, max_results: int = 50
+    ) -> dict:
         """在指定会话的日志中搜索关键词。"""
         from pathlib import Path
 
@@ -2104,20 +2473,30 @@ class AutoComMCPServer:
             except Exception:
                 pass
             return {"success": False, "error": f"Session '{session_id}' not found"}
-            return {"success": False, "keyword": keyword, "total_matches": 0, "matches": [], "error": f"Session '{session_id}' not found"}
+            return {
+                "success": False,
+                "keyword": keyword,
+                "total_matches": 0,
+                "matches": [],
+                "error": f"Session '{session_id}' not found",
+            }
 
         matches = []
         for f in sorted(session_dir.iterdir()):
             if f.suffix != ".log":
                 continue
             try:
-                for lineno, line in enumerate(f.read_text("utf-8", errors="replace").splitlines(), 1):
+                for lineno, line in enumerate(
+                    f.read_text("utf-8", errors="replace").splitlines(), 1
+                ):
                     if keyword.lower() in line.lower():
-                        matches.append({
-                            "file": f.name,
-                            "line": lineno,
-                            "text": line.strip(),
-                        })
+                        matches.append(
+                            {
+                                "file": f.name,
+                                "line": lineno,
+                                "text": line.strip(),
+                            }
+                        )
                         if len(matches) >= max_results:
                             break
             except Exception:
@@ -2154,14 +2533,18 @@ class AutoComMCPServer:
                         if f.suffix != ".log":
                             continue
                         try:
-                            for lineno, line in enumerate(f.read_text("utf-8", errors="replace").splitlines(), 1):
+                            for lineno, line in enumerate(
+                                f.read_text("utf-8", errors="replace").splitlines(), 1
+                            ):
                                 if keyword.lower() in line.lower():
-                                    matches.append({
-                                        "session_id": entry.name,
-                                        "file": f.name,
-                                        "line": lineno,
-                                        "text": line.strip(),
-                                    })
+                                    matches.append(
+                                        {
+                                            "session_id": entry.name,
+                                            "file": f.name,
+                                            "line": lineno,
+                                            "text": line.strip(),
+                                        }
+                                    )
                                     if len(matches) >= max_results:
                                         break
                         except Exception:
@@ -2174,14 +2557,18 @@ class AutoComMCPServer:
                     if f.suffix != ".log":
                         continue
                     try:
-                        for lineno, line in enumerate(f.read_text("utf-8", errors="replace").splitlines(), 1):
+                        for lineno, line in enumerate(
+                            f.read_text("utf-8", errors="replace").splitlines(), 1
+                        ):
                             if keyword.lower() in line.lower():
-                                matches.append({
-                                    "session_id": base.name,
-                                    "file": f.name,
-                                    "line": lineno,
-                                    "text": line.strip(),
-                                })
+                                matches.append(
+                                    {
+                                        "session_id": base.name,
+                                        "file": f.name,
+                                        "line": lineno,
+                                        "text": line.strip(),
+                                    }
+                                )
                                 if len(matches) >= max_results:
                                     break
                     except Exception:
@@ -2203,8 +2590,12 @@ class AutoComMCPServer:
     BAUD_RATES_TO_TRY = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600]
 
     @staticmethod
-    async def _serial_baud_scan(port: str, test_command: str = "AT", expected_response: str = "OK",
-                                 line_ending: str = "0d0a") -> dict:
+    async def _serial_baud_scan(
+        port: str,
+        test_command: str = "AT",
+        expected_response: str = "OK",
+        line_ending: str = "0d0a",
+    ) -> dict:
         """自动尝试常用波特率，找到能收到期望响应的那个。"""
         import serial
 
@@ -2244,18 +2635,22 @@ class AutoComMCPServer:
                 text = resp.decode("utf-8", errors="replace")
                 elapsed = round((time.time() - t0) * 1000, 1)
                 matched = expected_response in text
-                results.append({
-                    "baud_rate": baud,
-                    "success": matched,
-                    "response": text.strip() if text else "(no response)",
-                    "elapsed_ms": elapsed,
-                })
+                results.append(
+                    {
+                        "baud_rate": baud,
+                        "success": matched,
+                        "response": text.strip() if text else "(no response)",
+                        "elapsed_ms": elapsed,
+                    }
+                )
             except Exception as e:
-                results.append({
-                    "baud_rate": baud,
-                    "success": False,
-                    "error": str(e),
-                })
+                results.append(
+                    {
+                        "baud_rate": baud,
+                        "success": False,
+                        "error": str(e),
+                    }
+                )
             finally:
                 if ser is not None:
                     try:
@@ -2276,8 +2671,12 @@ class AutoComMCPServer:
         }
 
     @staticmethod
-    async def _serial_hex_dump(port: str, baud_rate: int = 115200, bytes_to_read: int = 256,
-                                timeout: float = 3.0) -> dict:
+    async def _serial_hex_dump(
+        port: str,
+        baud_rate: int = 115200,
+        bytes_to_read: int = 256,
+        timeout: float = 3.0,
+    ) -> dict:
         """以 hex + ASCII 格式读取串口数据，排查乱码问题。"""
         import serial
 
@@ -2293,22 +2692,31 @@ class AutoComMCPServer:
             )
             raw = ser.read(bytes_to_read)
             if not raw:
-                return {"success": True, "port": port, "baud_rate": baud_rate,
-                        "bytes_read": 0, "hex_dump": [], "raw_bytes": [], "text": "(no data)"}
+                return {
+                    "success": True,
+                    "port": port,
+                    "baud_rate": baud_rate,
+                    "bytes_read": 0,
+                    "hex_dump": [],
+                    "raw_bytes": [],
+                    "text": "(no data)",
+                }
 
             # 格式化 hex dump
             hex_lines = []
             bytes_list = list(raw)
             for i in range(0, len(raw), 16):
-                chunk = raw[i:i + 16]
+                chunk = raw[i : i + 16]
                 hex_part = " ".join(f"{b:02x}" for b in chunk)
                 ascii_part = "".join(chr(b) if 32 <= b < 127 else "." for b in chunk)
-                hex_lines.append({
-                    "offset": i,
-                    "hex": hex_part,
-                    "ascii": ascii_part,
-                    "raw": [b for b in chunk],
-                })
+                hex_lines.append(
+                    {
+                        "offset": i,
+                        "hex": hex_part,
+                        "ascii": ascii_part,
+                        "raw": [b for b in chunk],
+                    }
+                )
 
             return {
                 "success": True,
@@ -2349,10 +2757,17 @@ class AutoComMCPServer:
             return {"success": False, "error": str(e)}
 
     @staticmethod
-    async def _device_profile_save(name: str, port: str, baud_rate: int = 115200,
-                                    data_bits: int = 8, stop_bits: int = 1,
-                                    parity: str = "none", flow_control: bool = False,
-                                    timeout: float = 5.0, label: str = "") -> dict:
+    async def _device_profile_save(
+        name: str,
+        port: str,
+        baud_rate: int = 115200,
+        data_bits: int = 8,
+        stop_bits: int = 1,
+        parity: str = "none",
+        flow_control: bool = False,
+        timeout: float = 5.0,
+        label: str = "",
+    ) -> dict:
         """保存设备配置。"""
         profile = {
             "name": name,
@@ -2386,7 +2801,9 @@ class AutoComMCPServer:
         else:
             profiles.append(profile)
 
-        profiles_path.write_text(json.dumps(profiles, indent=2, ensure_ascii=False), "utf-8")
+        profiles_path.write_text(
+            json.dumps(profiles, indent=2, ensure_ascii=False), "utf-8"
+        )
         return {"success": True, "profile": profile, "total": len(profiles)}
 
     @staticmethod
@@ -2402,7 +2819,9 @@ class AutoComMCPServer:
             profiles = [p for p in profiles if p.get("name") != name]
             if len(profiles) == before:
                 return {"success": False, "error": f"Profile '{name}' not found"}
-            profiles_path.write_text(json.dumps(profiles, indent=2, ensure_ascii=False), "utf-8")
+            profiles_path.write_text(
+                json.dumps(profiles, indent=2, ensure_ascii=False), "utf-8"
+            )
             return {"success": True, "deleted": name, "total": len(profiles)}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -2410,8 +2829,9 @@ class AutoComMCPServer:
     # ======================== 单步调试 ========================
 
     @staticmethod
-    async def _pipeline_step_debug(file_path: str, step_id: str,
-                                    config_overrides: Optional[dict] = None) -> dict:
+    async def _pipeline_step_debug(
+        file_path: str, step_id: str, config_overrides: Optional[dict] = None
+    ) -> dict:
         """只执行流水线中的某一个步骤，方便单独调试。"""
         from components.PipelineScheduler import PipelineScheduler
         from pathlib import Path
@@ -2423,6 +2843,7 @@ class AutoComMCPServer:
         try:
             # 加载配置
             import yaml
+
             raw = fpath.read_text("utf-8")
             data = yaml.safe_load(raw)
             if not isinstance(data, dict):
@@ -2431,6 +2852,7 @@ class AutoComMCPServer:
             # 应用覆盖
             if config_overrides:
                 from copy import deepcopy
+
                 data = deepcopy(data)
                 for key, val in config_overrides.items():
                     data[key] = val
@@ -2443,7 +2865,10 @@ class AutoComMCPServer:
                     target_step = s
                     break
             if target_step is None:
-                return {"success": False, "error": f"Step '{step_id}' not found in Steps"}
+                return {
+                    "success": False,
+                    "error": f"Step '{step_id}' not found in Steps",
+                }
 
             # 构建临时 PipelineScheduler 并执行单步
             scheduler = PipelineScheduler(data)
@@ -2459,7 +2884,9 @@ class AutoComMCPServer:
             return {"success": False, "error": str(e)}
 
     @staticmethod
-    async def _pipeline_dry_run(file_path: str, config_overrides: Optional[dict] = None) -> dict:
+    async def _pipeline_dry_run(
+        file_path: str, config_overrides: Optional[dict] = None
+    ) -> dict:
         """对流水线做干运行：解析变量、追踪控制流，但不执行实际 I/O。"""
         from pathlib import Path
 
@@ -2469,6 +2896,7 @@ class AutoComMCPServer:
 
         try:
             import yaml
+
             raw = fpath.read_text("utf-8")
             data = yaml.safe_load(raw)
             if not isinstance(data, dict):
@@ -2476,6 +2904,7 @@ class AutoComMCPServer:
 
             if config_overrides:
                 from copy import deepcopy
+
                 data = deepcopy(data)
                 for key, val in config_overrides.items():
                     data[key] = val
@@ -2509,27 +2938,32 @@ class AutoComMCPServer:
                     val = s.get(field, "")
                     if isinstance(val, str):
                         import re
+
                         for m in re.finditer(r"\{([A-Za-z_]\w*)\}", val):
                             k = m.group(1)
                             if k not in constants:
                                 deps.append(f"undefined constant: {{{k}}}")
-                        for m in re.finditer(r"\{\{\s*steps\.(\w+)\.capture\.(\w+)\s*\}\}", val):
+                        for m in re.finditer(
+                            r"\{\{\s*steps\.(\w+)\.capture\.(\w+)\s*\}\}", val
+                        ):
                             sid_ref = m.group(1)
                             if sid_ref not in {x.get("id") for x in steps}:
                                 deps.append(f"undefined step ref: {sid_ref}")
 
-                step_analysis.append({
-                    "id": sid,
-                    "type": stype,
-                    "device": s.get("device", ""),
-                    "has_expect": "expect" in s,
-                    "has_capture": "capture" in s,
-                    "timeout": s.get("timeout"),
-                    "on_error": s.get("on_error"),
-                    "on_success": s.get("on_success"),
-                    "condition": s.get("if") or s.get("unless"),
-                    "issues": deps,
-                })
+                step_analysis.append(
+                    {
+                        "id": sid,
+                        "type": stype,
+                        "device": s.get("device", ""),
+                        "has_expect": "expect" in s,
+                        "has_capture": "capture" in s,
+                        "timeout": s.get("timeout"),
+                        "on_error": s.get("on_error"),
+                        "on_success": s.get("on_success"),
+                        "condition": s.get("if") or s.get("unless"),
+                        "issues": deps,
+                    }
+                )
 
             # 控制流追踪
             flow_trace = []
@@ -2541,15 +2975,20 @@ class AutoComMCPServer:
                         if st.get("id") == s["id"]:
                             target = st.get("target")
                     if target and target not in ids:
-                        flow_trace.append(f"goto '{s['id']}' -> target '{target}' not found")
+                        flow_trace.append(
+                            f"goto '{s['id']}' -> target '{target}' not found"
+                        )
                     elif target:
                         flow_trace.append(f"goto '{s['id']}' -> '{target}'")
                 on_err = s.get("on_error", "")
                 if isinstance(on_err, str) and "goto(" in on_err:
                     import re
+
                     m = re.search(r"goto\((.+?)\)", on_err)
                     if m and m.group(1) not in ids:
-                        flow_trace.append(f"on_error goto in '{s['id']}' -> '{m.group(1)}' not found")
+                        flow_trace.append(
+                            f"on_error goto in '{s['id']}' -> '{m.group(1)}' not found"
+                        )
 
             return {
                 "success": True,
@@ -2558,25 +2997,34 @@ class AutoComMCPServer:
                     "mode": mode,
                     "iterations": iterations,
                 },
-                "devices": [{"name": d.get("name"), "port": d.get("port")} for d in devices if isinstance(d, dict)],
-                "constants": list(constants.keys()) if isinstance(constants, dict) else [],
+                "devices": [
+                    {"name": d.get("name"), "port": d.get("port")}
+                    for d in devices
+                    if isinstance(d, dict)
+                ],
+                "constants": (
+                    list(constants.keys()) if isinstance(constants, dict) else []
+                ),
                 "steps": step_analysis,
                 "flow_issues": flow_trace,
                 "total_steps": len(steps),
-                "has_issues": len(flow_trace) > 0 or any(s["issues"] for s in step_analysis),
+                "has_issues": len(flow_trace) > 0
+                or any(s["issues"] for s in step_analysis),
             }
         except Exception as e:
             return {"success": False, "error": str(e)}
 
     @staticmethod
-    def _resolve_config_file(file_path: Optional[str] = None,
-                             config_content: Optional[str] = None) -> Optional[str]:
+    def _resolve_config_file(
+        file_path: Optional[str] = None, config_content: Optional[str] = None
+    ) -> Optional[str]:
         """解析配置来源：config_content 写入临时文件，或直接返回 file_path。
 
         路径安全性：只允许访问工作目录下的文件，拒绝路径穿越。
         """
         if file_path:
             import pathlib
+
             resolved = pathlib.Path(file_path).resolve()
             cwd = pathlib.Path.cwd().resolve()
             try:
@@ -2597,6 +3045,7 @@ class AutoComMCPServer:
             import tempfile
             import yaml
             import json as _json
+
             data = None
             # 先尝试 YAML，再尝试 JSON
             try:
@@ -2620,11 +3069,18 @@ class AutoComMCPServer:
         return None
 
     @staticmethod
-    def _append_io_log(entry_type: str, port: str, command: str, response: str = "",
-                       session_id: str = "", success: bool = False) -> None:
+    def _append_io_log(
+        entry_type: str,
+        port: str,
+        command: str,
+        response: str = "",
+        session_id: str = "",
+        success: bool = False,
+    ) -> None:
         """Append an I/O operation to the daily log file."""
         import datetime
         from utils.dirs import get_dirs
+
         try:
             logs_dir = get_dirs().root / "logs/operations"
             logs_dir.mkdir(parents=True, exist_ok=True)
@@ -2635,8 +3091,10 @@ class AutoComMCPServer:
             resp_preview = response[:200].replace("\r", "\\r").replace("\n", "\\n")
             with open(log_file, "a", encoding="utf-8") as f:
                 sid_tag = f" [{session_id}]" if session_id else ""
-                f.write(f"[{timestamp}] [{status}] [{entry_type}]{sid_tag} {port}"
-                        f" | {cmd_preview} | {resp_preview}\n")
+                f.write(
+                    f"[{timestamp}] [{status}] [{entry_type}]{sid_tag} {port}"
+                    f" | {cmd_preview} | {resp_preview}\n"
+                )
         except Exception:
             pass
 
@@ -2677,11 +3135,23 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="AutoCom MCP Server (FastMCP)")
     transport_group = parser.add_mutually_exclusive_group()
-    transport_group.add_argument("--sse", action="store_true", help="以 SSE (HTTP) 模式运行")
-    transport_group.add_argument("--streamable", action="store_true", help="以 Streamable HTTP 模式运行（长连接/双向通道）")
-    parser.add_argument("--auth-key", type=str, default=None, help="为 HTTP 模式启用简单 API Key 鉴权")
-    parser.add_argument("--port", type=int, default=8888, help="HTTP 模式监听端口（默认 8888）")
-    parser.add_argument("--host", type=str, default="0.0.0.0", help="HTTP 模式监听地址（默认 0.0.0.0）")
+    transport_group.add_argument(
+        "--sse", action="store_true", help="以 SSE (HTTP) 模式运行"
+    )
+    transport_group.add_argument(
+        "--streamable",
+        action="store_true",
+        help="以 Streamable HTTP 模式运行（长连接/双向通道）",
+    )
+    parser.add_argument(
+        "--auth-key", type=str, default=None, help="为 HTTP 模式启用简单 API Key 鉴权"
+    )
+    parser.add_argument(
+        "--port", type=int, default=8888, help="HTTP 模式监听端口（默认 8888）"
+    )
+    parser.add_argument(
+        "--host", type=str, default="0.0.0.0", help="HTTP 模式监听地址（默认 0.0.0.0）"
+    )
     args = parser.parse_args()
 
     if not _FASTMCP_AVAILABLE:
@@ -2746,7 +3216,9 @@ def main() -> None:
                 if "auth_key" in params and auth_key is not None:
                     call_kwargs["auth_key"] = auth_key
                 if "server_name" in params:
-                    call_kwargs["server_name"] = getattr(mcp_obj, "server_name", "autocom")
+                    call_kwargs["server_name"] = getattr(
+                        mcp_obj, "server_name", "autocom"
+                    )
 
             try:
                 if call_kwargs:
@@ -2756,7 +3228,9 @@ def main() -> None:
                 if asyncio.iscoroutine(res):
                     return _run_coroutine_with_graceful_shutdown(
                         res,
-                        on_interrupt=lambda: _safe_stderr_message("MCP Server received interrupt signal, shutting down..."),
+                        on_interrupt=lambda: _safe_stderr_message(
+                            "MCP Server received interrupt signal, shutting down..."
+                        ),
                     )
                 return res
             except TypeError as e:
@@ -2797,7 +3271,9 @@ def main() -> None:
             try:
                 _invoke_stdio_method(server.mcp, auth_key=args.auth_key)
             except (KeyboardInterrupt, asyncio.CancelledError):
-                _safe_stderr_message("MCP Server received interrupt signal, shutting down...")
+                _safe_stderr_message(
+                    "MCP Server received interrupt signal, shutting down..."
+                )
             finally:
                 server._close_all_sessions()
             return
@@ -2834,9 +3310,13 @@ def main() -> None:
             raise SystemExit(1)
 
         reachable = _get_reachable_host(args.host)
-        logger.log_info(f"Starting {transport} server: http://{reachable}:{args.port}{path}")
+        logger.log_info(
+            f"Starting {transport} server: http://{reachable}:{args.port}{path}"
+        )
         if args.host == "0.0.0.0":
-            logger.log_info(f"LAN: http://{reachable}:{args.port}{path}  |  Local: http://127.0.0.1:{args.port}{path}")
+            logger.log_info(
+                f"LAN: http://{reachable}:{args.port}{path}  |  Local: http://127.0.0.1:{args.port}{path}"
+            )
         logger.log_info(f"Audit log directory: {server.audit_log_path}")
         _run_mcp_callable(
             server.mcp,
