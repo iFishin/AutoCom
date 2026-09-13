@@ -1,14 +1,11 @@
 {
     "python-envs.defaultEnvManager": "ms-python.python:venv",
     "editor.formatOnSave": true,
-    "python.testing.unittestArgs": [
-        "-v",
-        "-s",
-        "./tests",
-        "-p",
-        "test_*.py"
+    "python.testing.pytestEnabled": true,
+    "python.testing.pytestArgs": [
+        "tests"
     ],
-    "python.testing.unittestEnabled": true,
+    "python.testing.unittestEnabled": false,
     "yaml.schemas": {
         ".vscode/schema.json": [
             "*.yaml",
