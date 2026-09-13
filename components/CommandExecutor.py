@@ -219,17 +219,17 @@ class CommandExecutor:
         if "expected_responses" in command:
             for expected_response in command["expected_responses"]:
                 updated_expected_responses.append(
-                    handle_variables_from_str(expected_response, device_name)
+                    self.handle_variables_from_str(expected_response, device_name)
                 )
 
         if "command" in command:
-            cmd_str = handle_variables_from_str(command["command"], device_name)
+            cmd_str = self.handle_variables_from_str(command["command"], device_name)
         else:
             cmd_str = ""
 
         if "parameters" in command:
             for param in command["parameters"]:
-                cmd_str += handle_variables_from_str(param, device_name)
+                cmd_str += self.handle_variables_from_str(param, device_name)
 
         hex_mode = command.get("hex_mode", False)
         priority = self._resolve_priority(command, device_name)
