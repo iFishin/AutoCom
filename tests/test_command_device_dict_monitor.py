@@ -1,6 +1,5 @@
 import threading
 import time
-import unittest
 
 from components.CommandDeviceDict import CommandDeviceDict, MonitorManager
 
@@ -78,7 +77,7 @@ class _FakeMonitorDevice:
         self.log_file = None
 
 
-class TestCommandDeviceDictMonitor(unittest.TestCase):
+class TestCommandDeviceDictMonitor:
     def test_send_command_with_monitor_does_not_clear_serial_buffer(self):
         cdd = CommandDeviceDict.__new__(CommandDeviceDict)
         device_name = "DebugA"
@@ -97,12 +96,11 @@ class TestCommandDeviceDictMonitor(unittest.TestCase):
             original_send_command=lambda *args, **kwargs: "unused",
         )
 
-        self.assertFalse(
-            fake_device.ser.read_called,
-            "monitor mode should not read/clear serial buffer in send path",
+        assert not fake_device.ser.read_called, (
+            "monitor mode should not read/clear serial buffer in send path"
         )
-        self.assertTrue(fake_device.ser.written)
-        self.assertIn("OK", response)
+        assert fake_device.ser.written
+        assert "OK" in response
 
     def test_monitor_capture_snapshot_keeps_all_lines(self):
         monitor = MonitorManager(_FakeMonitorDevice(), "DebugA", "unused")
@@ -113,8 +111,8 @@ class TestCommandDeviceDictMonitor(unittest.TestCase):
         snapshot = monitor.get_command_capture_snapshot()
         final_data = monitor.end_command_capture()
 
-        self.assertEqual(snapshot, ["LINE1", "LINE2"])
-        self.assertEqual(final_data, ["LINE1", "LINE2"])
+        assert snapshot == ["LINE1", "LINE2"]
+        assert final_data == ["LINE1", "LINE2"]
 
     def test_priority_queue_allows_high_priority_to_overtake_waiting_normal(self):
         monitor = MonitorManager(_FakeMonitorDevice(), "DebugA", "unused")
@@ -142,9 +140,9 @@ class TestCommandDeviceDictMonitor(unittest.TestCase):
         t2.join()
         t3.join()
 
-        self.assertEqual(order[0], "normal-1")
-        self.assertEqual(order[1], "high")
-        self.assertEqual(order[2], "normal-2")
+        assert order[0] == "normal-1"
+        assert order[1] == "high"
+        assert order[2] == "normal-2"
 
     def test_completion_rules_expected_required(self):
         response_lines = ["AT+PING", "OK"]
@@ -157,8 +155,8 @@ class TestCommandDeviceDictMonitor(unittest.TestCase):
             now=time.time(),
             settle_after_terminal=0.01,
         )
-        self.assertFalse(should_finish)
-        self.assertEqual(reason, "terminal-seen-awaiting-expected")
+        assert not should_finish
+        assert reason == "terminal-seen-awaiting-expected"
 
         should_finish2, reason2, _ = CommandDeviceDict._should_finish_command(
             response_lines=["AT+PING", "+PING:OK"],
@@ -168,9 +166,5 @@ class TestCommandDeviceDictMonitor(unittest.TestCase):
             now=time.time(),
             settle_after_terminal=0.01,
         )
-        self.assertTrue(should_finish2)
-        self.assertEqual(reason2, "expected-matched")
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert should_finish2
+        assert reason2 == "expected-matched"

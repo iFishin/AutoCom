@@ -46,3 +46,9 @@ include-package-data = true
 
 [tool.setuptools.dynamic]
 version = { attr = "version.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "strict"
+addopts = "-ra"

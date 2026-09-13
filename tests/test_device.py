@@ -1,7 +1,11 @@
-import unittest
-from unittest.mock import patch, MagicMock, PropertyMock
+from types import SimpleNamespace
+
+import pytest
+
 from components.Device import Device
-from tests import logger
+from components.Logger import AutoComLogger
+
+logger = AutoComLogger.get_instance(name="TestLogger")
 
 
 class SimulatedSerial:
@@ -78,80 +82,82 @@ class SimulatedSerial:
         self.is_open = False
 
 
-class TestDevice(unittest.TestCase):
-    def setUp(self):
+class TestDevice:
+    @pytest.fixture
+    def serial_env(self, mocker):
         # Patch serial.Serial to return our SimulatedSerial
-        patcher = patch("components.Device.serial.Serial")
-        self.addCleanup(patcher.stop)
-        self.mock_serial_class = patcher.start()
+        mock_serial_class = mocker.patch("components.Device.serial.Serial")
 
-        # Create simulated serial and expose its buffer for tests compatibility
-        self.sim_serial = SimulatedSerial()
-        self.sim_serial.is_open = True
-        self.mock_serial_class.return_value = self.sim_serial
-        self._serial_buffer = self.sim_serial._buffer
-
-        # Patch CommonUtils.print_log_line to avoid printing in tests
-        patcher_utils = patch("components.Device.CommonUtils")
-        self.addCleanup(patcher_utils.stop)
-        self.mock_utils = patcher_utils.start()
-        self.mock_utils.force_decode.side_effect = lambda b: b.decode(
+        # Patch CommonUtils to avoid printing in tests
+        mock_utils = mocker.patch("components.Device.CommonUtils")
+        mock_utils.force_decode.side_effect = lambda b: b.decode(
             "utf-8", errors="ignore"
         )
 
-        self.device = Device(name="TestDevice", port="COM1", baud_rate=9600)
+        sim_serial = SimulatedSerial()
+        sim_serial.is_open = True
+        mock_serial_class.return_value = sim_serial
+
+        device = Device(name="TestDevice", port="COM1", baud_rate=9600)
 
         # By default no automatic command->response mapping; tests provide when needed
-        self.command_responses = {}
+        command_responses = {}
         # Link the simulated serial's command_responses to the test mapping
-        self.sim_serial.command_responses = self.command_responses
+        sim_serial.command_responses = command_responses
 
-    def test_init_success(self):
+        return SimpleNamespace(
+            device=device,
+            sim_serial=sim_serial,
+            serial_buffer=sim_serial._buffer,
+            command_responses=command_responses,
+        )
+
+    def test_init_success(self, serial_env):
         logger.log_debug("Testing Device initialization...")
-        self.assertEqual(self.device.name, "TestDevice")
-        self.assertEqual(self.device.port, "COM1")
-        self.assertTrue(self.device.ser.is_open)
-        self.assertFalse(self.device.open_failed)
+        assert serial_env.device.name == "TestDevice"
+        assert serial_env.device.port == "COM1"
+        assert serial_env.device.ser.is_open
+        assert not serial_env.device.open_failed
 
-    def test_get_status(self):
-        status = self.device.get_status()
+    def test_get_status(self, serial_env):
+        status = serial_env.device.get_status()
         logger.log_debug(f"Device status: {status}")
-        self.assertEqual(status["name"], "TestDevice")
-        self.assertEqual(status["port"], "COM1")
-        self.assertIn("serial_open", status)
+        assert status["name"] == "TestDevice"
+        assert status["port"] == "COM1"
+        assert "serial_open" in status
 
-    def test_send_command_success(self):
+    def test_send_command_success(self, serial_env):
         logger.log_debug("Testing successful command sending...")
-        self._serial_buffer[:] = b"OK\n"
-        result = self.device.send_command("AT", timeout=0.1, expected_responses=["OK"])
-        self.assertTrue(result["success"])
-        self.assertIn("OK", str(result["response"]))
-        self.assertIn("OK", result["matched"])
+        serial_env.serial_buffer[:] = b"OK\n"
+        result = serial_env.device.send_command("AT", timeout=0.1, expected_responses=["OK"])
+        assert result["success"]
+        assert "OK" in str(result["response"])
+        assert "OK" in result["matched"]
 
-    def test_send_command_no_response(self):
-        self._serial_buffer[:] = b""
-        result = self.device.send_command("AT", timeout=0.05, expected_responses=["OK"])
+    def test_send_command_no_response(self, serial_env):
+        serial_env.serial_buffer[:] = b""
+        result = serial_env.device.send_command("AT", timeout=0.05, expected_responses=["OK"])
         logger.log_debug(f"Result of send_command with no response: {result}")
-        self.assertFalse(result["success"])
-        self.assertEqual(result["matched"], [])
+        assert not result["success"]
+        assert result["matched"] == []
 
-    def test_send_command_expected_response(self):
-        self._serial_buffer[:] = b"OK\r\r\n"
-        result = self.device.send_command("AT", timeout=0.1, expected_responses=["OK"])
+    def test_send_command_expected_response(self, serial_env):
+        serial_env.serial_buffer[:] = b"OK\r\r\n"
+        result = serial_env.device.send_command("AT", timeout=0.1, expected_responses=["OK"])
         logger.log_debug(f"Result of send_command with OK response: {result}")
-        self.assertTrue(result["success"])
-        self.assertEqual("OK", result["response"])
-        self.assertIn("OK", result["matched"])
+        assert result["success"]
+        assert result["response"] == "OK"
+        assert "OK" in result["matched"]
 
-    def test_send_command_unexpected_response(self):
-        self._serial_buffer[:] = b"ERROR\n"
-        result = self.device.send_command("AT", timeout=0.1, expected_responses=["OK"])
+    def test_send_command_unexpected_response(self, serial_env):
+        serial_env.serial_buffer[:] = b"ERROR\n"
+        result = serial_env.device.send_command("AT", timeout=0.1, expected_responses=["OK"])
         logger.log_debug(f"Result of send_command with ERROR response: {result}")
-        self.assertFalse(result["success"])
-        self.assertEqual("ERROR", result["response"])
-        self.assertNotIn("OK", result["matched"])
+        assert not result["success"]
+        assert result["response"] == "ERROR"
+        assert "OK" not in result["matched"]
 
-    def test_send_command_long_response(self):
+    def test_send_command_long_response(self, serial_env):
         parts = [
             b"OK\r\n",
             b"RESPONSE1\r\n",
@@ -159,71 +165,67 @@ class TestDevice(unittest.TestCase):
             b"RESPONSE3\r\n",
             b"END\r\n",
         ]
-        self._serial_buffer[:] = b"".join(parts)
+        serial_env.serial_buffer[:] = b"".join(parts)
         # snapshot initial buffer as text
-        response = bytes(self._serial_buffer).decode("utf-8", errors="ignore")
+        response = bytes(serial_env.serial_buffer).decode("utf-8", errors="ignore")
         logger.log_debug(response)
 
-        result = self.device.send_command("AT", timeout=3.0, expected_responses=["END"])
+        result = serial_env.device.send_command("AT", timeout=3.0, expected_responses=["END"])
         logger.log_debug(f"Result of send_command with long response: {result}")
-        self.assertIn("END", result["response"])
-        self.assertIn("END", result["matched"])
+        assert "END" in result["response"]
+        assert "END" in result["matched"]
 
         logger.log_debug(f"Remaining buffer before send_command: {response}")
-        self.assertIn("OK", response)
-        self.assertIn("RESPONSE1", response)
-        self.assertIn("RESPONSE2", response)
-        self.assertIn("RESPONSE3", response)
-        self.assertIn("END", response)
+        assert "OK" in response
+        assert "RESPONSE1" in response
+        assert "RESPONSE2" in response
+        assert "RESPONSE3" in response
+        assert "END" in response
 
-    def test_at_command_injects_ok(self):
+    def test_at_command_injects_ok(self, serial_env):
         # When expected_responses are fully matched, leftover data goes
         # into pending_rx_buffer for the next step. Unmatched pending data
         # is preserved (not consumed) so subsequent steps still see it.
-        self.command_responses["AT"] = b"OK\r\nEND\r\n"
-        res = self.device.send_command("AT", timeout=0.5, expected_responses=["OK"])
+        serial_env.command_responses["AT"] = b"OK\r\nEND\r\n"
+        res = serial_env.device.send_command("AT", timeout=0.5, expected_responses=["OK"])
         logger.log_debug(f"Result of send_command for 'AT': {res}")
-        self.assertTrue(res["success"])
+        assert res["success"]
         # OK is matched; END is leftover in pending_rx_buffer
-        self.assertEqual("OK", res["response"])
-        self.assertIn("OK", res["matched"])
+        assert res["response"] == "OK"
+        assert "OK" in res["matched"]
 
-        self.command_responses["ATM"] = b"OK\r\nOP1\r\nEND\r\n"
-        res = self.device.send_command("ATM", timeout=0.5, expected_responses=["OP1"])
+        serial_env.command_responses["ATM"] = b"OK\r\nOP1\r\nEND\r\n"
+        res = serial_env.device.send_command("ATM", timeout=0.5, expected_responses=["OP1"])
         logger.log_debug(f"Result of send_command for 'ATM': {res}")
-        self.assertTrue(res["success"])
+        assert res["success"]
         # END was in pending buffer but doesn't match OP1 — it's preserved,
         # not consumed. So the response only has OK and OP1 from serial.
-        self.assertEqual("OK\nOP1", res["response"])
-        self.assertIn("OP1", res["matched"])
+        assert res["response"] == "OK\nOP1"
+        assert "OP1" in res["matched"]
 
-    def test_send_command_sequence(self):
+    def test_send_command_sequence(self, serial_env):
         # Configure responses for multiple commands
-        self.command_responses["CMD1"] = b"RESP1\r\n"
-        self.command_responses["CMD2"] = b"RESP2\r\n"
-        self.command_responses["CMD3"] = b"RESP3\r\n"
+        serial_env.command_responses["CMD1"] = b"RESP1\r\n"
+        serial_env.command_responses["CMD2"] = b"RESP2\r\n"
+        serial_env.command_responses["CMD3"] = b"RESP3\r\n"
 
-        res1 = self.device.send_command(
+        res1 = serial_env.device.send_command(
             "CMD1", timeout=0.5, expected_responses=["RESP1"]
         )
         logger.log_debug(f"Result of send_command for 'CMD1': {res1}")
-        self.assertTrue(res1["success"])
-        self.assertIn("RESP1", res1["response"])
+        assert res1["success"]
+        assert "RESP1" in res1["response"]
 
-        res2 = self.device.send_command(
+        res2 = serial_env.device.send_command(
             "CMD2", timeout=0.5, expected_responses=["RESP2"]
         )
         logger.log_debug(f"Result of send_command for 'CMD2': {res2}")
-        self.assertTrue(res2["success"])
-        self.assertIn("RESP2", res2["response"])
+        assert res2["success"]
+        assert "RESP2" in res2["response"]
 
-        res3 = self.device.send_command(
+        res3 = serial_env.device.send_command(
             "CMD3", timeout=0.5, expected_responses=["RESP3"]
         )
         logger.log_debug(f"Result of send_command for 'CMD3': {res3}")
-        self.assertTrue(res3["success"])
-        self.assertIn("RESP3", res3["response"])
-
-
-if __name__ == "__main__":
-    unittest.main(buffer=False, verbosity=2)
+        assert res3["success"]
+        assert "RESP3" in res3["response"]

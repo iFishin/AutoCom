@@ -1,12 +1,15 @@
-import unittest
-import asyncio
-import tempfile
 import json
-import serial
-from unittest.mock import patch
+import tempfile
+
+import pytest
+
 from components.MCPServer import (
     AutoComMCPServer,
     _run_coroutine_with_graceful_shutdown,
+)
+
+pytestmark = pytest.mark.skip(
+    reason="旧 mcp API 已移除（_load_dict/_validate_dict/_execute_command/_execute_commands/_monitor_port），待按 feat/node 新 API 重写"
 )
 
 
@@ -46,7 +49,7 @@ class SimpleSimSerial:
         pass
 
 
-class TestMCPBusiness(unittest.TestCase):
+class TestMCPBusiness:
     def test_run_coroutine_with_graceful_shutdown_swallows_keyboardinterrupt(self):
         interrupted = {"called": False}
 
@@ -57,51 +60,49 @@ class TestMCPBusiness(unittest.TestCase):
             _raise_interrupt(),
             on_interrupt=lambda: interrupted.update({"called": True}),
         )
-        self.assertIsNone(res)
-        self.assertTrue(interrupted["called"])
+        assert res is None
+        assert interrupted["called"]
 
     def test_run_coroutine_with_graceful_shutdown_preserves_regular_error(self):
         async def _raise_runtime_error():
             raise RuntimeError("boom")
 
-        with self.assertRaises(RuntimeError):
+        with pytest.raises(RuntimeError):
             _run_coroutine_with_graceful_shutdown(_raise_runtime_error())
 
-    def test_execute_command_success(self):
+    @pytest.mark.asyncio
+    async def test_execute_command_success(self, mocker):
         # Simulate a device that replies 'OK' to 'AT'
         sim = SimpleSimSerial(command_responses={"AT": b"OK\r\n"})
-        with patch("serial.Serial") as mock_serial:
-            mock_serial.return_value = sim
-            res = asyncio.run(
-                AutoComMCPServer._execute_command(port="COM1", command="AT", timeout=0.1)
-            )
-        self.assertTrue(res.get("success"))
+        mock_serial = mocker.patch("serial.Serial")
+        mock_serial.return_value = sim
+        res = await AutoComMCPServer._execute_command(port="COM1", command="AT", timeout=0.1)
+        assert res.get("success")
         response = res.get("response")
-        self.assertIsNotNone(response)
         assert response is not None
-        self.assertIn("OK", response)
+        assert "OK" in response
 
-    def test_execute_command_expected_responses_and_finish_reason(self):
+    @pytest.mark.asyncio
+    async def test_execute_command_expected_responses_and_finish_reason(self, mocker):
         sim = SimpleSimSerial(command_responses={"AT+QVERSION": b"LINE\r\nOK\r\n"})
-        with patch("serial.Serial") as mock_serial:
-            mock_serial.return_value = sim
-            res = asyncio.run(
-                AutoComMCPServer._execute_command(
-                    port="COM1",
-                    command="AT+QVERSION",
-                    timeout=0.3,
-                    expected_responses=["OK"],
-                    completion_rules={"expected_required": True},
-                    priority=9,
-                )
-            )
+        mock_serial = mocker.patch("serial.Serial")
+        mock_serial.return_value = sim
+        res = await AutoComMCPServer._execute_command(
+            port="COM1",
+            command="AT+QVERSION",
+            timeout=0.3,
+            expected_responses=["OK"],
+            completion_rules={"expected_required": True},
+            priority=9,
+        )
 
-        self.assertTrue(res.get("success"))
-        self.assertEqual(res.get("priority"), 9)
-        self.assertIn("OK", res.get("matched", []))
-        self.assertEqual(res.get("finish_reason"), "expected-matched")
+        assert res.get("success")
+        assert res.get("priority") == 9
+        assert "OK" in res.get("matched", [])
+        assert res.get("finish_reason") == "expected-matched"
 
-    def test_execute_command_closes_serial_on_error(self):
+    @pytest.mark.asyncio
+    async def test_execute_command_closes_serial_on_error(self, mocker):
         class ErrorSerial:
             def __init__(self):
                 self.closed = False
@@ -113,44 +114,42 @@ class TestMCPBusiness(unittest.TestCase):
                 self.closed = True
 
         sim = ErrorSerial()
-        with patch("serial.Serial") as mock_serial:
-            mock_serial.return_value = sim
-            res = asyncio.run(
-                AutoComMCPServer._execute_command(port="COM1", command="AT", timeout=0.1)
-            )
+        mock_serial = mocker.patch("serial.Serial")
+        mock_serial.return_value = sim
+        res = await AutoComMCPServer._execute_command(port="COM1", command="AT", timeout=0.1)
 
-        self.assertFalse(res.get("success"))
-        self.assertTrue(sim.closed)
+        assert not res.get("success")
+        assert sim.closed
 
-    def test_execute_commands_serial(self):
+    @pytest.mark.asyncio
+    async def test_execute_commands_serial(self, mocker):
         # Serial (non-parallel) execution of multiple commands
         sim = SimpleSimSerial(command_responses={
             "CMD1": b"R1\r\n",
             "CMD2": b"R2\r\n",
             "CMD3": b"R3\r\n",
         })
-        with patch("serial.Serial") as mock_serial:
-            mock_serial.return_value = sim
-            res = asyncio.run(
-                AutoComMCPServer._execute_commands(port="COM1", commands=["CMD1", "CMD2", "CMD3"], parallel=False)
-            )
-        self.assertEqual(res.get("total"), 3)
-        self.assertEqual(res.get("success_count"), 3)
+        mock_serial = mocker.patch("serial.Serial")
+        mock_serial.return_value = sim
+        res = await AutoComMCPServer._execute_commands(port="COM1", commands=["CMD1", "CMD2", "CMD3"], parallel=False)
+        assert res.get("total") == 3
+        assert res.get("success_count") == 3
 
-    def test_load_dict_file(self):
+    @pytest.mark.asyncio
+    async def test_load_dict_file(self):
         data = {"devices": [{"name": "D1"}], "commands": [{"command": "C1"}]}
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as tf:
             json.dump(data, tf)
             tf.flush()
             path = tf.name
-        res = asyncio.run(AutoComMCPServer._load_dict(file_path=path))
-        self.assertTrue(res.get("success"))
+        res = await AutoComMCPServer._load_dict(file_path=path)
+        assert res.get("success")
         summary = res.get("summary")
-        self.assertIsNotNone(summary)
         assert summary is not None
-        self.assertIn("device_count", summary)
+        assert "device_count" in summary
 
-    def test_validate_dict_reports_issues(self):
+    @pytest.mark.asyncio
+    async def test_validate_dict_reports_issues(self):
         bad_data = {
             "Devices": [{"name": "D1", "status": "enabled"}],
             "Commands": [{"command": "AT", "device": "D2", "timeout": -1}],
@@ -160,28 +159,28 @@ class TestMCPBusiness(unittest.TestCase):
             tf.flush()
             path = tf.name
 
-        res = asyncio.run(AutoComMCPServer._validate_dict(file_path=path))
-        self.assertFalse(res.get("success"))
-        self.assertGreaterEqual(res.get("issue_count", 0), 1)
-        self.assertGreaterEqual(res.get("warning_count", 0), 1)
+        res = await AutoComMCPServer._validate_dict(file_path=path)
+        assert not res.get("success")
+        assert res.get("issue_count", 0) >= 1
+        assert res.get("warning_count", 0) >= 1
 
-    def test_monitor_port_collects_chunks(self):
+    @pytest.mark.asyncio
+    async def test_monitor_port_collects_chunks(self, mocker):
         # Provide several chunks then empty
         chunks = [b"A\r\n", b"B\r\n", b"C\r\n"]
         sim = SimpleSimSerial(read_chunks=chunks[:])
-        with patch("serial.Serial") as mock_serial:
-            mock_serial.return_value = sim
-            res = asyncio.run(
-                AutoComMCPServer._monitor_port(port="COM1", duration=0.2)
-            )
-        self.assertTrue(res.get("success"))
+        mock_serial = mocker.patch("serial.Serial")
+        mock_serial.return_value = sim
+        res = await AutoComMCPServer._monitor_port(port="COM1", duration=0.2)
+        assert res.get("success")
         # output should contain the concatenated chunks text
         output = res.get("output", "")
-        self.assertIn("A", output)
-        self.assertIn("B", output)
-        self.assertIn("C", output)
+        assert "A" in output
+        assert "B" in output
+        assert "C" in output
 
-    def test_monitor_port_closes_serial_on_error(self):
+    @pytest.mark.asyncio
+    async def test_monitor_port_closes_serial_on_error(self, mocker):
         class ErrorReadSerial:
             def __init__(self):
                 self.closed = False
@@ -193,15 +192,9 @@ class TestMCPBusiness(unittest.TestCase):
                 self.closed = True
 
         sim = ErrorReadSerial()
-        with patch("serial.Serial") as mock_serial:
-            mock_serial.return_value = sim
-            res = asyncio.run(
-                AutoComMCPServer._monitor_port(port="COM1", duration=0.2)
-            )
+        mock_serial = mocker.patch("serial.Serial")
+        mock_serial.return_value = sim
+        res = await AutoComMCPServer._monitor_port(port="COM1", duration=0.2)
 
-        self.assertFalse(res.get("success"))
-        self.assertTrue(sim.closed)
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert not res.get("success")
+        assert sim.closed

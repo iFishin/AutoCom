@@ -1,5 +1,4 @@
 import threading
-import unittest
 from types import SimpleNamespace
 
 from components.CommandExecutor import CommandExecutor
@@ -43,7 +42,7 @@ class _FakeExecutor:
         self.isAllPassed = False
 
 
-class TestCommandOptionsPassthrough(unittest.TestCase):
+class TestCommandOptionsPassthrough:
     def test_execute_command_passes_monitor_options(self):
         fake_device = _FakeDevice()
         executor = CommandExecutor.__new__(CommandExecutor)
@@ -76,13 +75,13 @@ class TestCommandOptionsPassthrough(unittest.TestCase):
 
         ok = executor.execute_command(cmd)
 
-        self.assertTrue(ok)
-        self.assertEqual(len(fake_device.calls), 1)
+        assert ok
+        assert len(fake_device.calls) == 1
         sent = fake_device.calls[0]
-        self.assertEqual(sent["cmd"], "AT+QVERSION")
-        self.assertEqual(sent["kwargs"]["priority"], 7)
-        self.assertIn("completion_rules", sent["kwargs"])
-        self.assertTrue(sent["kwargs"]["completion_rules"]["expected_required"])
+        assert sent["cmd"] == "AT+QVERSION"
+        assert sent["kwargs"]["priority"] == 7
+        assert "completion_rules" in sent["kwargs"]
+        assert sent["kwargs"]["completion_rules"]["expected_required"]
 
     def test_retry_passes_monitor_options(self):
         fake_device = _FakeDevice(
@@ -115,12 +114,8 @@ class TestCommandOptionsPassthrough(unittest.TestCase):
 
         ok = action_handler.handle_retry(1, command, "", context)
 
-        self.assertTrue(ok)
-        self.assertEqual(len(fake_device.calls), 1)
+        assert ok
+        assert len(fake_device.calls) == 1
         sent = fake_device.calls[0]
-        self.assertEqual(sent["kwargs"]["priority"], 3)
-        self.assertTrue(sent["kwargs"]["completion_rules"]["expected_required"])
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert sent["kwargs"]["priority"] == 3
+        assert sent["kwargs"]["completion_rules"]["expected_required"]

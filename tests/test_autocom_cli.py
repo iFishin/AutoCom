@@ -1,13 +1,15 @@
-import unittest
 import tempfile
 import json
-from unittest.mock import patch
-from tests.test_device import SimulatedSerial
+
+from test_device import SimulatedSerial
 from AutoCom import execute_with_loop
 
 
-class TestAutoComCLI(unittest.TestCase):
-    def test_cli_execution(self):
+class TestAutoComCLI:
+    def test_cli_execution(self, mocker, tmp_path, monkeypatch):
+        # execute_with_loop 会用默认（None）目录写设备日志，隔离到临时 cwd 避免污染仓库
+        monkeypatch.chdir(tmp_path)
+
         # Prepare a temporary dictionary file with one device and three commands
         dict_data = {
             "ConfigForDevices": {"baud_rate": 9600, "status": "enabled"},
@@ -65,25 +67,21 @@ class TestAutoComCLI(unittest.TestCase):
 
         # Patch serial.Serial to return our SimulatedSerial instance
         # Patch the top-level serial module used by Device (reliable import)
-        with patch("serial.Serial") as mock_serial_class:
-            sim = SimulatedSerial()
-            sim.is_open = True
-            # Map commands to responses (include CRLF)
-            sim.command_responses = {
-                "CMD1": b"HELLO\r\n",
-                "CMD2": b"THIS\r\n",
-                "CMD3": b"AUTOCOM\r\n",
-                "CMD4": b"UNKNOWN\r\n",
-                "CMD5": b"ERROR\r\n",
-            }
-            mock_serial_class.return_value = sim
+        mock_serial_class = mocker.patch("serial.Serial")
+        sim = SimulatedSerial()
+        sim.is_open = True
+        # Map commands to responses (include CRLF)
+        sim.command_responses = {
+            "CMD1": b"HELLO\r\n",
+            "CMD2": b"THIS\r\n",
+            "CMD3": b"AUTOCOM\r\n",
+            "CMD4": b"UNKNOWN\r\n",
+            "CMD5": b"ERROR\r\n",
+        }
+        mock_serial_class.return_value = sim
 
-            # Call the CLI runner (one loop)
-            execute_with_loop(dict_path, loop_count=3)
+        # Call the CLI runner (one loop)
+        execute_with_loop(dict_path, loop_count=3)
 
-            # After execution, simulated serial buffer should be empty (responses consumed)
-            self.assertEqual(bytes(sim._buffer), b"")
-
-
-if __name__ == "__main__":
-    unittest.main()
+        # After execution, simulated serial buffer should be empty (responses consumed)
+        assert bytes(sim._buffer) == b""

@@ -1,17 +1,21 @@
 import os
 import tempfile
-import unittest
+
+import pytest
 
 from components.Logger import AutoComLogger
 from components.TablePrinter import TablePrinter
 
 
-class LoggerIntegrationTests(unittest.TestCase):
+@pytest.fixture(autouse=True)
+def _cleanup_logger_instances():
+    yield
+    # Cleanup any created logger instances to avoid cross-test interference
+    AutoComLogger._instances.pop("TestPlain", None)
+    AutoComLogger._instances.pop("TestRealtime", None)
 
-    def tearDown(self) -> None:
-        # Cleanup any created logger instances to avoid cross-test interference
-        AutoComLogger._instances.pop("TestPlain", None)
-        AutoComLogger._instances.pop("TestRealtime", None)
+
+class TestLoggerIntegration:
 
     def _close_and_remove_file_handler(self, logger: AutoComLogger):
         # remove file handler and close it to flush
@@ -44,11 +48,11 @@ class LoggerIntegrationTests(unittest.TestCase):
         os.unlink(path)
 
         # Expect level PASS in the formatted log and the concise message
-        self.assertIn("PASS", content)
-        self.assertIn("DevA", content)
-        self.assertIn("CMD", content)
+        assert "PASS" in content
+        assert "DevA" in content
+        assert "CMD" in content
         # escaped CR should appear as \r or \n sequences in our escaped handling
-        self.assertTrue("\\r" in content or "\\n" in content)
+        assert "\\r" in content or "\\n" in content
 
     def test_log_execution_realtime_writes_table(self):
         tmp = tempfile.NamedTemporaryFile(delete=False)
@@ -71,13 +75,13 @@ class LoggerIntegrationTests(unittest.TestCase):
         os.unlink(path)
 
         # Expect table borders or header text present
-        self.assertIn("Executed Time", content)
-        self.assertIn("Device", content)
+        assert "Executed Time" in content
+        assert "Device" in content
         # data row should contain device name
-        self.assertIn("DevB", content)
+        assert "DevB" in content
 
 
-class TablePrinterTests(unittest.TestCase):
+class TestTablePrinterViaLogger:
 
     def test_proportional_widths_sum_and_ratios(self):
         headers = ["A", "B", "C", "D", "E", "F"]
@@ -88,13 +92,9 @@ class TablePrinterTests(unittest.TestCase):
         total_avail = tp.get_available_width()
 
         # lengths match headers and sum equals available width (approx)
-        self.assertEqual(len(widths), len(headers))
-        self.assertEqual(sum(widths), total_avail)
+        assert len(widths) == len(headers)
+        assert sum(widths) == total_avail
 
         # check relative ordering by ratios (first should be larger than second)
-        self.assertGreater(widths[0], widths[1])
-        self.assertGreater(widths[-1], widths[4])
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert widths[0] > widths[1]
+        assert widths[-1] > widths[4]

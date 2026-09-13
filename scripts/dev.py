@@ -257,7 +257,27 @@ def test() -> bool:
     if not cli_passed:
         print_warning("autocom 命令未安装 (运行 'dev install' 安装)")
 
-    return failed == 0
+    # 运行 pytest 测试套件
+    print("\n运行 pytest 测试套件...")
+    try:
+        import pytest  # noqa: F401
+    except ImportError:
+        print_error(
+            'pytest 未安装，跳过测试套件（运行 dev install 或 pip install -e ".[dev]"）'
+        )
+        return failed == 0
+
+    pytest_result = subprocess.run(
+        [sys.executable, "-m", "pytest", "tests/", "-q"],
+        cwd=ROOT_DIR,
+    )
+    pytest_ok = pytest_result.returncode == 0
+    if pytest_ok:
+        print_success("pytest 测试套件通过")
+    else:
+        print_error("pytest 测试套件失败")
+
+    return failed == 0 and pytest_ok
 
 
 def build() -> bool:
