@@ -51,4 +51,6 @@ version = { attr = "version.__version__" }
 testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "strict"
-addopts = "-ra"
+addopts = "-ra --strict-markers --strict-config"
+xfail_strict = true
+faulthandler_timeout = 30

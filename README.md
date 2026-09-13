@@ -191,6 +191,27 @@ curl "http://localhost:8000/api/executions?limit=5"
 
 ---
 
+## 🧪 测试
+
+测试基于 pytest（`pytest` / `pytest-asyncio` / `pytest-mock`，见 `[dev]` 可选依赖）。
+
+```bash
+pip install -e ".[dev]"        # 安装开发依赖
+pytest                          # 运行全部测试
+python scripts/dev.py test      # 或走开发脚本（含导入冒烟检查）
+```
+
+常用技巧：
+
+```bash
+pytest -k device    # 只跑名字匹配的用例
+pytest -x           # 首个失败即停
+pytest --lf         # 只重跑上次失败的用例
+pytest --pdb        # 失败处进入调试器
+```
+
+在编辑器里：VSCode 的 Testing 面板可直接运行/调试单个用例；`Run and Debug` 中的 **Debug Current Test File** 可对当前文件断点调试。
+
 ## 🤝 贡献
 
 欢迎提交 Issue 和 Pull Request！详见 [CONTRIBUTING.md](CONTRIBUTING.md)。

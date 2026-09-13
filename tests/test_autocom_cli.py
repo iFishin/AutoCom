@@ -1,16 +1,13 @@
-import tempfile
 import json
 
-from test_device import SimulatedSerial
 from AutoCom import execute_with_loop
 
 
 class TestAutoComCLI:
-    def test_cli_execution(self, mocker, tmp_path, monkeypatch):
+    def test_cli_execution(self, patched_serial, tmp_path, monkeypatch):
         # execute_with_loop 会用默认（None）目录写设备日志，隔离到临时 cwd 避免污染仓库
         monkeypatch.chdir(tmp_path)
 
-        # Prepare a temporary dictionary file with one device and three commands
         dict_data = {
             "ConfigForDevices": {"baud_rate": 9600, "status": "enabled"},
             "Devices": [
@@ -60,28 +57,20 @@ class TestAutoComCLI:
             ],
         }
 
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as tf:
-            json.dump(dict_data, tf)
-            tf.flush()
-            dict_path = tf.name
+        dict_path = tmp_path / "dict.json"
+        dict_path.write_text(json.dumps(dict_data), encoding="utf-8")
 
-        # Patch serial.Serial to return our SimulatedSerial instance
-        # Patch the top-level serial module used by Device (reliable import)
-        mock_serial_class = mocker.patch("serial.Serial")
-        sim = SimulatedSerial()
-        sim.is_open = True
-        # Map commands to responses (include CRLF)
-        sim.command_responses = {
+        # 命令 -> 响应映射（含 CRLF）
+        patched_serial.command_responses = {
             "CMD1": b"HELLO\r\n",
             "CMD2": b"THIS\r\n",
             "CMD3": b"AUTOCOM\r\n",
             "CMD4": b"UNKNOWN\r\n",
             "CMD5": b"ERROR\r\n",
         }
-        mock_serial_class.return_value = sim
 
-        # Call the CLI runner (one loop)
-        execute_with_loop(dict_path, loop_count=3)
+        # 运行 CLI（3 轮）
+        execute_with_loop(str(dict_path), loop_count=3)
 
-        # After execution, simulated serial buffer should be empty (responses consumed)
-        assert bytes(sim._buffer) == b""
+        # 执行后模拟串口缓冲应为空（响应已被消费）
+        assert bytes(patched_serial._buffer) == b""

@@ -1,18 +1,14 @@
-import contextlib
-import io
-
 from components.TablePrinter import TablePrinter
 from wcwidth import wcswidth, wcwidth
 
 
 class TestTablePrinter:
     def test_get_string_display_width_and_truncate(self):
-        # ASCII and emoji width
+        # ASCII 与 emoji 宽度
         s = "abc✅d"
-        # 'abc' (3) + emoji (2) + 'd'(1) = 6
-        # verify width using wcwidth directly
+        # 'abc'(3) + emoji(2) + 'd'(1) = 6
         assert wcswidth(s) == 6
-        # truncate to width 4 using per-char wcwidth
+        # 按每字符 wcwidth 截断到宽度 4
         target = 4
         cur = 0
         cut = len(s)
@@ -30,10 +26,9 @@ class TestTablePrinter:
     def test_calculate_column_widths_equal_and_proportional(self):
         headers = ["A", "B", "C"]
         tp = TablePrinter(headers, max_width=90, min_width=30, auto_terminal=False)
-        # equal
         widths_equal = tp.calculate_column_widths(mode="equal")
         assert len(widths_equal) == 3
-        # proportional with custom ratios
+
         ratios = [0.2, 0.3, 0.5]
         widths_prop = tp.calculate_column_widths(
             mode="proportional", custom_ratios=ratios
@@ -48,7 +43,6 @@ class TestTablePrinter:
         tp.add_row(["2026-04-03_10:00:01", "FAIL", "device_long_name"])
         widths = tp.calculate_column_widths(mode="content")
         assert len(widths) == 3
-        # widths should be positive
         for w in widths:
             assert w > 0
 
@@ -58,7 +52,7 @@ class TestTablePrinter:
         tp.add_row(["t1", "r1"])
         out = tp.print_table(is_print=False)
         assert "t1" in out
-        # realtime: create a printer and call print_realtime_row
+
         line = tp.print_realtime_row(["t2", "r2"], is_print=False)
         assert isinstance(line, str)
         assert "t2" in line
@@ -68,30 +62,25 @@ class TestTablePrinter:
         tp = TablePrinter(headers, max_width=100, min_width=60, auto_terminal=False)
         tp.add_row(["a", "b", "c"])
         out = tp.print_table(is_print=False, top_border=True, bottom_border=True)
-        # check top and bottom rounded border characters exist
         assert "╭" in out
         assert ("╯" in out) or ("╮" in out)
 
-    def test_print_table_stdout(self):
+    def test_print_table_stdout(self, capsys):
         headers = ["H1", "H2"]
         tp = TablePrinter(headers, max_width=80, min_width=40, auto_terminal=False)
         tp.add_row(["row1col1", "row1col2"])
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            tp.print_table(is_print=True, top_border=True, bottom_border=True)
-        out = buf.getvalue()
+        tp.print_table(is_print=True, top_border=True, bottom_border=True)
+        out = capsys.readouterr().out
         assert "╭" in out
         assert "│" in out
         assert "row1col1" in out
 
-    def test_print_realtime_stdout(self):
+    def test_print_realtime_stdout(self, capsys):
         headers = ["H", "R"]
         tp = TablePrinter(headers, max_width=60, min_width=30, auto_terminal=False)
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            tp.print_realtime_row(["r1", "r2"], is_print=True)
-        out = buf.getvalue()
-        # header + one data line printed
+        tp.print_realtime_row(["r1", "r2"], is_print=True)
+        out = capsys.readouterr().out
+        # 表头 + 一行数据
         assert "╭" in out
         assert "│" in out
         assert "r1" in out
@@ -121,12 +110,10 @@ class TestTablePrinter:
             ]
         )
         out = tp.print_table(top_border=True, bottom_border=True, is_print=False)
-        print(out)
         assert "device_long" in out
         assert "long_com" in out
 
     def test_print_realtime_table(self):
-        print("\n=== Realtime demo ===")
         rt = TablePrinter(["T", "R"], auto_terminal=True)
         rt.print_realtime_row(["t1", "r1"], is_print=True)
         rt.print_realtime_row(["t2", "r2"], is_print=True)
